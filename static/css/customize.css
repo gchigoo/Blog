@@ -1,3 +1,7 @@
+body {
+    background: url(../images/geometry_@2X.png);
+}
+
 .m-padded-mini {
     padding: 0.2em !important;
 }
@@ -70,6 +74,34 @@
 .m-container {
     max-width: 72em;
     margin: auto;
+}
+
+.m-container-small {
+    max-width: 60em;
+    margin: auto;
+}
+
+.m-mobile-show {
+    display: none !important;
+}
+
+@media screen and (max-width: 768px) {
+    .m-mobile-hide {
+        display: none !important;
+    }
+    .m-mobile-show {
+        display: block !important;
+    }
+}
+
+
+
+
+/*-----position------*/
+.m-right-top {
+    position: absolute;
+    top: 0;
+    right: 0;
 }
 
 /*----opcity----*/
