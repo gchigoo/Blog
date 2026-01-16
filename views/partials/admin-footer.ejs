@@ -1,0 +1,21 @@
+  </main>
+  
+  <footer>
+    <p>Powered by Gchigoo Minimalist Blog &copy; <%= new Date().getFullYear() %></p>
+  </footer>
+  
+  <script>
+    // 全局登出功能
+    const logoutBtn = document.getElementById('logoutBtn');
+    if (logoutBtn) {
+      logoutBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        try {
+          await fetch('/api/auth/logout', { method: 'POST' });
+          window.location.href = '/admin/login';
+        } catch (error) {
+          alert('登出失败');
+        }
+      });
+    }
+  </script>

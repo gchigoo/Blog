@@ -1,0 +1,40 @@
+<%- include('partials/header', { title: '首页', user }) %>
+
+<h2>最新文章</h2>
+
+<% if (articles.length === 0) { %>
+  <p>还没有文章，<% if (typeof user !== 'undefined' && user) { %><a href="/admin/upload">立即发布</a><% } else { %>敬请期待！<% } %></p>
+<% } else { %>
+  <ul class="article-list">
+    <% articles.forEach(article => { %>
+      <li>
+        <a href="/article/<%= article.slug %>"><%= article.title %></a>
+        <span class="article-meta">
+          <%= new Date(article.created_at).toLocaleDateString('zh-CN') %>
+          <% if (article.tags && article.tags.length > 0) { %>
+            · 
+            <% article.tags.forEach((tag, index) => { %>
+              <a href="/tag/<%= encodeURIComponent(tag) %>" class="tag"><%= tag %></a><% if (index < article.tags.length - 1) { %> <% } %>
+            <% }) %>
+          <% } %>
+        </span>
+      </li>
+    <% }) %>
+  </ul>
+  
+  <% if (totalPages > 1) { %>
+    <nav style="margin-top: 2em;">
+      <% if (page > 1) { %>
+        <a href="/?page=<%= page - 1 %>">← 上一页</a>
+      <% } %>
+      
+      <span>第 <%= page %> 页 / 共 <%= totalPages %> 页</span>
+      
+      <% if (page < totalPages) { %>
+        <a href="/?page=<%= page + 1 %>">下一页 →</a>
+      <% } %>
+    </nav>
+  <% } %>
+<% } %>
+
+<%- include('partials/footer') %>

@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= typeof title !== 'undefined' ? title + ' - ' : '' %>我的博客</title>
+  <!-- new.css 官方推荐的引入方式 -->
+  <link rel="stylesheet" href="https://fonts.xz.style/serve/inter.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@exampledev/new.css@1.1.2/new.min.css">
+  <link rel="stylesheet" href="/css/custom.css">
+</head>
+<body>
+  <header>
+    <h1><a href="/" style="text-decoration: none; color: inherit;">我的博客</a></h1>
+    <nav>
+      <a href="/">首页</a> /
+      <a href="/archive">归档</a> /
+      <a href="/tags">标签</a> /
+      <a href="/about">关于</a>
+      <% if (typeof user !== 'undefined' && user) { %>
+        / <a href="/admin">管理</a>
+      <% } %>
+    </nav>
+  </header>
+  
+  <main>

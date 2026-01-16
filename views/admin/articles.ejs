@@ -1,0 +1,82 @@
+<%- include('../partials/admin-header', { title: '文章列表' }) %>
+
+<h2>文章列表</h2>
+
+<div id="message"></div>
+
+<p>共 <%= articles.length %> 篇文章</p>
+
+<% if (articles.length === 0) { %>
+  <p>暂无文章，<a href="/admin/upload">立即上传</a></p>
+<% } else { %>
+  <table style="width: 100%; border-collapse: collapse;">
+    <thead>
+      <tr>
+        <th style="text-align: left; padding: 0.5em;">标题</th>
+        <th style="text-align: left; padding: 0.5em;">标签</th>
+        <th style="text-align: left; padding: 0.5em;">发布日期</th>
+        <th style="text-align: center; padding: 0.5em;">操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% articles.forEach(article => { %>
+        <tr>
+          <td style="padding: 0.5em;">
+            <a href="/article/<%= article.slug %>" target="_blank"><%= article.title %></a>
+          </td>
+          <td style="padding: 0.5em;">
+            <% if (article.tags && article.tags.length > 0) { %>
+              <% article.tags.forEach(tag => { %>
+                <span class="tag"><%= tag %></span>
+              <% }) %>
+            <% } else { %>
+              -
+            <% } %>
+          </td>
+          <td style="padding: 0.5em;">
+            <%= new Date(article.created_at).toLocaleDateString('zh-CN') %>
+          </td>
+          <td style="padding: 0.5em; text-align: center;">
+            <button onclick="deleteArticle(<%= article.id %>, '<%= article.title %>')" style="background: #dc3545; color: white;">删除</button>
+          </td>
+        </tr>
+      <% }) %>
+    </tbody>
+  </table>
+<% } %>
+
+<script>
+  const messageDiv = document.getElementById('message');
+  
+  // 删除文章
+  async function deleteArticle(id, title) {
+    if (!confirm(`确定要删除文章"${title}"吗？此操作不可恢复！`)) {
+      return;
+    }
+    
+    try {
+      const response = await fetch(`/api/admin/articles/${id}`, {
+        method: 'DELETE'
+      });
+      
+      const data = await response.json();
+      
+      if (response.ok) {
+        showMessage('success', '文章已删除');
+        setTimeout(() => {
+          window.location.reload();
+        }, 1000);
+      } else {
+        showMessage('error', data.error || '删除失败');
+      }
+    } catch (error) {
+      showMessage('error', '网络错误，请稍后重试');
+    }
+  }
+  
+  function showMessage(type, message) {
+    messageDiv.innerHTML = `<div class="message ${type}">${message}</div>`;
+  }
+</script>
+
+<%- include('../partials/admin-footer') %>

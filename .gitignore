@@ -1,0 +1,13 @@
+node_modules/
+blog.db
+*.log
+.DS_Store
+.env
+uploads/temp/
+backups/
+public/images/*
+!public/images/.gitkeep
+articles/*
+!articles/.gitkeep
+.codelf/
+.cursor/

@@ -1,0 +1,35 @@
+{
+  "name": "minimalist-blog",
+  "version": "1.0.0",
+  "description": "极简个人博客系统 - Markdown + new.css",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "nodemon server/index.js",
+    "init-db": "node server/scripts/init-db.js",
+    "query-db": "node scripts/query-db.js",
+    "backup-db": "node scripts/backup-db.js",
+    "change-password": "node scripts/change-password.js"
+  },
+  "keywords": ["blog", "markdown", "minimalist"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^5.0.1",
+    "ejs": "^3.1.10",
+    "better-sqlite3": "^11.8.1",
+    "markdown-it": "^14.1.0",
+    "markdown-it-anchor": "^9.2.0",
+    "gray-matter": "^4.0.3",
+    "sharp": "^0.33.5",
+    "jsonwebtoken": "^9.0.2",
+    "bcrypt": "^6.0.0",
+    "multer": "^2.0.2",
+    "cookie-parser": "^1.4.7",
+    "adm-zip": "^0.5.16",
+    "slugify": "^1.6.6"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7"
+  }
+}

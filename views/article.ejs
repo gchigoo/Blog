@@ -1,0 +1,37 @@
+<%- include('partials/header', { title: article.title, user }) %>
+
+<article class="article-detail">
+  <!-- 文章头部信息 -->
+  <div class="article-header">
+    <h1 class="article-title"><%= article.title %></h1>
+    
+    <div class="article-meta">
+      <span class="article-date">
+        发布于 <%= new Date(article.created_at).toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' }) %>
+      </span>
+      <% if (article.tags && article.tags.length > 0) { %>
+        <span class="article-tags">
+          标签: 
+          <% article.tags.forEach((tag, index) => { %>
+            <a href="/tag/<%= encodeURIComponent(tag) %>" class="tag"><%= tag %></a><% if (index < article.tags.length - 1) { %> <% } %>
+          <% }) %>
+        </span>
+      <% } %>
+    </div>
+  </div>
+  
+  <!-- 分隔线 -->
+  <hr class="article-divider">
+  
+  <!-- 文章内容 -->
+  <div class="article-content">
+    <%- article.html %>
+  </div>
+  
+  <!-- 底部导航 -->
+  <div class="article-footer">
+    <a href="/" class="back-link">← 返回首页</a>
+  </div>
+</article>
+
+<%- include('partials/footer') %>

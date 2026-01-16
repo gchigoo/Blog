@@ -1,0 +1,40 @@
+<%- include('partials/header', { title: '归档', user }) %>
+
+<h2>文章归档</h2>
+
+<% 
+  const years = Object.keys(archive).sort((a, b) => b - a);
+  const monthNames = ['一月', '二月', '三月', '四月', '五月', '六月', '七月', '八月', '九月', '十月', '十一月', '十二月'];
+%>
+
+<% if (years.length === 0) { %>
+  <p>暂无归档内容</p>
+<% } else { %>
+  <% years.forEach(year => { %>
+    <div class="archive-year">
+      <h3><%= year %> 年</h3>
+      
+      <% 
+        const months = Object.keys(archive[year]).sort((a, b) => b - a);
+      %>
+      
+      <% months.forEach(month => { %>
+        <div class="archive-month">
+          <h4><%= monthNames[month - 1] %></h4>
+          <ul class="article-list">
+            <% archive[year][month].forEach(article => { %>
+              <li>
+                <a href="/article/<%= article.slug %>"><%= article.title %></a>
+                <span class="article-meta">
+                  <%= new Date(article.created_at).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }) %>
+                </span>
+              </li>
+            <% }) %>
+          </ul>
+        </div>
+      <% }) %>
+    </div>
+  <% }) %>
+<% } %>
+
+<%- include('partials/footer') %>

@@ -1,0 +1,17 @@
+<%- include('partials/header', { title: '标签', user }) %>
+
+<h2>所有标签</h2>
+
+<% if (tags.length === 0) { %>
+  <p>暂无标签</p>
+<% } else { %>
+  <div class="tag-cloud">
+    <% tags.forEach(tag => { %>
+      <a href="/tag/<%= encodeURIComponent(tag.name) %>" class="tag tag-cloud-item" style="font-size: <%= 0.8 + (tag.count / Math.max(...tags.map(t => t.count))) * 0.15 %>em;">
+        <%= tag.name %> (<%= tag.count %>)
+      </a>
+    <% }) %>
+  </div>
+<% } %>
+
+<%- include('partials/footer') %>
