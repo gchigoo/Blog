@@ -68,7 +68,7 @@ async function changePassword(password, username = 'admin') {
     // 更新密码
     const result = db.prepare(`
       UPDATE users 
-      SET password = ?
+      SET password_hash = ?
       WHERE username = ?
     `).run(hash, username);
     
