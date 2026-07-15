@@ -17,7 +17,7 @@
 
 ## 环境要求
 
-- **Node.js**: 18+ (推荐 LTS)
+- **Node.js**: 24.x LTS（`package.json` 限制为 `>=24 <25`）
 - **Git**: 代码管理
 - **PM2**: 进程守护（生产环境）
 - **Nginx**: 反向代理（可选但推荐）
@@ -32,11 +32,14 @@
 git clone <your-repo-url> blog
 cd blog
 
-# 2. 安装依赖
-npm install
+# 2. 安装锁定依赖
+npm ci
 
-# 3. 初始化数据库（生成默认管理员 admin/admin123）
+# 3. 初始化数据库（避免将初始密码写入 shell history 或仓库）
+read -rsp 'Initial admin password: ' INITIAL_ADMIN_PASSWORD; echo
+export INITIAL_ADMIN_PASSWORD
 npm run init-db
+unset INITIAL_ADMIN_PASSWORD
 
 # 4. 启动测试
 npm start
@@ -44,16 +47,16 @@ npm start
 
 访问 http://localhost:3000 确认正常运行后，继续配置生产环境。
 
-**⚠️ 重要：首次登录后请立即修改密码！**
+管理员用户名固定为 `admin`，但系统不生成默认密码。请用受保护的环境变量提供初始密码。
 
 ### 配置文件（可选）
 
-编辑 `server/config.js` 修改端口和 JWT 密钥：
+通过环境变量设置端口和 JWT 密钥；生产环境必须设置稳定、足够长的 `JWT_SECRET`：
 
 ```javascript
 module.exports = {
   port: process.env.PORT || 3000,
-  jwtSecret: process.env.JWT_SECRET || 'your-random-secret-key-here',
+  jwtSecret: process.env.JWT_SECRET,
   // ...
 };
 ```
@@ -203,7 +206,7 @@ sudo certbot renew
 
 - **前台**: `https://your-domain.com`
 - **后台**: `https://your-domain.com/admin`
-- **登录**: 使用默认账号 `admin` / `admin123`
+- **登录**: 使用初始化时为 `admin` 设置的密码
 
 ---
 
@@ -245,8 +248,8 @@ echo "备份完成: $BACKUP_DIR"
 # 1. 拉取最新代码
 git pull
 
-# 2. 安装新依赖
-npm install
+# 2. 安装新锁定依赖
+npm ci
 
 # 3. 重启应用（PM2 会优雅重启，无停机）
 pm2 restart blog
@@ -354,8 +357,11 @@ netstat -tlnp | grep 3000
 
 ```bash
 # ⚠️ 会删除所有数据！
-rm blog.db
+# 4. 仅在空数据库上初始化；必须提供强初始密码
+read -rsp 'Initial admin password: ' INITIAL_ADMIN_PASSWORD; echo
+export INITIAL_ADMIN_PASSWORD
 npm run init-db
+unset INITIAL_ADMIN_PASSWORD
 ```
 
 或者修改数据库中的密码（需要生成 bcrypt hash）。
@@ -403,7 +409,7 @@ htop
 
 ## 安全清单
 
-- [x] 修改默认管理员密码
+- [x] 初始化不提供默认管理员密码；强 `INITIAL_ADMIN_PASSWORD` 为必填项
 - [x] 使用强 JWT_SECRET（至少 32 位随机字符）
 - [x] 启用 HTTPS（Let's Encrypt）
 - [x] 配置防火墙
@@ -429,21 +435,21 @@ htop
 ### 核心功能包 (13 个生产依赖)
 
 #### Web 框架
-- **express** (5.0.1): HTTP 服务器和路由
+- **express** (5.2.1): HTTP 服务器和路由
 - **ejs** (3.1.10): HTML 模板引擎
 
 #### 数据存储
-- **better-sqlite3** (11.8.1): SQLite 同步驱动，Windows 兼容性好
+- **better-sqlite3** (12.11.1): SQLite 同步驱动，支持 Node.js 24
 
 #### Markdown 处理
-- **markdown-it** (14.1.0): Markdown → HTML 解析器
-- **markdown-it-anchor** (9.2.0): 为标题生成锚点 id
+- **markdown-it** (14.3.0): Markdown → HTML 解析器（原始 HTML 默认作为文本处理）
+- **markdown-it-anchor** (9.2.1): 为标题生成锚点 id
 - **gray-matter** (4.0.3): 解析 Front Matter 元数据
 
 #### 文件处理
-- **sharp** (0.33.5): 图片处理，转 WebP
-- **multer** (2.0.2): 文件上传 (multipart/form-data)
-- **adm-zip** (0.5.16): ZIP 压缩包解压
+- **sharp** (0.35.3): 图片处理，转 WebP
+- **multer** (2.2.0): 文件上传 (multipart/form-data)
+- **adm-zip** (0.6.0): ZIP 压缩包解压
 
 #### 安全认证
 - **bcrypt** (6.0.0): 密码加密 (hash + salt)
@@ -451,10 +457,10 @@ htop
 - **cookie-parser** (1.4.7): Cookie 解析
 
 #### 工具库
-- **slugify** (1.6.6): 生成 URL 友好 slug
+- **slugify** (1.6.9): 生成 URL 友好 slug
 
 ### 开发依赖 (1 个)
-- **nodemon** (3.1.7): 开发环境自动重启
+- **nodemon** (3.1.14): 开发环境自动重启
 
 ### 主要功能流程
 
@@ -469,19 +475,19 @@ bcrypt → JWT → cookie-parser
 
 ### 为什么选择这些包？
 
-1. ✅ **极简原则**: 仅 14 个依赖，避免过度依赖
+1. ✅ **极简原则**: 仅 13 个生产依赖，避免过度依赖
 2. ✅ **性能优先**: better-sqlite3 比 sqlite3 快，Sharp 比 imagemagick 快
-3. ✅ **安全第一**: 使用最新稳定版本 (2026-01)
+3. ✅ **安全第一**: 生产锁文件经 `npm audit --omit=dev` 验证
 4. ✅ **易于维护**: 依赖少，升级简单
 
-### 最近更新 (2026-01-16)
+### 最近更新 (2026-07-15)
 
 | 包名 | 升级 | 改进 |
 |------|------|------|
-| express | 4.x → 5.0.1 | 性能提升 |
-| bcrypt | 5.x → 6.0.0 | 减少 43 个依赖 |
-| multer | 1.x → 2.0.2 | 修复安全漏洞 |
-| markdown-it-anchor | 8.x → 9.2.0 | API 优化 |
+| Node.js | 18+ → 24 LTS | 固定生产运行时基线 |
+| better-sqlite3 | 11.x → 12.11 | 支持 Node.js 24 |
+| sharp | 0.33 → 0.35 | 支持 Node.js 24 |
+| multer / adm-zip | 2.0 / 0.5 → 2.2 / 0.6 | 更新上传依赖 |
 
 ---
 

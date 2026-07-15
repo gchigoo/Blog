@@ -15,11 +15,14 @@
 ## 🚀 快速开始（3 步）
 
 ```bash
-# 1. 安装依赖
-npm install
+# 1. 使用 Node.js 24 LTS 安装锁定依赖
+npm ci
 
-# 2. 初始化数据库（创建管理员: admin/admin123）
+# 2. 初始化数据库（避免把密码写入 shell history）
+read -rsp 'Initial admin password: ' INITIAL_ADMIN_PASSWORD; echo
+export INITIAL_ADMIN_PASSWORD
 npm run init-db
+unset INITIAL_ADMIN_PASSWORD
 
 # 3. 启动服务器
 npm start
@@ -29,7 +32,7 @@ npm start
 - 📱 前台：http://localhost:3000
 - ⚙️ 后台：http://localhost:3000/admin
 
-**⚠️ 首次登录后请立即修改密码！**
+初始管理员用户名为 `admin`；密码仅来自初始化时的 `INITIAL_ADMIN_PASSWORD`，项目不会提供默认密码。
 
 ## 📖 使用说明
 
@@ -84,7 +87,10 @@ blog/
 npm run dev
 
 # 重新初始化数据库
+read -rsp 'Initial admin password: ' INITIAL_ADMIN_PASSWORD; echo
+export INITIAL_ADMIN_PASSWORD
 npm run init-db
+unset INITIAL_ADMIN_PASSWORD
 ```
 
 ## 🌐 生产部署
@@ -99,10 +105,10 @@ npm run init-db
 
 | 包名 | 用途 |
 |------|------|
-| express 5.0 | Web 框架 |
-| markdown-it 14.1 | Markdown 解析 |
-| sharp 0.33 | 图片转 WebP |
-| better-sqlite3 11.8 | SQLite 数据库 |
+| express 5.2 | Web 框架 |
+| markdown-it 14.3 | Markdown 解析 |
+| sharp 0.35 | 图片转 WebP |
+| better-sqlite3 12.11 | SQLite 数据库 |
 | bcrypt 6.0 | 密码加密 |
 
 完整清单：[依赖说明](./DEPLOY.md#依赖说明)

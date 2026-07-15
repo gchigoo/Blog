@@ -18,7 +18,7 @@ steps:
     action: 在 Node 24 下升级设计中列明的运行时与安全依赖并重建 lockfile。
     exit_signal: npm ci、npm test、node --check 通过；npm audit --omit=dev 的 high 与 critical 均为 0。
   - id: release-verification
-    status: pending
+    status: done
     action: 更新 README/DEPLOY 并在干净 Node 24 环境完成初始化、HTTP 与两篇文章包上传 smoke test。
     exit_signal: 文档不含默认密码或 Node 18 基线；正常 md/ZIP 上传成功；仓库状态、diff 和远端提交均已核验。
 checks:
