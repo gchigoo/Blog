@@ -2,7 +2,7 @@ feature: 2026-07-15-node24-security-baseline
 status: in-progress
 steps:
   - id: runtime-test-base
-    status: pending
+    status: done
     action: 在 Node 24 下声明运行时契约并建立 node:test 回归基座；先让安全行为测试失败。
     exit_signal: 新测试因默认密码、原始 HTML 或不安全路径尚未被阻断而正确失败；不改生产行为。
   - id: credential-boundary

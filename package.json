@@ -6,10 +6,14 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "nodemon server/index.js",
+    "test": "node --test test/*.test.js",
     "init-db": "node server/scripts/init-db.js",
     "query-db": "node scripts/query-db.js",
     "backup-db": "node scripts/backup-db.js",
     "change-password": "node scripts/change-password.js"
+  },
+  "engines": {
+    "node": ">=24 <25"
   },
   "keywords": ["blog", "markdown", "minimalist"],
   "author": "",
