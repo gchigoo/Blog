@@ -3,13 +3,22 @@ const path = require('path');
 const cookieParser = require('cookie-parser');
 const config = require('./config');
 
+const { createAnalyticsMiddleware } = require('./analytics/middleware');
+const { initializeAnalytics } = require('./analytics/store');
+
 const app = express();
+app.set('trust proxy', 'loopback');
+initializeAnalytics(require('./db').db);
 
 // 中间件
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, '..', 'public')));
+app.use(createAnalyticsMiddleware({
+  db: require('./db').db,
+  secret: config.analyticsHmacSecret
+}));
 
 // 视图引擎
 app.set('view engine', 'ejs');
@@ -18,10 +27,12 @@ app.set('views', path.join(__dirname, '..', 'views'));
 // API 路由
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/articles', require('./routes/articles'));
+app.use('/api/admin/analytics', require('./routes/analytics'));
 app.use('/api/admin', require('./routes/admin'));
 
 // 前台页面路由
-const { dbGet, dbAll } = require('./db');
+const { db, dbGet, dbAll } = require('./db');
+const { getOverview } = require('./analytics/store');
 const { optionalAuth } = require('./middleware/auth');
 
 // 首页 - 文章列表
@@ -221,6 +232,28 @@ app.get('/admin/articles', authenticateToken, (req, res) => {
     res.render('admin/articles', { articles: articlesWithTags, user: req.user });
   } catch (error) {
     console.error('渲染后台文章列表失败:', error);
+    res.status(500).send('服务器错误');
+  }
+});
+
+app.get('/admin/analytics', authenticateToken, (req, res) => {
+  try {
+    const formatBeijingHour = bucketUtc => new Intl.DateTimeFormat('zh-CN', {
+      timeZone: 'Asia/Shanghai',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      hourCycle: 'h23'
+    }).format(new Date(bucketUtc));
+
+    res.render('admin/analytics', {
+      overview: getOverview(db, Date.now(), req.query.days),
+      formatBeijingHour,
+      user: req.user
+    });
+  } catch (error) {
+    console.error('渲染访问统计失败:', error);
     res.status(500).send('服务器错误');
   }
 });

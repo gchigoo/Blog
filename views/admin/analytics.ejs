@@ -1,0 +1,52 @@
+<%- include('../partials/admin-header', { title: '访问统计' }) %>
+
+<h2>访问统计</h2>
+<p>统计范围：近 <%= overview.days %> 天。时间按北京时间显示；数据为匿名聚合，不保存原始 IP、完整设备信息或点击轨迹。</p>
+
+<nav aria-label="统计时间范围">
+  <a href="/admin/analytics?days=1">近 1 天</a> /
+  <a href="/admin/analytics?days=7">近 7 天</a> /
+  <a href="/admin/analytics?days=30">近 30 天</a>
+</nav>
+
+<h3>概览</h3>
+<ul>
+  <li>页面访问：<strong><%= overview.pageViews %></strong></li>
+  <li>匿名访客（按天去重）：<strong><%= overview.anonymousVisitors %></strong></li>
+</ul>
+
+<h3>按访问时段</h3>
+<% if (overview.byHour.length === 0) { %>
+  <p>暂无统计数据。</p>
+<% } else { %>
+  <table>
+    <thead><tr><th>北京时间</th><th>页面访问</th><th>匿名访客</th></tr></thead>
+    <tbody>
+      <% overview.byHour.forEach(row => { %>
+        <tr><td><%= formatBeijingHour(row.bucketUtc) %></td><td><%= row.pageViews %></td><td><%= row.anonymousVisitors %></td></tr>
+      <% }) %>
+    </tbody>
+  </table>
+<% } %>
+
+<h3>按页面</h3>
+<table>
+  <thead><tr><th>页面</th><th>页面访问</th><th>匿名访客</th></tr></thead>
+  <tbody>
+    <% overview.byPage.forEach(row => { %>
+      <tr><td><code><%= row.path %></code></td><td><%= row.pageViews %></td><td><%= row.anonymousVisitors %></td></tr>
+    <% }) %>
+  </tbody>
+</table>
+
+<h3>按设备类别</h3>
+<table>
+  <thead><tr><th>类别</th><th>页面访问</th></tr></thead>
+  <tbody>
+    <% overview.byDevice.forEach(row => { %>
+      <tr><td><%= row.deviceKind %></td><td><%= row.pageViews %></td></tr>
+    <% }) %>
+  </tbody>
+</table>
+
+<%- include('../partials/admin-footer') %>
