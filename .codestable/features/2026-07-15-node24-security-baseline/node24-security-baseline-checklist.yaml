@@ -1,0 +1,29 @@
+feature: 2026-07-15-node24-security-baseline
+status: in-progress
+steps:
+  - id: runtime-test-base
+    status: pending
+    action: 在 Node 24 下声明运行时契约并建立 node:test 回归基座；先让安全行为测试失败。
+    exit_signal: 新测试因默认密码、原始 HTML 或不安全路径尚未被阻断而正确失败；不改生产行为。
+  - id: credential-boundary
+    status: pending
+    action: 实现初始管理员密码环境变量与统一改密密码策略。
+    exit_signal: 缺失或弱初始密码不会创建 admin；强密码初始化与改密测试通过且日志不泄露密码。
+  - id: content-path-boundary
+    status: pending
+    action: 实现安全 slug/ZIP entry/归属路径验证，关闭原始 Markdown HTML，修复后台标题危险输出。
+    exit_signal: XSS、slug traversal、ZIP traversal 测试通过；普通 Markdown 和文章图片路径行为保持可用。
+  - id: dependency-lock
+    status: pending
+    action: 在 Node 24 下升级设计中列明的运行时与安全依赖并重建 lockfile。
+    exit_signal: npm ci、npm test、node --check 通过；npm audit --omit=dev 的 high 与 critical 均为 0。
+  - id: release-verification
+    status: pending
+    action: 更新 README/DEPLOY 并在干净 Node 24 环境完成初始化、HTTP 与两篇文章包上传 smoke test。
+    exit_signal: 文档不含默认密码或 Node 18 基线；正常 md/ZIP 上传成功；仓库状态、diff 和远端提交均已核验。
+checks:
+  - Node 24 契约存在于 package.json、.nvmrc 和部署文档。
+  - 默认管理员凭证、Markdown XSS、slug/ZIP 路径穿越四项 P0 均有先失败后通过的自动化测试。
+  - 生产依赖审计无 high 或 critical。
+  - 每个通过验证的切片均以 Gchigoo <stan.guo@mail.ru> 提交并通过 SSH 推送至 origin master。
+  - RN2.5G 部署前先备份 blog.db、articles 和 public/images，并完成 Node 24 部署验证。
