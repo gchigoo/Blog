@@ -6,7 +6,7 @@ steps:
     action: 在 Node 24 下声明运行时契约并建立 node:test 回归基座；先让安全行为测试失败。
     exit_signal: 新测试因默认密码、原始 HTML 或不安全路径尚未被阻断而正确失败；不改生产行为。
   - id: credential-boundary
-    status: pending
+    status: done
     action: 实现初始管理员密码环境变量与统一改密密码策略。
     exit_signal: 缺失或弱初始密码不会创建 admin；强密码初始化与改密测试通过且日志不泄露密码。
   - id: content-path-boundary
