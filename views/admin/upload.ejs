@@ -122,7 +122,7 @@ date: 2026-01-16
     uploadBtn.disabled = true;
     cancelBtn.disabled = true;
     uploadProgress.style.display = 'block';
-    messageDiv.innerHTML = '';
+    messageDiv.replaceChildren();
     
     try {
       const response = await fetch('/api/admin/upload', {
@@ -135,7 +135,7 @@ date: 2026-01-16
       uploadProgress.style.display = 'none';
       
       if (response.ok) {
-        showMessage('success', `文章上传成功！<br>标题: ${data.article.title}<br>Slug: ${data.article.slug}<br>图片转换: ${data.article.imagesConverted} 张`);
+        showUploadSuccess(data.article);
         
         // 重置表单
         selectedFile = null;
@@ -160,9 +160,23 @@ date: 2026-01-16
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' KB';
     return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
   }
+
+  function showUploadSuccess(article) {
+    const content = document.createElement('div');
+    content.classList.add('message', 'success');
+    content.append('文章上传成功！ 标题: ');
+
+    const title = document.createElement('span');
+    title.textContent = article.title;
+    content.append(title, ` Slug: ${article.slug} 图片转换: ${article.imagesConverted} 张`);
+    messageDiv.replaceChildren(content);
+  }
   
   function showMessage(type, message) {
-    messageDiv.innerHTML = `<div class="message ${type}">${message}</div>`;
+    const content = document.createElement('div');
+    content.classList.add('message', type);
+    content.textContent = message;
+    messageDiv.replaceChildren(content);
   }
 </script>
 

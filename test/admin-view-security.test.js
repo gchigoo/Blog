@@ -28,5 +28,6 @@ test('admin upload feedback does not inject article metadata through innerHTML',
   const html = await ejs.renderFile(template, { user: { username: 'admin' } });
 
   assert.doesNotMatch(html, /\.innerHTML\s*=/);
+  assert.doesNotMatch(html, /\$\{data\.article\.title\}/);
   assert.match(html, /textContent/);
 });

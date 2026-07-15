@@ -9,6 +9,12 @@ const { dbRun, dbGet, dbAll } = require('../db');
 const { authenticateToken } = require('../middleware/auth');
 const { parseMarkdown, extractImages, replaceImagePaths, replaceHtmlImagePaths } = require('../utils/markdown');
 const { convertToWebP, isImage, createWebPFromBuffer } = require('../utils/image');
+const {
+  isSafeSlug,
+  isSafeZipEntryName,
+  resolveArticlePath,
+  resolveZipEntryPath
+} = require('../utils/path-security');
 const config = require('../config');
 
 // 配置文件上传
@@ -54,6 +60,10 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req, res
     if (fileExt === '.zip') {
       const zip = new AdmZip(req.file.path);
       const zipEntries = zip.getEntries();
+
+      if (zipEntries.some(entry => !isSafeZipEntryName(entry.entryName))) {
+        return res.status(400).json({ error: 'ZIP 包含不安全路径' });
+      }
       
       // 提取目录
       const extractDir = path.join(config.uploadDir, `extract-${Date.now()}`);
@@ -66,7 +76,7 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req, res
       // 查找 Markdown 文件
       for (const entry of zipEntries) {
         if (!entry.isDirectory && entry.entryName.endsWith('.md')) {
-          const mdPath = path.join(extractDir, entry.entryName);
+          const mdPath = resolveZipEntryPath(extractDir, entry.entryName);
           markdownContent = await fs.readFile(mdPath, 'utf-8');
           break;
         }
@@ -79,7 +89,7 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req, res
       // 收集图片文件
       for (const entry of zipEntries) {
         if (!entry.isDirectory && isImage(entry.entryName)) {
-          const imgPath = path.join(extractDir, entry.entryName);
+          const imgPath = resolveZipEntryPath(extractDir, entry.entryName);
           imageFiles.push({
             originalPath: entry.entryName,
             fullPath: imgPath
@@ -101,6 +111,10 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req, res
     // 验证必需字段
     if (!data.title) {
       return res.status(400).json({ error: 'Markdown 文件必须包含 title 字段' });
+    }
+
+    if (!isSafeSlug(data.slug)) {
+      return res.status(400).json({ error: 'slug 格式不安全' });
     }
     
     // 检查 slug 是否已存在
@@ -170,7 +184,7 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req, res
     // 保存 Markdown 原文
     const articlesDir = config.articlesDir;
     await fs.mkdir(articlesDir, { recursive: true });
-    const mdFilePath = path.join(articlesDir, `${data.slug}.md`);
+    const mdFilePath = resolveArticlePath(articlesDir, data.slug);
     await fs.writeFile(mdFilePath, `---
 title: ${data.title}
 tags: ${JSON.stringify(data.tags)}
@@ -266,12 +280,17 @@ router.delete('/articles/:id', authenticateToken, (req, res) => {
     if (!article) {
       return res.status(404).json({ error: '文章不存在' });
     }
+
+    if (!isSafeSlug(article.slug)) {
+      return res.status(400).json({ error: '文章 slug 格式不安全' });
+    }
+
+    const mdFilePath = resolveArticlePath(config.articlesDir, article.slug);
     
     // 删除数据库记录
     dbRun('DELETE FROM articles WHERE id = ?', [id]);
     
     // 删除 Markdown 文件
-    const mdFilePath = path.join(config.articlesDir, `${article.slug}.md`);
     fs.unlink(mdFilePath).catch(error => {
       console.error('删除 Markdown 文件失败:', error);
     });

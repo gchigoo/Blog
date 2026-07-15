@@ -9,7 +9,7 @@ const slugify = require('slugify');
  * markdown-it-anchor v9.2.0
  */
 const md = new MarkdownIt({
-  html: true,        // 允许 HTML 标签
+  html: false,       // 原始 HTML 按文本处理，避免持久化 XSS
   linkify: true,     // 自动转换 URL 为链接
   typographer: true, // 美化排版（智能引号等）
   breaks: true       // 换行转为 <br>

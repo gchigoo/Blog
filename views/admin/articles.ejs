@@ -22,7 +22,7 @@
       <% articles.forEach(article => { %>
         <tr>
           <td style="padding: 0.5em;">
-            <a href="/article/<%= article.slug %>" target="_blank"><%= article.title %></a>
+            <a class="article-title" href="/article/<%= article.slug %>" target="_blank"><%= article.title %></a>
           </td>
           <td style="padding: 0.5em;">
             <% if (article.tags && article.tags.length > 0) { %>
@@ -37,7 +37,7 @@
             <%= new Date(article.created_at).toLocaleDateString('zh-CN') %>
           </td>
           <td style="padding: 0.5em; text-align: center;">
-            <button onclick="deleteArticle(<%= article.id %>, '<%= article.title %>')" style="background: #dc3545; color: white;">删除</button>
+            <button type="button" class="delete-article" data-article-id="<%= article.id %>" style="background: #dc3545; color: white;">删除</button>
           </td>
         </tr>
       <% }) %>
@@ -47,6 +47,13 @@
 
 <script>
   const messageDiv = document.getElementById('message');
+
+  document.querySelectorAll('.delete-article').forEach(button => {
+    button.addEventListener('click', () => {
+      const title = button.closest('tr').querySelector('.article-title').textContent;
+      deleteArticle(button.dataset.articleId, title);
+    });
+  });
   
   // 删除文章
   async function deleteArticle(id, title) {
@@ -75,7 +82,10 @@
   }
   
   function showMessage(type, message) {
-    messageDiv.innerHTML = `<div class="message ${type}">${message}</div>`;
+    const content = document.createElement('div');
+    content.classList.add('message', type);
+    content.textContent = message;
+    messageDiv.replaceChildren(content);
   }
 </script>
 

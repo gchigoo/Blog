@@ -35,43 +35,116 @@ async function upload(baseUrl, name, bytes) {
   });
 }
 
+function zipWithRawEntryName(entryName, content) {
+  const entryNameBytes = Buffer.from(entryName);
+  const placeholder = `${'x'.repeat(entryNameBytes.length - 3)}.md`;
+  const zip = new AdmZip();
+  zip.addFile(placeholder, Buffer.from(content));
+  const buffer = zip.toBuffer();
+  const placeholderBytes = Buffer.from(placeholder);
+  let offset = 0;
+  let replacements = 0;
+
+  while ((offset = buffer.indexOf(placeholderBytes, offset)) !== -1) {
+    entryNameBytes.copy(buffer, offset);
+    offset += entryNameBytes.length;
+    replacements += 1;
+  }
+
+  assert.ok(replacements >= 2, 'ZIP local and central directory names must both be replaced');
+  assert.equal(new AdmZip(buffer).getEntries()[0].entryName, entryName);
+  return buffer;
+}
+
 test('raw Markdown HTML is escaped while normal Markdown images still render', () => {
   const markdown = `---\ntitle: Security\nslug: security\n---\n\n<img src=x onerror=alert(1)>\n<script>alert(2)</script>\n\n![safe](./safe.png)`;
   const parsed = parseMarkdown(markdown);
 
-  assert.doesNotMatch(parsed.html, /<script|<img src=x|onerror=/i);
+  assert.doesNotMatch(parsed.html, /<script|<img src=x|<[^>]+\sonerror\s*=/i);
   assert.match(parsed.html, /&lt;img src=x onerror=alert\(1\)&gt;/);
   assert.match(parsed.html, /<img src="\.\/safe\.png" alt="safe">/);
 });
 
-test('upload rejects a traversal slug without writing outside articles root', async t => {
+test('upload rejects slugs outside the fixed safe format', async t => {
   const { root, baseUrl } = await prepareServer(t);
-  const outside = path.join(root, 'outside-target.md');
-  const markdown = `---\ntitle: Traversal\nslug: ../outside-target\n---\n\nbody`;
+  const invalidSlugs = [
+    '../outside-target',
+    'Unsafe',
+    'double--dash',
+    '-leading',
+    'trailing-',
+    'with_under',
+    'nested/path',
+    'back\\slash'
+  ];
 
-  const response = await upload(baseUrl, 'traversal.md', markdown);
+  for (const [index, slug] of invalidSlugs.entries()) {
+    const markdown = `---\ntitle: Invalid ${index}\nslug: ${slug}\n---\n\nbody`;
+    const response = await upload(baseUrl, `invalid-${index}.md`, markdown);
+    assert.equal(response.status, 400, `${slug}: ${await response.text()}`);
+  }
+
+  await assert.rejects(fs.access(path.join(root, 'outside-target.md')), { code: 'ENOENT' });
+});
+
+test('delete refuses an unsafe stored slug without touching files or the database row', async t => {
+  const { root, baseUrl } = await prepareServer(t);
+  const Database = require('better-sqlite3');
+  const protectedFile = path.join(root, 'protected.md');
+  await fs.writeFile(protectedFile, 'keep');
+
+  const db = new Database(path.join(root, 'blog.db'));
+  const result = db.prepare(`
+    INSERT INTO articles (title, slug, content, html, tags)
+    VALUES (?, ?, ?, ?, ?)
+  `).run('Unsafe stored article', '../protected', 'body', '<p>body</p>', '[]');
+  db.close();
+
+  const response = await fetch(`${baseUrl}/api/admin/articles/${result.lastInsertRowid}`, {
+    method: 'DELETE',
+    headers: { cookie: authCookie() }
+  });
 
   assert.equal(response.status, 400, await response.text());
-  await assert.rejects(fs.access(outside), { code: 'ENOENT' });
+  assert.equal(await fs.readFile(protectedFile, 'utf8'), 'keep');
+  const verifyDb = new Database(path.join(root, 'blog.db'));
+  assert.ok(verifyDb.prepare('SELECT id FROM articles WHERE id = ?').get(result.lastInsertRowid));
+  verifyDb.close();
 });
 
 test('upload rejects a ZIP traversal entry before extraction', async t => {
   const { root, baseUrl } = await prepareServer(t);
-  const zip = new AdmZip();
-  zip.addFile('../../outside.md', Buffer.from('---\ntitle: Outside\nslug: outside\n---\nbody'));
+  const zip = zipWithRawEntryName(
+    '../../outside.md',
+    '---\ntitle: Outside\nslug: outside\n---\nbody'
+  );
 
-  const response = await upload(baseUrl, 'traversal.zip', zip.toBuffer());
+  const response = await upload(baseUrl, 'traversal.zip', zip);
 
   assert.equal(response.status, 400, await response.text());
   await assert.rejects(fs.access(path.join(root, 'outside.md')), { code: 'ENOENT' });
 });
 
+test('upload rejects backslash ZIP traversal before extraction', async t => {
+  const { baseUrl } = await prepareServer(t);
+  const zip = zipWithRawEntryName(
+    '..\\outside.md',
+    '---\ntitle: Backslash\nslug: backslash\n---\nbody'
+  );
+
+  const response = await upload(baseUrl, 'backslash.zip', zip);
+
+  assert.equal(response.status, 400, await response.text());
+});
+
 test('upload rejects an absolute ZIP entry before extraction', async t => {
   const { baseUrl } = await prepareServer(t);
-  const zip = new AdmZip();
-  zip.addFile('/absolute.md', Buffer.from('---\ntitle: Absolute\nslug: absolute\n---\nbody'));
+  const zip = zipWithRawEntryName(
+    '/absolute.md',
+    '---\ntitle: Absolute\nslug: absolute\n---\nbody'
+  );
 
-  const response = await upload(baseUrl, 'absolute.zip', zip.toBuffer());
+  const response = await upload(baseUrl, 'absolute.zip', zip);
 
   assert.equal(response.status, 400, await response.text());
 });
