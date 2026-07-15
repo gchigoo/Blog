@@ -14,25 +14,25 @@ steps:
     exit_signal: Admin can view Beijing-time hourly, page, and device aggregates; unauthenticated requests are rejected.
   - id: trust-chain
     title: Configure trusted client-address forwarding through Nginx and Express
-    status: pending
+    status: done
     exit_signal: Nginx syntax passes; spoofed forwarded headers cannot control the client address used by the app.
   - id: release
     title: Upgrade production baseline, deploy, and verify the feature
-    status: pending
+    status: done
     exit_signal: Production smoke tests pass for blog, admin, API isolation, analytics, TLS, and privacy boundaries.
 checks:
   - id: privacy-boundary
     title: No raw IP, complete User-Agent, query, referrer, cookie, click, or per-visitor data is persisted or returned.
-    status: pending
+    status: passed
   - id: aggregation
     title: Aggregates show page views, daily anonymous uniques, hour buckets, path and device categories.
-    status: pending
+    status: passed
   - id: auth
     title: Analytics page and API require existing JWT authentication.
-    status: pending
+    status: passed
   - id: retention
     title: Metrics older than 30 days are removed.
-    status: pending
+    status: passed
   - id: non-regression
     title: Existing public blog, login, upload, article management, and TLS behavior remain operational.
-    status: pending
+    status: passed
