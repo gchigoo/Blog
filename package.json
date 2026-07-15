@@ -15,25 +15,29 @@
   "engines": {
     "node": ">=24 <25"
   },
-  "keywords": ["blog", "markdown", "minimalist"],
+  "keywords": [
+    "blog",
+    "markdown",
+    "minimalist"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "express": "^5.0.1",
-    "ejs": "^3.1.10",
-    "better-sqlite3": "^11.8.1",
-    "markdown-it": "^14.1.0",
-    "markdown-it-anchor": "^9.2.0",
-    "gray-matter": "^4.0.3",
-    "sharp": "^0.33.5",
-    "jsonwebtoken": "^9.0.2",
+    "adm-zip": "^0.6.0",
     "bcrypt": "^6.0.0",
-    "multer": "^2.0.2",
+    "better-sqlite3": "^12.11.1",
     "cookie-parser": "^1.4.7",
-    "adm-zip": "^0.5.16",
-    "slugify": "^1.6.6"
+    "ejs": "^3.1.10",
+    "express": "^5.2.1",
+    "gray-matter": "^4.0.3",
+    "jsonwebtoken": "^9.0.2",
+    "markdown-it": "^14.3.0",
+    "markdown-it-anchor": "^9.2.1",
+    "multer": "^2.2.0",
+    "sharp": "^0.35.3",
+    "slugify": "^1.6.9"
   },
   "devDependencies": {
-    "nodemon": "^3.1.7"
+    "nodemon": "^3.1.14"
   }
 }
