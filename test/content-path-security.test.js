@@ -4,7 +4,7 @@ const path = require('node:path');
 const test = require('node:test');
 const AdmZip = require('adm-zip');
 const jwt = require('jsonwebtoken');
-const { parseMarkdown } = require('../server/utils/markdown');
+const { parseMarkdown, replaceHtmlImagePaths } = require('../server/utils/markdown');
 const { createProjectFixture, runNode, startServer } = require('./helpers/project-fixture');
 
 const INITIAL_PASSWORD = 'S3cure!Node24';
@@ -63,6 +63,18 @@ test('raw Markdown HTML is escaped while normal Markdown images still render', (
   assert.doesNotMatch(parsed.html, /<script|<img src=x|<[^>]+\sonerror\s*=/i);
   assert.match(parsed.html, /&lt;img src=x onerror=alert\(1\)&gt;/);
   assert.match(parsed.html, /<img src="\.\/safe\.png" alt="safe">/);
+});
+
+test('replaces URI-encoded Windows image paths in rendered HTML', () => {
+  const sourcePath = 'C:\\Users\\HAT\\Desktop\\快充\\image-20191126101337709.png';
+  const html = parseMarkdown(`![diagram](${sourcePath})`).html;
+  const updated = replaceHtmlImagePaths(html, {
+    [sourcePath]: '/images/converted.webp'
+  });
+
+  assert.match(html, /C:%5CUsers%5CHAT%5CDesktop/);
+  assert.match(updated, /src="\/images\/converted\.webp"/);
+  assert.doesNotMatch(updated, /C:%5CUsers%5CHAT%5CDesktop/);
 });
 
 test('upload rejects slugs outside the fixed safe format', async t => {

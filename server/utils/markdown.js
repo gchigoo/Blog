@@ -134,9 +134,13 @@ function replaceHtmlImagePaths(html, imageMap) {
   let newHtml = html;
   
   for (const [oldPath, newPath] of Object.entries(imageMap)) {
-    const escapedOldPath = oldPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(`src="${escapedOldPath}"`, 'g');
-    newHtml = newHtml.replace(regex, `src="${newPath}"`);
+    // markdown-it URI-encodes Windows-style image paths in generated HTML.
+    // Match both the original Markdown reference and its rendered URI form.
+    for (const candidatePath of new Set([oldPath, encodeURI(oldPath)])) {
+      const escapedPath = candidatePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`src="${escapedPath}"`, 'g');
+      newHtml = newHtml.replace(regex, `src="${newPath}"`);
+    }
   }
   
   return newHtml;
