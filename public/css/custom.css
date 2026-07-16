@@ -17,6 +17,7 @@ body {
 /* 响应式容器 - 适配不同屏幕 */
 header, main, footer {
   width: 100%;
+  box-sizing: border-box;
   max-width: 1400px;  /* 超宽屏最大宽度 */
   margin-left: auto;
   margin-right: auto;
@@ -335,6 +336,222 @@ main {
 
 .back-link:hover {
   color: #0066cc;
+}
+
+/* 文章评论区 */
+.comments-section {
+  max-width: 800px;
+  margin: 3rem auto 0;
+  padding-top: 2rem;
+  border-top: 1px solid #e0e0e0;
+}
+
+.comments-section h2 {
+  margin-bottom: 0.75rem;
+}
+
+.comments-privacy-notice {
+  margin: 0 0 1.5rem;
+  padding: 0.85rem 1rem;
+  border-left: 3px solid #9ca3af;
+  background: #f6f8fa;
+  color: #555;
+  font-size: 0.95rem;
+  line-height: 1.65;
+}
+
+.comments-empty {
+  margin: 1.5rem 0;
+  color: #6b7280;
+}
+
+.comment-list {
+  list-style: none;
+  padding: 0;
+  margin: 2rem 0;
+}
+
+.comment-item {
+  padding: 1rem 0;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.comment-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  margin-bottom: 0.6rem;
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.comment-author {
+  color: #222;
+  overflow-wrap: anywhere;
+}
+
+.comment-content {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.65;
+}
+
+.comment-composer {
+  margin-top: 1.5rem;
+  padding: 1.25rem;
+  border: 1px solid #e1e4e8;
+  border-radius: 8px;
+  background: #fafafa;
+  color: #333;
+}
+
+.comment-identity {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.comment-identity p {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+#comment-logout-form {
+  margin: 0;
+}
+
+.comment-form {
+  margin: 0;
+}
+
+.comment-form label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+}
+
+.comment-form textarea {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-height: 9rem;
+  margin: 0;
+  box-sizing: border-box;
+  background: #fff;
+  resize: vertical;
+}
+
+.comment-form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1.5rem;
+  margin-top: 0.75rem;
+}
+
+.comment-form-actions small {
+  margin: 0;
+  color: #666;
+  line-height: 1.5;
+}
+
+.comment-submit-button,
+.secondary-button.comment-logout-button {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.secondary-button.comment-logout-button {
+  padding: 0.4rem 0.75rem;
+  border: 1px solid #c7cdd4;
+  background: transparent;
+  color: #555;
+  font-size: 0.875rem;
+}
+
+.secondary-button.comment-logout-button:hover {
+  border-color: #8c959f;
+  background: #f0f2f4;
+  color: #222;
+}
+
+.secondary-button {
+  background: #666;
+}
+
+.danger-button {
+  background: #b42318;
+}
+
+@media (max-width: 767px) {
+  .comment-composer {
+    padding: 1rem;
+  }
+
+  .comment-identity,
+  .comment-form-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .comment-submit-button {
+    width: 100%;
+  }
+
+  .comment-logout-button {
+    width: auto;
+  }
+}
+
+/* 评论审核页 */
+.moderation-filters {
+  margin-bottom: 1.5rem;
+}
+
+.moderation-filters [aria-current="page"] {
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.moderation-list {
+  list-style: none;
+  padding: 0;
+}
+
+.moderation-card {
+  margin-bottom: 1.25rem;
+  padding: 1rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+.moderation-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.moderation-meta > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.moderation-content {
+  margin: 1rem 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.moderation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
 }
 
 /* 大屏幕文章优化 */

@@ -1,3 +1,5 @@
+const { parseCommentsConfig } = require('./comments/config');
+
 module.exports = {
   port: process.env.PORT || 3000,
   jwtSecret: process.env.JWT_SECRET || 'change-this-secret-in-production-' + Math.random(),
@@ -7,5 +9,6 @@ module.exports = {
   imagesDir: 'public/images',
   articlesDir: 'articles',
   imageQuality: 80,
-  pageSize: 20
+  pageSize: 20,
+  comments: parseCommentsConfig(process.env)
 };

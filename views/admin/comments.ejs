@@ -1,0 +1,46 @@
+<%- include('../partials/admin-header', { title: '评论审核' }) %>
+
+<section class="moderation-page" aria-labelledby="moderation-title">
+  <h2 id="moderation-title">评论审核</h2>
+  <nav class="moderation-filters" aria-label="评论状态筛选">
+    <a href="/admin/comments?status=pending" <%= status === 'pending' ? 'aria-current="page"' : '' %>>待审核</a> /
+    <a href="/admin/comments?status=approved" <%= status === 'approved' ? 'aria-current="page"' : '' %>>已批准</a> /
+    <a href="/admin/comments?status=rejected" <%= status === 'rejected' ? 'aria-current="page"' : '' %>>已拒绝</a>
+  </nav>
+
+  <div id="moderation-message" role="status" tabindex="-1"></div>
+  <p>当前筛选共 <strong><%= comments.length %></strong> 条评论。</p>
+
+  <% if (comments.length === 0) { %>
+    <p class="comments-empty">该状态下没有评论。</p>
+  <% } else { %>
+    <ol class="moderation-list">
+      <% comments.forEach(comment => { %>
+        <li class="moderation-card" data-comment-id="<%= comment.id %>">
+          <div class="moderation-meta">
+            <strong><%= comment.displayName %></strong>
+            <span>
+              文章：<a href="/article/<%= comment.articleSlug %>" target="_blank" rel="noopener"><%= comment.articleTitle %></a>
+            </span>
+            <time datetime="<%= comment.createdAt %>">
+              <%= new Date(comment.createdAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) %>
+            </time>
+          </div>
+          <div class="moderation-content"><%= comment.content %></div>
+          <div class="moderation-actions">
+            <% if (comment.status !== 'approved') { %>
+              <button type="button" data-moderation-action="approved">批准</button>
+            <% } %>
+            <% if (comment.status !== 'rejected') { %>
+              <button type="button" data-moderation-action="rejected" class="secondary-button">拒绝</button>
+            <% } %>
+            <button type="button" data-moderation-action="delete" class="danger-button">删除</button>
+          </div>
+        </li>
+      <% }) %>
+    </ol>
+  <% } %>
+</section>
+
+<script src="/js/admin-comments.js?v=20260716-comments-3" defer></script>
+<%- include('../partials/admin-footer') %>

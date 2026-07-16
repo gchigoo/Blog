@@ -3,8 +3,46 @@ const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
+const { once } = require('node:events');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
+const TEST_NODE_PATH = [
+  path.join(REPO_ROOT, 'node_modules'),
+  process.env.NODE_PATH
+].filter(Boolean).join(path.delimiter);
+const cleanupManagers = new WeakMap();
+
+function registerCleanup(t, cleanup) {
+  let manager = cleanupManagers.get(t);
+  if (!manager) {
+    manager = { tasks: [] };
+    cleanupManagers.set(t, manager);
+    t.after(async () => {
+      for (const task of manager.tasks.reverse()) {
+        await task();
+      }
+    });
+  }
+  manager.tasks.push(cleanup);
+}
+
+async function stopChild(child) {
+  if (child.exitCode !== null) return;
+
+  child.kill('SIGTERM');
+  await Promise.race([
+    once(child, 'exit'),
+    new Promise(resolve => setTimeout(resolve, 2_000))
+  ]);
+
+  if (child.exitCode === null) {
+    child.kill('SIGKILL');
+    await Promise.race([
+      once(child, 'exit'),
+      new Promise(resolve => setTimeout(resolve, 2_000))
+    ]);
+  }
+}
 
 async function createProjectFixture(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'blog-security-'));
@@ -20,9 +58,7 @@ async function createProjectFixture(t) {
   await fs.mkdir(path.join(root, 'articles'), { recursive: true });
   await fs.mkdir(path.join(root, 'uploads', 'temp'), { recursive: true });
   await fs.mkdir(path.join(root, 'public', 'images'), { recursive: true });
-  await fs.symlink(path.join(REPO_ROOT, 'node_modules'), path.join(root, 'node_modules'), 'dir');
-
-  t.after(async () => {
+  registerCleanup(t, async () => {
     await fs.rm(root, { recursive: true, force: true });
   });
 
@@ -32,7 +68,7 @@ async function createProjectFixture(t) {
 function runNode(root, script, args = [], env = {}) {
   return spawnSync(process.execPath, [script, ...args], {
     cwd: root,
-    env: { ...process.env, ...env },
+    env: { ...process.env, NODE_PATH: TEST_NODE_PATH, ...env },
     encoding: 'utf8',
     input: '',
     timeout: 15_000
@@ -58,6 +94,7 @@ async function startServer(t, root, env = {}) {
       ...process.env,
       PORT: String(port),
       JWT_SECRET: 'test-only-jwt-secret-with-at-least-32-characters',
+      NODE_PATH: TEST_NODE_PATH,
       ...env
     },
     stdio: ['ignore', 'pipe', 'pipe']
@@ -67,8 +104,8 @@ async function startServer(t, root, env = {}) {
   child.stdout.on('data', chunk => { output += chunk; });
   child.stderr.on('data', chunk => { output += chunk; });
 
-  t.after(() => {
-    if (!child.killed) child.kill('SIGTERM');
+  registerCleanup(t, async () => {
+    await stopChild(child);
   });
 
   const baseUrl = `http://127.0.0.1:${port}`;

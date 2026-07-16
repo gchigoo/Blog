@@ -34,4 +34,67 @@
   </div>
 </article>
 
+<% if (typeof comments !== 'undefined' && comments.enabled) { %>
+  <section id="comments" class="comments-section" aria-labelledby="comments-title">
+    <h2 id="comments-title">评论</h2>
+    <p class="comments-privacy-notice">
+      评论提交后需要管理员审核；审核通过后会公开正文和你当前 Google 展示名称。
+      本站不会公开你的邮箱或头像。
+    </p>
+
+    <% if (comments.comments.length > 0) { %>
+      <ol class="comment-list">
+        <% comments.comments.forEach(comment => { %>
+          <li class="comment-item">
+            <div class="comment-meta">
+              <strong class="comment-author"><%= comment.displayName %></strong>
+              <time datetime="<%= comment.createdAt %>">
+                <%= new Date(comment.createdAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) %>
+              </time>
+            </div>
+            <div class="comment-content"><%= comment.content %></div>
+          </li>
+        <% }) %>
+      </ol>
+    <% } else { %>
+      <p class="comments-empty">还没有审核通过的评论。</p>
+    <% } %>
+
+    <% if (comments.commenter) { %>
+      <div class="comment-composer">
+        <div class="comment-identity">
+          <p>正在以 <strong><%= comments.commenter.displayName %></strong> 的身份评论。</p>
+          <form id="comment-logout-form" action="/auth/logout" method="post">
+            <input type="hidden" name="csrfToken" value="<%= comments.csrfToken %>">
+            <button type="submit" class="secondary-button comment-logout-button">退出账号</button>
+          </form>
+        </div>
+        <form id="comment-form" class="comment-form" action="/api/articles/<%= article.id %>/comments" method="post">
+          <input type="hidden" name="csrfToken" value="<%= comments.csrfToken %>">
+          <label for="comment-content">评论内容</label>
+          <textarea
+            id="comment-content"
+            name="content"
+            rows="6"
+            required
+            aria-describedby="comment-content-help"
+          ></textarea>
+          <div class="comment-form-actions">
+            <small id="comment-content-help">纯文本，去除首尾空白后最多 1000 个字符。</small>
+            <button type="submit" class="comment-submit-button">提交评论</button>
+          </div>
+        </form>
+        <p id="comment-feedback" class="message" role="status" tabindex="-1" hidden></p>
+      </div>
+    <% } else { %>
+      <p class="comment-login-prompt">
+        <a class="comment-login-link" href="/auth/google?returnTo=<%= encodeURIComponent('/article/' + article.slug) %>">
+          使用 Google 登录后评论
+        </a>
+      </p>
+    <% } %>
+  </section>
+  <script src="/js/comments.js?v=20260716-comments-3" defer></script>
+<% } %>
+
 <%- include('partials/footer') %>

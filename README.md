@@ -8,6 +8,7 @@
 - 🖼️ 自动图片转 WebP，减少 25-35% 体积
 - 🏷️ 标签分类 + 按月归档
 - 🔐 JWT 认证，安全后台管理
+- 💬 Google 登录评论，管理员审核后公开
 - 🎨 极简 new.css 风格，响应式布局
 - 💾 SQLite 轻量存储，单文件数据库
 - ⚡ Express 5 + 14 个依赖，简洁高效
@@ -65,6 +66,21 @@ date: 2026-01-16
 - 🏷️ 标签：按标签筛选
 - 📅 归档：按月份归档
 - ℹ️ 关于：个人信息
+- 💬 评论：Google 登录后提交，后台批准、拒绝或删除
+
+### 启用 Google 评论
+
+评论功能默认关闭。必须一次性提供以下四个环境变量；如果只配置其中一部分，应用会拒绝启动：
+
+```bash
+export GOOGLE_CLIENT_ID='your-web-client-id.apps.googleusercontent.com'
+export GOOGLE_CLIENT_SECRET='从密钥管理服务注入'
+export GOOGLE_REDIRECT_URI='https://blog.cokedaily.space/auth/google/callback'
+export COMMENT_SESSION_SECRET='至少 32 字节的独立随机密钥'
+npm start
+```
+
+Google Cloud 中的 OAuth client 类型必须是 **Web application**，Authorized redirect URI 必须与 `GOOGLE_REDIRECT_URI` 完全一致。评论只请求 `openid profile`，本地仅保存 Google `sub` 与公开展示名称，不保存邮箱、头像或 Google token。完整配置、验收与回滚步骤见 [DEPLOY.md](./DEPLOY.md#google-登录评论配置)。
 
 ## 📁 项目结构
 
@@ -72,6 +88,7 @@ date: 2026-01-16
 blog/
 ├── server/           # 后端代码
 │   ├── routes/       # 路由 (首页/文章/后台)
+│   ├── comments/     # Google 身份、评论会话、存储与审核
 │   ├── utils/        # 工具 (Markdown/图片处理)
 │   └── middleware/   # 中间件 (JWT 认证)
 ├── views/            # EJS 模板
@@ -110,6 +127,7 @@ unset INITIAL_ADMIN_PASSWORD
 | sharp 0.35 | 图片转 WebP |
 | better-sqlite3 12.11 | SQLite 数据库 |
 | bcrypt 6.0 | 密码加密 |
+| google-auth-library 10.9 | Google OAuth code exchange 与 ID token 验证 |
 
 完整清单：[依赖说明](./DEPLOY.md#依赖说明)
 
@@ -120,7 +138,7 @@ unset INITIAL_ADMIN_PASSWORD
 - **数据库**: SQLite (better-sqlite3)
 - **样式**: new.css (classless)
 - **图片**: Sharp (WebP 转换)
-- **认证**: JWT + bcrypt
+- **认证**: 管理员 JWT + 独立 Google 评论会话
 
 ## 📄 License
 

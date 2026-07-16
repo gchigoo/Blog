@@ -1,0 +1,119 @@
+feature: 2026-07-16-google-auth-comments
+created: 2026-07-16
+
+steps:
+  - id: S1
+    action: "编排骨架：实现 createCommentsModule 注入 seam、配置三态和空结果路由/store interface。"
+    exit_signal: "SC-01/SC-02 通过：全缺配置时原站正常且评论路径 404，空白/部分/错误 callback path/credentials/query/fragment/生产 HTTP/弱 secret 时启动明确失败，完整 fake 配置时同一 module routers 可挂载。"
+    status: done
+  - id: S2
+    action: "身份节点：按固定两方法协议接通 production/fake Google identity adapter、派生子密钥 token、state/PKCE、7 天独立会话和安全 return path。"
+    exit_signal: "SC-03/SC-04/SC-05/SC-18 通过：成功登录、四类 OAuth 错误的固定 400/502 映射、Cookie 清理、跨 token/篡改/过期/重放拒绝、会话过期与 CSRF 登出均符合设计。"
+    status: done
+  - id: S3
+    action: "持久化节点：实现评论者 upsert、三态评论 schema、pending 创建、approved 查询、状态切换、限流事务和文章级联删除。"
+    exit_signal: "仅通过 comment store + 临时 SQLite 可独立证明：唯一身份、pending 初始态、双向审核转换/幂等元数据、approved-only 查询、事务限流、硬删除与文章级联删除全部成立；不宣称 HTTP/HTML 场景已完成。"
+    status: done
+  - id: S4
+    action: "公开评论闭环：文章页接入批准评论、展示名隐私告知、评论者状态、code-point 内容校验、纯文本提交和待审反馈。"
+    exit_signal: "SC-06/SC-07/SC-08/SC-09 通过：未登录拒绝，合法评论 pending 且不公开，展示名和正文边界/转义符合契约。"
+    status: done
+  - id: S5
+    action: "后台审核闭环：新增按状态查看的审核页面和批准、拒绝、删除动作及同源保护。"
+    exit_signal: "SC-11/SC-12/SC-13/SC-14 通过：管理员动作正确改变公开可见性，评论会话与伪造请求不能修改审核状态。"
+    status: done
+  - id: S6
+    action: "横切安全回归：从完整 HTTP 流程验证 OAuth 重放、两类会话隔离、CSRF、同源策略、日志脱敏和清洁度。"
+    exit_signal: "SC-04/SC-14/SC-18 通过，§3.2 反向核对无禁用能力、敏感字段、危险渲染、测试模式或凭证残留。"
+    status: done
+  - id: S7
+    action: "UI polish：覆盖文章评论区与审核页的全部可见状态、隐私告知、小屏、长文本/名称和键盘 focus。"
+    exit_signal: "SC-08/SC-16 有浏览器证据：未登录、已登录、空态、提交中、待审成功、错误、禁用和边界布局均可见且可恢复。"
+    status: done
+  - id: S8
+    action: "发布验证：更新环境变量、Google redirect URI 与回滚说明，执行干净安装、测试、审计、依赖检查和真实 OAuth smoke。"
+    exit_signal: "SC-17 通过：CMD-001–004 全绿，真实测试 Google client 登录闭环成功，既有功能正常且仓库无生产凭证。"
+    status: done
+
+checks:
+  - item: "评论者身份、comment_session 和管理员 users/token/authenticateToken 完全隔离。"
+    source: "§1.3 决策 B；§3.1 SC-14"
+    status: done
+  - item: "Google identity 以验证后的 sub 为稳定键，只公开规范化展示名，不采集头像，不保存 email 或 Google token。"
+    source: "§1.3 决策 C；§3.1 SC-08"
+    status: done
+  - item: "comment_oauth 与 comment_session 使用不同 HKDF 子密钥，固定 HS256/issuer/独立 audience/token_use；Cookie 属性、TTL、必验 claims 和清理符合契约。"
+    source: "§1.3 决策 C；§3.1 SC-03–SC-05"
+    status: done
+  - item: "评论状态仅为 pending、approved、rejected，公开查询只返回 approved。"
+    source: "§1.3 决策 D；§3.1 SC-07/SC-11/SC-12"
+    status: done
+  - item: "createCommentsModule 是 production 与 HTTP fake 测试共用的注入 seam，不存在生产可达 test mode。"
+    source: "§2.1 Interface 设计检查；§3.1 SC-03/SC-04"
+    status: done
+  - item: "Google 登录完整校验 state、PKCE、ID token audience、Cookie algorithm/issuer/audience/token_use/TTL 和安全 return path；provider 错误不产生身份或会话。"
+    source: "§1.3 决策 C；§3.1 SC-04/SC-05/SC-18"
+    status: done
+  - item: "评论创建在同一事务中完成窗口限流检查和 pending 插入。"
+    source: "§1.3 决策 F；§3.1 SC-10"
+    status: done
+  - item: "pending/approved/rejected 的允许转换、同状态幂等审核元数据、禁止回 pending、硬删除和文章级联符合状态表。"
+    source: "§1.3 决策 D；§3.1 SC-11–SC-13/SC-15"
+    status: done
+  - item: "四个配置 trim 后全部缺失时关闭且路由 404；空白/部分/错误 callback path/credentials/query/fragment/生产 HTTP/弱 secret 时启动失败；全部有效时启用。"
+    source: "§1.3 决策 G；§3.1 SC-01/SC-02"
+    status: done
+  - item: "文章详情页包含 approved 列表、公开展示名告知和登录/提交/反馈状态。"
+    source: "§2.3 挂载点 4；§3.1 SC-07/SC-08/SC-16"
+    status: done
+  - item: "后台包含评论审核页面、管理 API 和导航入口。"
+    source: "§2.3 挂载点 5；§3.1 SC-11–SC-13"
+    status: done
+  - item: "不实现匿名评论、回复、编辑、通知、点赞或用户主页。"
+    source: "§1.1 明确不做；§3.2"
+    status: done
+  - item: "不升级 EJS major，不重做 Node 24，不引入 NestJS/Fastify、Passport 或生产测试开关。"
+    source: "§1.1 明确不做；§3.2"
+    status: done
+  - item: "未登录、provider 错误、内容/展示名边界、CSRF、限流和身份越权返回约定错误且不写非法数据。"
+    source: "§3.1 SC-06/SC-08–SC-10/SC-14/SC-18"
+    status: done
+  - item: "pending/rejected 评论永不进入公开 HTML，approved 评论稳定排序且展示名/正文正确转义。"
+    source: "§3.1 SC-07–SC-09/SC-11/SC-12"
+    status: done
+  - item: "评论 UI 的禁用、空态、提交、成功、错误、长文本/名称、小屏和键盘 focus 状态完成验证。"
+    source: "§3.1 SC-16"
+    status: done
+  - item: "现有文章上传、管理员登录、访问统计和文章显示回归通过，真实 Google 登录完成。"
+    source: "§3.1 SC-17"
+    status: done
+
+dod:
+  commands:
+    - id: CMD-001
+      command: "npm ci"
+      core: true
+      failure_handling: fix-or-block
+    - id: CMD-002
+      command: "npm test"
+      core: true
+      failure_handling: fix-or-block
+    - id: CMD-003
+      command: "npm audit --omit=dev --audit-level=high"
+      core: true
+      failure_handling: fix-or-block
+    - id: CMD-004
+      command: "npm ls --depth=0"
+      core: false
+      failure_handling: fix-or-block
+  evidence_required:
+    - command_output
+    - diff_summary
+    - api_responses
+    - browser_screenshots
+    - real_google_login_smoke
+  cleanliness:
+    debug_output: forbidden
+    todo_fixme: forbidden
+    commented_out_code: forbidden
+    secrets_or_tokens: forbidden

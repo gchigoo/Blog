@@ -6,12 +6,13 @@
 
 1. [环境要求](#环境要求)
 2. [快速部署](#快速部署)
-3. [PM2 进程管理](#pm2-进程管理)
-4. [Nginx 反向代理](#nginx-反向代理)
-5. [HTTPS 配置](#https-配置)
-6. [日常维护](#日常维护)
-7. [故障排除](#故障排除)
-8. [依赖说明](#依赖说明)
+3. [Google 登录评论配置](#google-登录评论配置)
+4. [PM2 进程管理](#pm2-进程管理)
+5. [Nginx 反向代理](#nginx-反向代理)
+6. [HTTPS 配置](#https-配置)
+7. [日常维护](#日常维护)
+8. [故障排除](#故障排除)
+9. [依赖说明](#依赖说明)
 
 ---
 
@@ -60,6 +61,61 @@ module.exports = {
   // ...
 };
 ```
+
+## Google 登录评论配置
+
+### 配置契约
+
+评论功能默认关闭。应用启动时会对下面四项去除首尾空白，并按三态处理：
+
+- 四项全部缺失：评论路由、文章评论区和后台评论导航均不启用，既有博客行为不变。
+- 四项全部存在且有效：启用 Google 登录、评论提交与后台审核。
+- 只配置一部分或存在无效值：应用拒绝启动，错误只列出配置项和原因，不输出配置值。
+
+| 环境变量 | 要求 |
+|---|---|
+| `GOOGLE_CLIENT_ID` | Google Cloud Web OAuth client ID |
+| `GOOGLE_CLIENT_SECRET` | Google Cloud client secret，只从受保护的运行时环境注入 |
+| `GOOGLE_REDIRECT_URI` | 绝对 URL，路径必须精确为 `/auth/google/callback`，不能包含 credentials、query 或 fragment；生产环境必须 HTTPS |
+| `COMMENT_SESSION_SECRET` | 至少 32 个 UTF-8 字节，必须与管理员 `JWT_SECRET` 独立 |
+
+本地开发仅允许 `http://localhost:<port>/auth/google/callback` 或 `http://127.0.0.1:<port>/auth/google/callback`。当前生产博客入口是 `https://blog.cokedaily.space`，配置示例：
+
+```bash
+export GOOGLE_CLIENT_ID='your-web-client-id.apps.googleusercontent.com'
+export GOOGLE_CLIENT_SECRET='从密钥管理服务注入'
+export GOOGLE_REDIRECT_URI='https://blog.cokedaily.space/auth/google/callback'
+export COMMENT_SESSION_SECRET="$(openssl rand -base64 48)"
+pm2 restart blog --update-env
+```
+
+不要把真实值写入 `ecosystem.config.js`、`.env`、shell 脚本、日志、Issue 或 Git 历史。示例命令只说明变量名；生产环境应优先使用主机或部署平台的 secret manager。
+
+### Google Cloud 设置
+
+1. 在 Google Cloud Console 配置 OAuth consent screen；第一版只需要 `openid` 与 `profile`。
+2. 创建 **OAuth client ID → Web application**。
+3. 在 **Authorized redirect URIs** 添加与生产环境完全一致的地址：`https://blog.cokedaily.space/auth/google/callback`。
+4. 将 client ID 与 client secret 注入运行环境，设置独立的 `COMMENT_SESSION_SECRET` 后重启应用。
+5. 如果应用仍处于 Google OAuth 测试状态，把验收账号加入 Test users。
+
+### 发布前真实 OAuth smoke
+
+必须使用真实测试 client 和实际 HTTPS 域名完成以下闭环，fake adapter 自动测试不能替代该步骤：
+
+1. 未登录打开一篇文章，确认出现隐私告知和 Google 登录入口。
+2. 完成 Google 授权并返回原文章，确认页面只显示 Google 展示名称，不显示邮箱或头像。
+3. 提交一条评论，确认收到“等待审核”，且公开页面尚不可见。
+4. 使用现有管理员账号访问 `/admin/comments`，批准后确认评论公开；拒绝后确认立即隐藏。
+5. 删除测试评论，确认审核页与公开页均不再出现。
+6. 检查应用日志不包含 authorization code、Google `sub`、token、secret 或评论正文。
+
+### 数据、会话与回滚
+
+- 评论者和评论保存在现有 `blog.db` 的 `comment_users` / `comments` 表中；短期 OAuth 一次性上下文只以哈希保存在 `comment_oauth_contexts`。常规数据库备份已覆盖这些表。
+- 管理员 `token` 与评论者 `comment_session` 是两个独立身份域。评论会话固定 7 天；轮换 `COMMENT_SESSION_SECRET` 会使全部评论会话失效。
+- 回滚前先备份 `blog.db`。若只需紧急关闭评论，清除四个评论环境变量并重启即可；数据表会保留，旧版应用会忽略它们。
+- 回退代码和 lockfile 时执行与目标版本匹配的 `npm ci`。不要为了回滚手工删除评论表；只有在确认不再需要评论数据且已有备份时才执行数据清理。
 
 ---
 
@@ -432,7 +488,7 @@ htop
 
 ## 依赖说明
 
-### 核心功能包 (13 个生产依赖)
+### 核心功能包 (14 个生产依赖)
 
 #### Web 框架
 - **express** (5.2.1): HTTP 服务器和路由
@@ -455,6 +511,7 @@ htop
 - **bcrypt** (6.0.0): 密码加密 (hash + salt)
 - **jsonwebtoken** (9.0.2): JWT 生成和验证
 - **cookie-parser** (1.4.7): Cookie 解析
+- **google-auth-library** (10.9.0): Google OAuth authorization-code exchange 与 ID token audience 验证
 
 #### 工具库
 - **slugify** (1.6.9): 生成 URL 友好 slug
@@ -475,12 +532,12 @@ bcrypt → JWT → cookie-parser
 
 ### 为什么选择这些包？
 
-1. ✅ **极简原则**: 仅 13 个生产依赖，避免过度依赖
+1. ✅ **极简原则**: 仅 14 个生产依赖，避免过度依赖
 2. ✅ **性能优先**: better-sqlite3 比 sqlite3 快，Sharp 比 imagemagick 快
-3. ✅ **安全第一**: 生产锁文件经 `npm audit --omit=dev` 验证
+3. ✅ **安全第一**: 生产锁文件经 `npm audit --omit=dev` 验证；Google token 不写入数据库
 4. ✅ **易于维护**: 依赖少，升级简单
 
-### 最近更新 (2026-07-15)
+### 最近更新 (2026-07-16)
 
 | 包名 | 升级 | 改进 |
 |------|------|------|
@@ -488,6 +545,7 @@ bcrypt → JWT → cookie-parser
 | better-sqlite3 | 11.x → 12.11 | 支持 Node.js 24 |
 | sharp | 0.33 → 0.35 | 支持 Node.js 24 |
 | multer / adm-zip | 2.0 / 0.5 → 2.2 / 0.6 | 更新上传依赖 |
+| google-auth-library | 新增 10.9 | Google OAuth code exchange 与 ID token 验证 |
 
 ---
 

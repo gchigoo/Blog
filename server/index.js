@@ -5,10 +5,12 @@ const config = require('./config');
 
 const { createAnalyticsMiddleware } = require('./analytics/middleware');
 const { initializeAnalytics } = require('./analytics/store');
+const { db, dbGet, dbAll } = require('./db');
 
 const app = express();
 app.set('trust proxy', 'loopback');
-initializeAnalytics(require('./db').db);
+app.locals.commentsEnabled = config.comments.enabled;
+initializeAnalytics(db);
 
 // 中间件
 app.use(express.json());
@@ -24,6 +26,26 @@ app.use(createAnalyticsMiddleware({
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, '..', 'views'));
 
+let commentsModule = null;
+if (config.comments.enabled) {
+  const { createGoogleIdentityClient } = require('./comments/google-identity');
+  const { createCommentsModule } = require('./comments/module');
+  const identityClient = createGoogleIdentityClient({
+    clientId: config.comments.googleClientId,
+    clientSecret: config.comments.googleClientSecret,
+    redirectUri: config.comments.googleRedirectUri
+  });
+  commentsModule = createCommentsModule({
+    db,
+    config: config.comments,
+    identityClient
+  });
+  app.use(commentsModule.commenterSession);
+  app.use(commentsModule.authRouter);
+  app.use(commentsModule.publicRouter);
+  app.use(commentsModule.adminRouter);
+}
+
 // API 路由
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/articles', require('./routes/articles'));
@@ -31,7 +53,6 @@ app.use('/api/admin/analytics', require('./routes/analytics'));
 app.use('/api/admin', require('./routes/admin'));
 
 // 前台页面路由
-const { db, dbGet, dbAll } = require('./db');
 const { getOverview } = require('./analytics/store');
 const { optionalAuth } = require('./middleware/auth');
 
@@ -85,7 +106,14 @@ app.get('/article/:slug', optionalAuth, (req, res) => {
     
     article.tags = article.tags ? JSON.parse(article.tags) : [];
     
-    res.render('article', { article, user: req.user });
+    const comments = commentsModule
+      ? commentsModule.getArticleCommentsViewModel(article.id, {
+        commenter: req.commenter,
+        csrfToken: req.commentSession?.csrfToken || null
+      })
+      : { enabled: false };
+
+    res.render('article', { article, user: req.user, comments });
   } catch (error) {
     console.error('渲染文章详情失败:', error);
     res.status(500).send('服务器错误');
