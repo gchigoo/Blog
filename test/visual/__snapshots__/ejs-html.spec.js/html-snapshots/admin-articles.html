@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>文章列表 - 后台管理</title>
+  <!-- new.css 官方推荐的引入方式 -->
+  <link rel="stylesheet" href="https://fonts.xz.style/serve/inter.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@exampledev/new.css@1.1.2/new.min.css">
+  <link rel="stylesheet" href="/css/custom.css?v=20260717-analytics-1">
+</head>
+<body>
+  <header>
+    <h1>后台管理</h1>
+    <nav>
+      <a href="/">首页</a> /
+      <a href="/about">关于</a> /
+      <a href="/admin/upload">上传文章</a> /
+      <a href="/admin/articles">文章列表</a> /
+      <a href="/admin/analytics">访问统计</a> /
+      
+        <a href="/admin/comments">评论审核</a> /
+      
+      <a href="#" id="logoutBtn">登出</a>
+    </nav>
+  </header>
+  
+  <main>
+
+
+<h2>文章列表</h2>
+
+<div id="message"></div>
+
+<p>共 5 篇文章</p>
+
+
+  <table style="width: 100%; border-collapse: collapse;">
+    <thead>
+      <tr>
+        <th style="text-align: left; padding: 0.5em;">标题</th>
+        <th style="text-align: left; padding: 0.5em;">标签</th>
+        <th style="text-align: left; padding: 0.5em;">发布日期</th>
+        <th style="text-align: center; padding: 0.5em;">操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      
+        <tr>
+          <td style="padding: 0.5em;">
+            <a class="article-title" href="/article/comments-browser-smoke" target="_blank">从 EJS 3 升级到 EJS 6：保持页面像素级一致的实践记录</a>
+          </td>
+          <td style="padding: 0.5em;">
+            
+              
+                <span class="tag">EJS</span>
+              
+                <span class="tag">upgrade</span>
+              
+                <span class="tag">视觉回归</span>
+              
+            
+          </td>
+          <td style="padding: 0.5em;">
+            2026/7/16
+          </td>
+          <td style="padding: 0.5em; text-align: center;">
+            <button type="button" class="delete-article" data-article-id="1" style="background: #dc3545; color: white;">删除</button>
+          </td>
+        </tr>
+      
+        <tr>
+          <td style="padding: 0.5em;">
+            <a class="article-title" href="/article/comments-empty" target="_blank">暂无评论的文章</a>
+          </td>
+          <td style="padding: 0.5em;">
+            
+              
+                <span class="tag">测试</span>
+              
+            
+          </td>
+          <td style="padding: 0.5em;">
+            2026/7/15
+          </td>
+          <td style="padding: 0.5em; text-align: center;">
+            <button type="button" class="delete-article" data-article-id="2" style="background: #dc3545; color: white;">删除</button>
+          </td>
+        </tr>
+      
+        <tr>
+          <td style="padding: 0.5em;">
+            <a class="article-title" href="/article/comments-disabled" target="_blank">评论功能关闭时的文章详情</a>
+          </td>
+          <td style="padding: 0.5em;">
+            
+              
+                <span class="tag">EJS</span>
+              
+                <span class="tag">upgrade</span>
+              
+            
+          </td>
+          <td style="padding: 0.5em;">
+            2026/7/14
+          </td>
+          <td style="padding: 0.5em; text-align: center;">
+            <button type="button" class="delete-article" data-article-id="3" style="background: #dc3545; color: white;">删除</button>
+          </td>
+        </tr>
+      
+        <tr>
+          <td style="padding: 0.5em;">
+            <a class="article-title" href="/article/node-24-template-tests" target="_blank">Node.js 24 下的服务端模板测试策略</a>
+          </td>
+          <td style="padding: 0.5em;">
+            
+              
+                <span class="tag">Node.js</span>
+              
+                <span class="tag">测试</span>
+              
+            
+          </td>
+          <td style="padding: 0.5em;">
+            2026/6/20
+          </td>
+          <td style="padding: 0.5em; text-align: center;">
+            <button type="button" class="delete-article" data-article-id="4" style="background: #dc3545; color: white;">删除</button>
+          </td>
+        </tr>
+      
+        <tr>
+          <td style="padding: 0.5em;">
+            <a class="article-title" href="/article/pin-browser-assets" target="_blank">把外部样式与字体固定到本地测试资源</a>
+          </td>
+          <td style="padding: 0.5em;">
+            
+              
+                <span class="tag">CSS</span>
+              
+                <span class="tag">upgrade</span>
+              
+            
+          </td>
+          <td style="padding: 0.5em;">
+            2025/12/8
+          </td>
+          <td style="padding: 0.5em; text-align: center;">
+            <button type="button" class="delete-article" data-article-id="5" style="background: #dc3545; color: white;">删除</button>
+          </td>
+        </tr>
+      
+    </tbody>
+  </table>
+
+
+<script>
+  const messageDiv = document.getElementById('message');
+
+  document.querySelectorAll('.delete-article').forEach(button => {
+    button.addEventListener('click', () => {
+      const title = button.closest('tr').querySelector('.article-title').textContent;
+      deleteArticle(button.dataset.articleId, title);
+    });
+  });
+  
+  // 删除文章
+  async function deleteArticle(id, title) {
+    if (!confirm(`确定要删除文章"${title}"吗？此操作不可恢复！`)) {
+      return;
+    }
+    
+    try {
+      const response = await fetch(`/api/admin/articles/${id}`, {
+        method: 'DELETE'
+      });
+      
+      const data = await response.json();
+      
+      if (response.ok) {
+        showMessage('success', '文章已删除');
+        setTimeout(() => {
+          window.location.reload();
+        }, 1000);
+      } else {
+        showMessage('error', data.error || '删除失败');
+      }
+    } catch (error) {
+      showMessage('error', '网络错误，请稍后重试');
+    }
+  }
+  
+  function showMessage(type, message) {
+    const content = document.createElement('div');
+    content.classList.add('message', type);
+    content.textContent = message;
+    messageDiv.replaceChildren(content);
+  }
+</script>
+
+  </main>
+  
+  <footer>
+    <p>Powered by Gchigoo Minimalist Blog &copy; 2026</p>
+  </footer>
+  
+  <script>
+    // 全局登出功能
+    const logoutBtn = document.getElementById('logoutBtn');
+    if (logoutBtn) {
+      logoutBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        try {
+          await fetch('/api/auth/logout', { method: 'POST' });
+          window.location.href = '/admin/login';
+        } catch (error) {
+          alert('登出失败');
+        }
+      });
+    }
+  </script>
+

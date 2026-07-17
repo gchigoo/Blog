@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  <title>从 EJS 3 升级到 EJS 6：保持页面像素级一致的实践记录 - 我的博客</title>
+  <!-- new.css 官方推荐的引入方式 -->
+  <link rel="stylesheet" href="https://fonts.xz.style/serve/inter.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@exampledev/new.css@1.1.2/new.min.css">
+  <link rel="stylesheet" href="/css/custom.css?v=20260716-comments-3">
+</head>
+<body>
+  <header>
+    <h1><a href="/" style="text-decoration: none; color: inherit;">我的博客</a></h1>
+    <nav>
+      <a href="/">首页</a> /
+      <a href="/archive">归档</a> /
+      <a href="/tags">标签</a> /
+      <a href="/about">关于</a>
+      
+    </nav>
+  </header>
+  
+  <main>
+
+
+<article class="article-detail">
+  <!-- 文章头部信息 -->
+  <div class="article-header">
+    <h1 class="article-title">从 EJS 3 升级到 EJS 6：保持页面像素级一致的实践记录</h1>
+    
+    <div class="article-meta">
+      <span class="article-date">
+        发布于 2026年7月16日 09:30
+      </span>
+      
+        <span class="article-tags">
+          标签: 
+          
+            <a href="/tag/EJS" class="tag">EJS</a> 
+          
+            <a href="/tag/upgrade" class="tag">upgrade</a> 
+          
+            <a href="/tag/%E8%A7%86%E8%A7%89%E5%9B%9E%E5%BD%92" class="tag">视觉回归</a>
+          
+        </span>
+      
+    </div>
+  </div>
+  
+  <!-- 分隔线 -->
+  <hr class="article-divider">
+  
+  <!-- 文章内容 -->
+  <div class="article-content">
+    <h2>升级目标</h2><p>依赖升级前后保持完全一致的 HTML、布局和样式。</p><blockquote>先冻结行为，再替换依赖。</blockquote><h3>验证清单</h3><ul><li>HTML 快照</li><li>六档设备截图</li><li>人工目视确认</li></ul><pre><code>npm run test:visual</code></pre>
+  </div>
+  
+  <!-- 底部导航 -->
+  <div class="article-footer">
+    <a href="/" class="back-link">← 返回首页</a>
+  </div>
+</article>
+
+
+  <section id="comments" class="comments-section" aria-labelledby="comments-title">
+    <h2 id="comments-title">评论</h2>
+    <p class="comments-privacy-notice">
+      评论提交后需要管理员审核；审核通过后会公开正文和你当前 Google 展示名称。
+      本站不会公开你的邮箱或头像。
+    </p>
+
+    
+      <ol class="comment-list">
+        
+          <li class="comment-item">
+            <div class="comment-meta">
+              <strong class="comment-author">视觉基线评论者</strong>
+              <time datetime="2026-07-16T02:00:00.000Z">
+                2026/7/16 10:00:00
+              </time>
+            </div>
+            <div class="comment-content">这是一条已经审核通过的长评论，用来确认桌面和移动端都不会横向溢出。
+第二行保留换行，并继续以纯文本显示。</div>
+          </li>
+        
+      </ol>
+    
+
+    
+      <p class="comment-login-prompt">
+        <a class="comment-login-link" href="/auth/google?returnTo=%2Farticle%2Fcomments-browser-smoke">
+          使用 Google 登录后评论
+        </a>
+      </p>
+    
+  </section>
+  <script src="/js/comments.js?v=20260716-comments-3" defer></script>
+
+
+  </main>
+  
+  <footer>
+    <p>Powered by Gchigoo Minimalist Blog &copy; 2026</p>
+  </footer>
+</body>
+</html>
+

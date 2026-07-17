@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>上传文章 - 后台管理</title>
+  <!-- new.css 官方推荐的引入方式 -->
+  <link rel="stylesheet" href="https://fonts.xz.style/serve/inter.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@exampledev/new.css@1.1.2/new.min.css">
+  <link rel="stylesheet" href="/css/custom.css?v=20260717-analytics-1">
+</head>
+<body>
+  <header>
+    <h1>后台管理</h1>
+    <nav>
+      <a href="/">首页</a> /
+      <a href="/about">关于</a> /
+      <a href="/admin/upload">上传文章</a> /
+      <a href="/admin/articles">文章列表</a> /
+      <a href="/admin/analytics">访问统计</a> /
+      
+        <a href="/admin/comments">评论审核</a> /
+      
+      <a href="#" id="logoutBtn">登出</a>
+    </nav>
+  </header>
+  
+  <main>
+
+
+<h2>上传文章</h2>
+
+<div id="message"></div>
+
+<div class="upload-area" id="uploadArea">
+  <p>点击选择文件或拖拽文件到此处</p>
+  <p style="font-size: 0.9em; color: #666;">支持 .md 或 .zip 文件（ZIP 包含 Markdown 和图片）</p>
+  <input type="file" id="fileInput" accept=".md,.zip" style="display: none;">
+</div>
+
+<div id="fileInfo" class="file-info" style="display: none;">
+  <h3>文件信息</h3>
+  <p><strong>文件名:</strong> <span id="fileName"></span></p>
+  <p><strong>文件大小:</strong> <span id="fileSize"></span></p>
+  <button id="uploadBtn">上传</button>
+  <button id="cancelBtn">取消</button>
+</div>
+
+<div id="uploadProgress" style="display: none; margin-top: 1em;">
+  <p>上传中... <span class="loading"></span></p>
+</div>
+
+<hr style="margin-top: 3em;">
+
+<h3>Markdown 格式说明</h3>
+<p>文章必须包含 Front Matter（文件开头的元数据）：</p>
+<pre><code>---
+title: 文章标题
+tags: [标签1, 标签2]
+date: 2026-01-16
+---
+
+文章正文内容...
+
+## 二级标题
+
+段落文本...
+
+![图片说明](./images/pic.jpg)
+</code></pre>
+
+<p><strong>图片处理:</strong></p>
+<ul>
+  <li>上传 .zip 文件时，会自动查找并转换图片为 WebP 格式</li>
+  <li>图片会自动压缩以节省带宽</li>
+  <li>建议将图片和 Markdown 文件打包成 ZIP 一起上传</li>
+</ul>
+
+<script>
+  const uploadArea = document.getElementById('uploadArea');
+  const fileInput = document.getElementById('fileInput');
+  const fileInfo = document.getElementById('fileInfo');
+  const fileName = document.getElementById('fileName');
+  const fileSize = document.getElementById('fileSize');
+  const uploadBtn = document.getElementById('uploadBtn');
+  const cancelBtn = document.getElementById('cancelBtn');
+  const uploadProgress = document.getElementById('uploadProgress');
+  const messageDiv = document.getElementById('message');
+  
+  let selectedFile = null;
+  
+  // 点击上传区域
+  uploadArea.addEventListener('click', () => {
+    fileInput.click();
+  });
+  
+  // 文件选择
+  fileInput.addEventListener('change', (e) => {
+    handleFile(e.target.files[0]);
+  });
+  
+  // 拖拽上传
+  uploadArea.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    uploadArea.classList.add('dragover');
+  });
+  
+  uploadArea.addEventListener('dragleave', () => {
+    uploadArea.classList.remove('dragover');
+  });
+  
+  uploadArea.addEventListener('drop', (e) => {
+    e.preventDefault();
+    uploadArea.classList.remove('dragover');
+    handleFile(e.dataTransfer.files[0]);
+  });
+  
+  // 处理文件
+  function handleFile(file) {
+    if (!file) return;
+    
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (ext !== 'md' && ext !== 'zip') {
+      showMessage('error', '仅支持 .md 或 .zip 文件');
+      return;
+    }
+    
+    selectedFile = file;
+    fileName.textContent = file.name;
+    fileSize.textContent = formatFileSize(file.size);
+    fileInfo.style.display = 'block';
+    uploadArea.style.display = 'none';
+  }
+  
+  // 取消选择
+  cancelBtn.addEventListener('click', () => {
+    selectedFile = null;
+    fileInput.value = '';
+    fileInfo.style.display = 'none';
+    uploadArea.style.display = 'block';
+  });
+  
+  // 上传文件
+  uploadBtn.addEventListener('click', async () => {
+    if (!selectedFile) return;
+    
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+    
+    uploadBtn.disabled = true;
+    cancelBtn.disabled = true;
+    uploadProgress.style.display = 'block';
+    messageDiv.replaceChildren();
+    
+    try {
+      const response = await fetch('/api/admin/upload', {
+        method: 'POST',
+        body: formData
+      });
+      
+      const data = await response.json();
+      
+      uploadProgress.style.display = 'none';
+      
+      if (response.ok) {
+        showUploadSuccess(data.article);
+        
+        // 重置表单
+        selectedFile = null;
+        fileInput.value = '';
+        fileInfo.style.display = 'none';
+        uploadArea.style.display = 'block';
+      } else {
+        showMessage('error', data.error || '上传失败');
+      }
+    } catch (error) {
+      uploadProgress.style.display = 'none';
+      showMessage('error', '网络错误，请稍后重试');
+    } finally {
+      uploadBtn.disabled = false;
+      cancelBtn.disabled = false;
+    }
+  });
+  
+  // 辅助函数
+  function formatFileSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+  }
+
+  function showUploadSuccess(article) {
+    const content = document.createElement('div');
+    content.classList.add('message', 'success');
+    content.append('文章上传成功！ 标题: ');
+
+    const title = document.createElement('span');
+    title.textContent = article.title;
+    content.append(title, ` Slug: ${article.slug} 图片转换: ${article.imagesConverted} 张`);
+    messageDiv.replaceChildren(content);
+  }
+  
+  function showMessage(type, message) {
+    const content = document.createElement('div');
+    content.classList.add('message', type);
+    content.textContent = message;
+    messageDiv.replaceChildren(content);
+  }
+</script>
+
+  </main>
+  
+  <footer>
+    <p>Powered by Gchigoo Minimalist Blog &copy; 2026</p>
+  </footer>
+  
+  <script>
+    // 全局登出功能
+    const logoutBtn = document.getElementById('logoutBtn');
+    if (logoutBtn) {
+      logoutBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        try {
+          await fetch('/api/auth/logout', { method: 'POST' });
+          window.location.href = '/admin/login';
+        } catch (error) {
+          alert('登出失败');
+        }
+      });
+    }
+  </script>
+

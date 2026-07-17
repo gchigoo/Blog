@@ -1,0 +1,2 @@
+# Rendered HTML snapshots intentionally preserve EJS output whitespace.
+test/visual/__snapshots__/ejs-html.spec.js/html-snapshots/*.html -whitespace

@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>访问统计 - 后台管理</title>
+  <!-- new.css 官方推荐的引入方式 -->
+  <link rel="stylesheet" href="https://fonts.xz.style/serve/inter.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@exampledev/new.css@1.1.2/new.min.css">
+  <link rel="stylesheet" href="/css/custom.css?v=20260717-analytics-1">
+</head>
+<body>
+  <header>
+    <h1>后台管理</h1>
+    <nav>
+      <a href="/">首页</a> /
+      <a href="/about">关于</a> /
+      <a href="/admin/upload">上传文章</a> /
+      <a href="/admin/articles">文章列表</a> /
+      <a href="/admin/analytics">访问统计</a> /
+      
+        <a href="/admin/comments">评论审核</a> /
+      
+      <a href="#" id="logoutBtn">登出</a>
+    </nav>
+  </header>
+  
+  <main>
+
+
+<h2>访问统计</h2>
+<p>
+  统计范围：近 7 天。时间按北京时间显示；详细分析会按配置的保留期记录原始 IP、公开 URL、近似地区、客户端与浏览器提供的设备上下文，不采集点击、表单、键盘内容或页面正文。
+</p>
+
+<nav aria-label="统计时间范围" class="analytics-range-nav">
+  <a href="/admin/analytics?days=1" >近 1 天</a> /
+  <a href="/admin/analytics?days=7" aria-current=page>近 7 天</a> /
+  <a href="/admin/analytics?days=30" >近 30 天</a>
+</nav>
+
+
+
+<section aria-labelledby="analytics-overview-title">
+  <h3 id="analytics-overview-title">概览</h3>
+  <ul class="analytics-summary">
+    <li>页面访问：<strong>128</strong></li>
+    <li>按天去重访客：<strong>46</strong></li>
+    <li>含完整明细的访问：<strong>116</strong></li>
+  </ul>
+</section>
+
+
+  <section class="analytics-geo-status" aria-labelledby="geo-status-title">
+    <h3 id="geo-status-title">GeoLite2 City 状态</h3>
+    <dl>
+      <dt>数据集日期</dt><dd>2026-07-15T00:00:00.000Z</dd>
+      <dt>应用重载</dt><dd>ok</dd>
+      <dt>更新状态</dt><dd>ok / updated</dd>
+      <dt>最近成功</dt><dd>2026-07-17T00:00:00.000Z</dd>
+    </dl>
+    
+    
+  </section>
+
+
+<section aria-labelledby="page-stats-title">
+  <h3 id="page-stats-title">按页面</h3>
+  
+    <div class="analytics-table-wrap">
+      <table>
+        <thead><tr><th>页面</th><th>页面访问</th><th>按天去重访客</th></tr></thead>
+        <tbody>
+          
+            <tr>
+              <td>
+                <code class="analytics-break">/</code>
+              </td>
+              <td>52</td><td>31</td>
+            </tr>
+          
+            <tr>
+              <td>
+                <code class="analytics-break">/article/comments-browser-smoke</code>
+              </td>
+              <td>44</td><td>25</td>
+            </tr>
+          
+            <tr>
+              <td>
+                <code class="analytics-break">/tag/upgrade</code>
+              </td>
+              <td>32</td><td>18</td>
+            </tr>
+          
+        </tbody>
+      </table>
+    </div>
+  
+</section>
+
+<section aria-labelledby="dimension-title">
+  <h3 id="dimension-title">明细覆盖维度（最多显示前 50 项）</h3>
+  <div class="analytics-dimension-grid">
+    
+      <section class="analytics-dimension-card">
+        <h4>国家/地区</h4>
+        
+          <ul>
+            
+              <li>
+                
+                
+                  <button type="button" class="analytics-filter-shortcut" data-filter-name="country" data-filter-value="CN">中国</button>
+                
+                <strong>91</strong>
+              </li>
+            
+              <li>
+                
+                
+                  <button type="button" class="analytics-filter-shortcut" data-filter-name="country" data-filter-value="US">美国</button>
+                
+                <strong>25</strong>
+              </li>
+            
+          </ul>
+        
+        
+      </section>
+    
+      <section class="analytics-dimension-card">
+        <h4>一级行政区</h4>
+        
+          <ul>
+            
+              <li>
+                
+                
+                  <button type="button" class="analytics-filter-shortcut" data-filter-name="subdivision" data-filter-value="CN:beijing">中国 / 北京</button>
+                
+                <strong>57</strong>
+              </li>
+            
+          </ul>
+        
+        
+      </section>
+    
+      <section class="analytics-dimension-card">
+        <h4>城市</h4>
+        
+          <ul>
+            
+              <li>
+                
+                
+                  <button type="button" class="analytics-filter-shortcut" data-filter-name="city" data-filter-value="CN:beijing">中国 / 北京</button>
+                
+                <strong>43</strong>
+              </li>
+            
+          </ul>
+        
+        
+      </section>
+    
+      <section class="analytics-dimension-card">
+        <h4>浏览器</h4>
+        
+          <ul>
+            
+              <li>
+                
+                
+                  <button type="button" class="analytics-filter-shortcut" data-filter-name="browser" data-filter-value="chrome">Chrome</button>
+                
+                <strong>76</strong>
+              </li>
+            
+              <li>
+                
+                
+                  <button type="button" class="analytics-filter-shortcut" data-filter-name="browser" data-filter-value="safari">Safari</button>
+                
+                <strong>39</strong>
+              </li>
+            
+          </ul>
+        
+        
+      </section>
+    
+      <section class="analytics-dimension-card">
+        <h4>操作系统</h4>
+        
+          <ul>
+            
+              <li>
+                
+                
+                  <button type="button" class="analytics-filter-shortcut" data-filter-name="os" data-filter-value="windows">Windows</button>
+                
+                <strong>63</strong>
+              </li>
+            
+              <li>
+                
+                
+                  <button type="button" class="analytics-filter-shortcut" data-filter-name="os" data-filter-value="ios">iOS</button>
+                
+                <strong>38</strong>
+              </li>
+            
+          </ul>
+        
+        
+      </section>
+    
+      <section class="analytics-dimension-card">
+        <h4>来源域</h4>
+        
+          <ul>
+            
+              <li>
+                
+                
+                  <button type="button" class="analytics-filter-shortcut" data-filter-name="referrerHost" data-filter-value="google.com">google.com</button>
+                
+                <strong>28</strong>
+              </li>
+            
+          </ul>
+        
+        
+      </section>
+    
+      <section class="analytics-dimension-card">
+        <h4>设备型号</h4>
+        
+          <ul>
+            
+              <li>
+                
+                
+                  <span>Apple iPhone</span>
+                
+                <strong>34</strong>
+              </li>
+            
+          </ul>
+        
+        
+      </section>
+    
+  </div>
+</section>
+
+<section aria-labelledby="event-filter-title">
+  <h3 id="event-filter-title">访问明细筛选</h3>
+  <form id="analytics-filter-form" class="analytics-filter-form" method="get" action="/admin/analytics">
+    <label>天数<input name="days" type="number" min="1" max="365" value="7"></label>
+    <label>完整 IP<input name="ip" value="" placeholder="203.0.113.10"></label>
+    <label>国家代码<input name="country" maxlength="2" value="" placeholder="CN"></label>
+    <label>一级行政区<input name="subdivision" value="" placeholder="beijing"></label>
+    <label>城市<input name="city" value="" placeholder="beijing"></label>
+    <label>浏览器<input name="browser" value="" placeholder="chrome"></label>
+    <label>操作系统<input name="os" value="" placeholder="windows"></label>
+    <label>设备类别
+      <select name="device">
+        <option value="">全部</option>
+        
+          <option value="desktop" >desktop</option>
+        
+          <option value="mobile" >mobile</option>
+        
+          <option value="tablet" >tablet</option>
+        
+          <option value="other" >other</option>
+        
+      </select>
+    </label>
+    <label>路径前缀<input name="pathPrefix" value="" placeholder="/article/"></label>
+    <label>来源域<input name="referrerHost" value="" placeholder="example.com"></label>
+    <div class="analytics-filter-actions">
+      <button type="submit">应用筛选</button>
+      <a href="/admin/analytics?days=7">清除筛选</a>
+    </div>
+  </form>
+</section>
+
+<section aria-labelledby="event-list-title">
+  <h3 id="event-list-title">逐次访问明细</h3>
+  
+    <div class="analytics-table-wrap">
+      <table>
+        <thead><tr><th>时间</th><th>页面</th><th>IP / 地区</th><th>客户端</th><th>来源</th><th>操作</th></tr></thead>
+        <tbody>
+          
+            <tr>
+              <td><time datetime="2026-07-17T07:30:00.000Z">2026/07/17 15:30:00</time></td>
+              <td>
+                <code class="analytics-break">/article/comments-browser-smoke</code>
+              </td>
+              <td><code>203.0.113.10</code><br>中国 / 北京 / 北京</td>
+              <td>desktop<br>Chrome 126<br>Windows 11</td>
+              <td class="analytics-break">https://www.google.com/</td>
+              <td><button type="button" class="analytics-detail-button" data-event-id="11111111111111111111111111111111">查看详情</button></td>
+            </tr>
+          
+            <tr>
+              <td><time datetime="2026-07-17T06:20:00.000Z">2026/07/17 14:20:00</time></td>
+              <td>
+                <code class="analytics-break">/</code>
+              </td>
+              <td><code>198.51.100.24</code><br>美国 / California / San Francisco</td>
+              <td>mobile<br>Safari 19<br>iOS 19</td>
+              <td class="analytics-break">直接访问/未知</td>
+              <td><button type="button" class="analytics-detail-button" data-event-id="22222222222222222222222222222222">查看详情</button></td>
+            </tr>
+          
+        </tbody>
+      </table>
+    </div>
+    
+  
+</section>
+
+<p id="analytics-detail-status" class="message info" role="status" tabindex="-1" hidden></p>
+<section id="analytics-detail-panel" class="analytics-detail-panel" aria-labelledby="analytics-detail-title" tabindex="-1" hidden>
+  <h3 id="analytics-detail-title">访问详情</h3>
+  <dl>
+    <dt>事件 ID</dt><dd id="analytics-detail-id"></dd>
+    <dt>时间</dt><dd id="analytics-detail-time"></dd>
+    <dt>可读路径</dt><dd id="analytics-detail-display-path"></dd>
+    <dt>原始路径</dt><dd id="analytics-detail-raw-path"></dd>
+    <dt>完整 IP</dt><dd id="analytics-detail-ip"></dd>
+    <dt>浏览器</dt><dd id="analytics-detail-browser"></dd>
+  </dl>
+  <h4>完整结构化与原始字段</h4>
+  <pre id="analytics-detail-json" class="analytics-detail-json"></pre>
+</section>
+<noscript><p class="message info">启用 JavaScript 后可在本页展开单条完整详情；筛选和分页仍可直接使用。</p></noscript>
+
+<script src="/js/admin-analytics.js?v=20260717" defer></script>
+  </main>
+  
+  <footer>
+    <p>Powered by Gchigoo Minimalist Blog &copy; 2026</p>
+  </footer>
+  
+  <script>
+    // 全局登出功能
+    const logoutBtn = document.getElementById('logoutBtn');
+    if (logoutBtn) {
+      logoutBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        try {
+          await fetch('/api/auth/logout', { method: 'POST' });
+          window.location.href = '/admin/login';
+        } catch (error) {
+          alert('登出失败');
+        }
+      });
+    }
+  </script>
+

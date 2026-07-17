@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>评论审核 - 后台管理</title>
+  <!-- new.css 官方推荐的引入方式 -->
+  <link rel="stylesheet" href="https://fonts.xz.style/serve/inter.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@exampledev/new.css@1.1.2/new.min.css">
+  <link rel="stylesheet" href="/css/custom.css?v=20260717-analytics-1">
+</head>
+<body>
+  <header>
+    <h1>后台管理</h1>
+    <nav>
+      <a href="/">首页</a> /
+      <a href="/about">关于</a> /
+      <a href="/admin/upload">上传文章</a> /
+      <a href="/admin/articles">文章列表</a> /
+      <a href="/admin/analytics">访问统计</a> /
+      
+        <a href="/admin/comments">评论审核</a> /
+      
+      <a href="#" id="logoutBtn">登出</a>
+    </nav>
+  </header>
+  
+  <main>
+
+
+<section class="moderation-page" aria-labelledby="moderation-title">
+  <h2 id="moderation-title">评论审核</h2>
+  <nav class="moderation-filters" aria-label="评论状态筛选">
+    <a href="/admin/comments?status=pending" >待审核</a> /
+    <a href="/admin/comments?status=approved" aria-current=&#34;page&#34;>已批准</a> /
+    <a href="/admin/comments?status=rejected" >已拒绝</a>
+  </nav>
+
+  <div id="moderation-message" role="status" tabindex="-1"></div>
+  <p>当前筛选共 <strong>1</strong> 条评论。</p>
+
+  
+    <ol class="moderation-list">
+      
+        <li class="moderation-card" data-comment-id="1">
+          <div class="moderation-meta">
+            <strong>视觉基线评论者</strong>
+            <span>
+              文章：<a href="/article/comments-browser-smoke" target="_blank" rel="noopener">从 EJS 3 升级到 EJS 6：保持页面像素级一致的实践记录</a>
+            </span>
+            <time datetime="2026-07-16T02:00:00.000Z">
+              2026/7/16 10:00:00
+            </time>
+          </div>
+          <div class="moderation-content">这是一条已经审核通过的长评论，用来确认桌面和移动端都不会横向溢出。
+第二行保留换行，并继续以纯文本显示。</div>
+          <div class="moderation-actions">
+            
+            
+              <button type="button" data-moderation-action="rejected" class="secondary-button">拒绝</button>
+            
+            <button type="button" data-moderation-action="delete" class="danger-button">删除</button>
+          </div>
+        </li>
+      
+    </ol>
+  
+</section>
+
+<script src="/js/admin-comments.js?v=20260716-comments-3" defer></script>
+  </main>
+  
+  <footer>
+    <p>Powered by Gchigoo Minimalist Blog &copy; 2026</p>
+  </footer>
+  
+  <script>
+    // 全局登出功能
+    const logoutBtn = document.getElementById('logoutBtn');
+    if (logoutBtn) {
+      logoutBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        try {
+          await fetch('/api/auth/logout', { method: 'POST' });
+          window.location.href = '/admin/login';
+        } catch (error) {
+          alert('登出失败');
+        }
+      });
+    }
+  </script>
+

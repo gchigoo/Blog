@@ -1,0 +1,104 @@
+refactor: 2026-07-16-ejs6-visual-equivalence
+status: done
+steps:
+  - id: freeze-baseline-scope
+    status: done
+    action: 冻结页面变更窗口，在 Node 24 下完成 npm ci、现有测试和 EJS 3.1.10/视图/CSS hash 记录；以已验收的 google-auth-comments 页面为当前冻结面。
+    exit_signal: npm test 全绿，npm ls 仅有 ejs@3.1.10，views 与 custom.css 基准 hash 已记录，且没有并发页面源码改动。
+  - id: build-deterministic-visual-harness
+    status: done
+    action: 增加固定版本的 Playwright dev 测试基座、临时 SQLite/JWT/时钟 fixture、固定外部字体和 new.css 响应，并定义 3 个桌面 Chromium 与 3 个移动 WebKit projects。
+    exit_signal: 17 个页面场景可在 6 个视觉 projects 稳定访问，不读写根 blog.db，不依赖外部网络漂移，现有 node:test 不回归。
+  - id: approve-ejs3-baseline
+    status: done
+    action: 在 EJS 3.1.10 下生成 17 份 HTML snapshot、102 份 layout/style snapshot 和 102 张全页 PNG，并连续运行两次后提交 HUMAN 目视审批。
+    exit_signal: 两次运行 HTML 与 layout/style 均零差异、图片均在限定抗锯齿阈值内、无 flaky/retry；用户明确确认基线代表当前正确页面。
+  - id: upgrade-ejs-only
+    status: done
+    action: 仅将 EJS 固定升级到 6.0.1 并重建 package-lock；不修改生产 JS、EJS、CSS、文案或 expected snapshots。
+    exit_signal: npm ci 成功，npm ls 仅有 ejs@6.0.1，升级切片只包含 package.json 与 package-lock.json 的预期差异。
+  - id: prove-zero-visual-diff
+    status: done
+    action: 在 updateSnapshots=none 下运行现有测试、17 份 HTML snapshot、102 份零容差 layout/style snapshot、102 张受限抗锯齿视觉 snapshot、视图/CSS scope gate和依赖检查。
+    exit_signal: 所有自动化一次通过，HTML 0 diff、layout/style 0 diff、视觉差异不超过抗锯齿硬上限、views/custom.css 0 diff；任何失败均已阻断而非更新基线。
+  - id: human-review-and-closure
+    status: done
+    action: 组织 17 场景 × 6 设备的证据索引，完成用户目视验收和 cs-code-review 独立 diff 审查，记录 apply notes 与回滚点。
+    exit_signal: 用户明确确认布局和样式无变化，code review 无 Critical/Important，回滚仅需撤销 EJS 依赖切片。
+checks:
+  - item: google-auth-comments 已验收并纳入冻结面，baseline 冻结期间没有其他 views/CSS 改动。
+    source: refactor-design §1 时序与隔离
+    status: done
+  - item: 桌面覆盖 Chromium 1920×1080、2560×1440、3840×2160，DPR 固定为 1。
+    source: refactor-design §2.2
+    status: done
+  - item: 移动覆盖 WebKit iPhone 17 402×874@3x、iPhone Air 420×912@3x、iPhone 17 Pro Max 440×956@3x。
+    source: refactor-design §2.3
+    status: done
+  - item: 17 个页面场景在 6 个设备项目上共有 102 张 full-page PNG baseline。
+    source: refactor-design §2.4
+    status: done
+  - item: 每个场景/设备的 DOM rect 与关键 computed styles 以 layout JSON 零容差比较；截图比较仅允许 threshold=0.2 与 maxDiffPixelRatio=0.01 的中文字形抗锯齿噪声，animations disabled，scale=device，且不使用 mask。
+    source: refactor-design §2.5
+    status: done
+  - item: 基线批准后 updateSnapshots 固定为 none；EJS 升级切片不得修改 expected snapshots。
+    source: refactor-design §2.5 与 §4
+    status: done
+  - item: Inter 字体、new.css、浏览器 revision、Windows 平台、locale、timezone、colorScheme、reducedMotion 和服务端时间均固定。
+    source: refactor-design §2.1 与 §2.5
+    status: done
+  - item: EJS 3 基线连续运行两次 HTML/layout 零差异且视觉比较全通过，并由用户完成首次目视批准。
+    source: refactor-design 步骤 3
+    status: done
+  - item: EJS 6 运行时升级仅修改 package.json/package-lock.json，并同步一条原先硬编码 EJS 3 的测试断言；不启用 unsafePrototypeLocals，不修改生产模板、CSS、JS 或路由数据结构。
+    source: refactor-design §1 与步骤 4
+    status: done
+  - item: EJS 6 下 npm test、17 份 HTML snapshot、102 份 layout/style snapshot 和 102 张视觉 snapshot 全部一次通过；HTML/layout 零差异，图片无超限差异。
+    source: refactor-design 步骤 5
+    status: done
+  - item: 独立 code review 的 blocking/important findings 已全部完成 focused closure，单一只读完整门禁通过。
+    source: ejs6-visual-equivalence-review round 1
+    status: done
+  - item: 用户最终目视确认布局和样式无变化，独立 code review 无 Critical/Important。
+    source: refactor-design 步骤 6
+    status: done
+dod:
+  commands:
+    - id: install
+      command: npm ci
+      core: true
+      failure_handling: fix-or-block
+    - id: unit-tests
+      command: npm test
+      core: true
+      failure_handling: fix-or-block
+    - id: ejs-version
+      command: npm ls ejs --depth=0
+      core: true
+      failure_handling: fix-or-block
+    - id: html-snapshots
+      command: npm run test:html-snapshots
+      core: true
+      failure_handling: rollback-or-block
+    - id: visual-snapshots
+      command: npm run test:visual
+      core: true
+      failure_handling: rollback-or-block
+    - id: production-audit
+      command: npm audit --omit=dev --audit-level=high
+      core: false
+      failure_handling: fix-or-block
+  evidence_required:
+    - command_output
+    - html_snapshot_report
+    - browser_screenshots
+    - screenshot_diff_report
+    - dependency_diff
+    - human_visual_confirmation
+    - code_review_report
+  cleanliness:
+    production_view_changes: forbidden
+    production_css_changes: forbidden
+    updated_expected_snapshots_after_upgrade: forbidden
+    debug_output: forbidden
+    secrets_or_tokens: forbidden

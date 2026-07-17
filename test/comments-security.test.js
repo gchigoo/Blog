@@ -313,6 +313,6 @@ test('schema and source keep comments plain-text and exclude forbidden community
   assert.doesNotMatch(`${publicScript}\n${adminScript}`, /innerHTML/);
   assert.doesNotMatch(moduleSource, /NODE_ENV\s*===?\s*['"]test['"]/);
   assert.equal(packageJson.dependencies.passport, undefined);
-  assert.match(packageJson.dependencies.ejs, /^\^3\./);
+  assert.equal(packageJson.dependencies.ejs, '6.0.1');
   assert.equal(packageJson.engines.node, '>=24 <25');
 });

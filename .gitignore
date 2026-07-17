@@ -12,3 +12,4 @@ articles/*
 .codelf/
 .cursor/
 *.mmdb
+/test-results/

@@ -7,6 +7,12 @@
     "start": "node server/index.js",
     "dev": "nodemon server/index.js",
     "test": "node --test test/*.test.js",
+    "test:view-hashes": "node test/visual/verify-view-hashes.js",
+    "test:baseline-manifest": "node test/visual/verify-baseline-manifest.js",
+    "test:html-snapshots": "playwright test ejs-html.spec.js",
+    "test:visual": "playwright test ejs-visual.spec.js",
+    "test:ejs-upgrade-gate": "npm run test:view-hashes && npm run test:baseline-manifest && npm test && npm run test:html-snapshots && npm run test:visual",
+    "visual:evidence": "node test/visual/generate-baseline-evidence.js",
     "init-db": "node server/scripts/init-db.js",
     "query-db": "node scripts/query-db.js",
     "backup-db": "node scripts/backup-db.js",
@@ -29,7 +35,7 @@
     "better-sqlite3": "^12.11.1",
     "bowser": "^2.14.1",
     "cookie-parser": "^1.4.7",
-    "ejs": "^3.1.10",
+    "ejs": "6.0.1",
     "express": "^5.2.1",
     "google-auth-library": "^10.9.0",
     "gray-matter": "^4.0.3",
@@ -41,6 +47,7 @@
     "slugify": "^1.6.9"
   },
   "devDependencies": {
+    "@playwright/test": "1.61.0",
     "nodemon": "^3.1.14"
   }
 }

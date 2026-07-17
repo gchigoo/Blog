@@ -615,7 +615,7 @@ htop
 
 #### Web 框架
 - **express** (5.2.1): HTTP 服务器和路由
-- **ejs** (3.1.10): HTML 模板引擎
+- **ejs** (6.0.1): HTML 模板引擎
 
 #### 数据存储
 - **better-sqlite3** (12.11.1): SQLite 同步驱动，支持 Node.js 24
@@ -641,8 +641,9 @@ htop
 - **@maxmind/geoip2-node** (7.1.x): 从本地 GeoLite2 City 数据库查询近似地区
 - **bowser** (2.14.x): 解析浏览器、系统、引擎和设备信息
 
-### 开发依赖 (1 个)
+### 开发依赖 (2 个)
 - **nodemon** (3.1.14): 开发环境自动重启
+- **@playwright/test** (1.61.0): EJS 升级的 HTML、布局与跨设备视觉回归门禁
 
 ### 主要功能流程
 
