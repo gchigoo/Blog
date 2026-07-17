@@ -40,6 +40,7 @@ async function createHarness(t) {
   analytics = createAnalyticsModule({ db, config, geoResolver, logger: { error() {}, info() {} } });
   await analytics.lifecycle.start();
 
+  app.set('trust proxy', 'loopback');
   app.set('view engine', 'ejs');
   app.set('views', path.resolve(__dirname, '..', 'views'));
   app.use(analytics.publicContextRouter);
@@ -72,7 +73,7 @@ function tokenFrom(html) {
 
 test('tracked public HTML is no-store and client context is idempotently attached to the same event', async t => {
   const { baseUrl, db } = await createHarness(t);
-  const page = await fetch(`${baseUrl}/about`, { headers: { 'user-agent': 'Mozilla/5.0' } });
+  const page = await fetch(`${baseUrl}/about`, { headers: { 'user-agent': 'Mozilla/5.0', 'x-forwarded-for': '203.0.113.10' } });
   const html = await page.text();
   const token = tokenFrom(html);
   assert.match(page.headers.get('cache-control') || '', /private/);
@@ -130,7 +131,7 @@ test('context endpoint enforces media type, origin, token, JSON size, and event 
 
 test('admin analytics API/page require authentication, are no-store, and expose list/detail', async t => {
   const { baseUrl, adminCookie } = await createHarness(t);
-  await fetch(`${baseUrl}/about`, { headers: { 'user-agent': 'Mozilla/5.0' } });
+  await fetch(`${baseUrl}/about`, { headers: { 'user-agent': 'Mozilla/5.0', 'x-forwarded-for': '203.0.113.10' } });
   const unauthorizedApi = await fetch(`${baseUrl}/api/admin/analytics/events`);
   assert.equal(unauthorizedApi.status, 401);
   assert.match(unauthorizedApi.headers.get('cache-control') || '', /no-store/);
@@ -252,8 +253,9 @@ test('admin analytics view renders readable paths and hostile detail values as t
     user: { id: 1 }
   });
   assert.match(html, /\/tag\/工具/);
-  assert.match(html, /\/tag\/%E5%B7%A5%E5%85%B7/);
   assert.match(html, /\/x\/&lt;script&gt;/);
+  assert.doesNotMatch(html, /原始编码/);
+  assert.doesNotMatch(html, /\/tag\/%E5%B7%A5%E5%85%B7/);
   assert.doesNotMatch(html, /<img src=x onerror/);
   assert.doesNotMatch(html, /数据为匿名聚合，不保存原始 IP/);
   assert.match(html, /name="pathPrefix"/);

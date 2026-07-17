@@ -55,6 +55,23 @@ test('analytics excludes admin, API, assets, bots, and failed responses', () => 
   assert.equal(isTrackableRequest(makeRequest({ method: 'POST' })), false);
 });
 
+test('analytics excludes loopback and configured server addresses', () => {
+  const db = new Database(':memory:');
+  initializeAnalytics(db);
+  const middleware = createAnalyticsMiddleware({
+    db,
+    secret: 'test-secret',
+    internalIps: ['23.254.158.109']
+  });
+  for (const ip of ['127.0.0.1', '127.10.20.30', '::1', '::ffff:127.0.0.1', '23.254.158.109']) {
+    const response = makeResponse();
+    middleware(makeRequest({ ip }), response, () => {});
+    response.finish();
+  }
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM access_metrics').get().count, 0);
+  db.close();
+});
+
 test('analytics aggregates visitor HMACs and removes entries older than 30 days', () => {
   const db = new Database(':memory:');
   initializeAnalytics(db);

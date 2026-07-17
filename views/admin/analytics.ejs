@@ -55,9 +55,6 @@
             <tr>
               <td>
                 <code class="analytics-break"><%= row.displayPath %></code>
-                <% if (row.displayPath !== row.path) { %>
-                  <details><summary>原始编码</summary><code class="analytics-break"><%= row.path %></code></details>
-                <% } %>
               </td>
               <td><%= row.pageViews %></td><td><%= row.anonymousVisitors %></td>
             </tr>
@@ -146,9 +143,6 @@
               <td><time datetime="<%= event.observedAtUtc %>"><%= formatBeijingTime(event.observedAtUtc) %></time></td>
               <td>
                 <code class="analytics-break"><%= event.displayPath %></code>
-                <% if (event.displayPath !== event.requestPath) { %>
-                  <details><summary>原始编码</summary><code class="analytics-break"><%= event.requestPath %></code></details>
-                <% } %>
               </td>
               <td><code><%= event.ipAddress %></code><br><%= event.location.country.name || '未知' %> / <%= event.location.subdivision.name || '未知' %> / <%= event.location.city || '未知' %></td>
               <td><%= event.client.deviceType || '未知' %><br><%= event.client.browser.name || '未知' %> <%= event.client.browser.version || '' %><br><%= event.client.os.name || '未知' %> <%= event.client.os.version || '' %></td>

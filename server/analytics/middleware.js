@@ -21,6 +21,13 @@ function isTrackableRequest(req) {
   return !BOT_PATTERN.test(req.get('user-agent') || '');
 }
 
+function isInternalAnalyticsIp(value, internalIps) {
+  const normalized = normalizeTrustedIp(value);
+  if (!normalized) return false;
+  if (normalized === '::1' || normalized.startsWith('127.')) return true;
+  return internalIps.has(normalized);
+}
+
 function createAnalyticsMiddleware({
   db,
   secret,
@@ -30,14 +37,17 @@ function createAnalyticsMiddleware({
   geoResolver = null,
   clientParser = null,
   tokenSigner = null,
+  internalIps = [],
   logger = console
 }) {
+  const internalIpSet = new Set(internalIps);
   return (req, res, next) => {
     if (!isTrackableRequest(req)) return next();
 
     const startedAt = now();
     const capturedPath = req.path.split('?')[0];
     const capturedIp = normalizeTrustedIp(req);
+    if (isInternalAnalyticsIp(capturedIp, internalIpSet)) return next();
     const capturedClient = captureRequestClient(req);
     const capturedDevice = deviceKind(capturedClient.userAgent);
     const capturedOriginalUrl = req.originalUrl || req.path;
@@ -82,7 +92,10 @@ function createAnalyticsMiddleware({
         }
 
         const url = sanitizePublicRequestUrl(capturedOriginalUrl, publicOrigin);
-        const referrer = sanitizeReferrer(capturedReferrer);
+        const parsedReferrer = sanitizeReferrer(capturedReferrer);
+        const referrer = isInternalAnalyticsIp(parsedReferrer.host, internalIpSet)
+          ? { value: null, host: null, status: 'internal' }
+          : parsedReferrer;
         const geo = geoResolver.resolve(capturedIp);
         geo.datasetDate = geoResolver.getStatus().reader?.datasetDate || null;
         const responseLength = res.getHeader?.('content-length');
@@ -119,4 +132,4 @@ function createAnalyticsMiddleware({
   };
 }
 
-module.exports = { createAnalyticsMiddleware, deviceKind, isTrackableRequest };
+module.exports = { createAnalyticsMiddleware, deviceKind, isInternalAnalyticsIp, isTrackableRequest };

@@ -111,6 +111,7 @@ function createAnalyticsModule({
       geoResolver: resolver,
       clientParser: parser,
       tokenSigner: signer,
+      internalIps: config.internalIps,
       logger
     }),
     publicContextRouter,

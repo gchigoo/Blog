@@ -249,6 +249,7 @@ sudo nginx -t                   # 测试配置
 | `ANALYTICS_HMAC_SECRET` | 始终必填；canonical unpadded base64url，解码后至少 32 bytes，必须从 secret manager 注入 |
 | `ANALYTICS_DETAILS_ENABLED` | 首次 GeoIP bootstrap 验证成功后才设置为 `true`；仅接受 `true`/`false` |
 | `ANALYTICS_RETENTION_DAYS` | 可选，默认 `30`，整数 `1`–`365` |
+| `ANALYTICS_INTERNAL_IPS` | 可选，逗号分隔的精确 IP；排除生产主机自身访问，并把指向这些 IP 的 Referrer 视为内部来源；loopback 始终排除 |
 | `ANALYTICS_GEOIP_CITY_DB_PATH` | `/var/lib/blog/geoip/GeoLite2-City.mmdb` |
 | `ANALYTICS_GEOIP_UPDATE_STATUS_PATH` | `/var/lib/blog/geoip/update-status.json` |
 | `ANALYTICS_PUBLIC_ORIGIN` | `https://blog.cokedaily.space`，只能是 HTTPS origin，不能带 path/query/credentials |
@@ -258,6 +259,7 @@ sudo nginx -t                   # 测试配置
 ```bash
 export ANALYTICS_DETAILS_ENABLED=true
 export ANALYTICS_RETENTION_DAYS=30
+export ANALYTICS_INTERNAL_IPS=23.254.158.109
 export ANALYTICS_GEOIP_CITY_DB_PATH=/var/lib/blog/geoip/GeoLite2-City.mmdb
 export ANALYTICS_GEOIP_UPDATE_STATUS_PATH=/var/lib/blog/geoip/update-status.json
 export ANALYTICS_PUBLIC_ORIGIN=https://blog.cokedaily.space

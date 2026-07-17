@@ -25,6 +25,7 @@ test('analytics config is fail-fast and details-only settings are conditional', 
     detailsEnabled: false,
     hmacSecret: Buffer.from(VALID_SECRET, 'base64url'),
     retentionDays: 30,
+    internalIps: [],
     geoIpCityDbPath: null,
     geoIpUpdateStatusPath: null,
     publicOrigin: null
@@ -37,6 +38,7 @@ test('analytics config is fail-fast and details-only settings are conditional', 
     [{ ANALYTICS_DETAILS_ENABLED: 'yes' }, /ANALYTICS_DETAILS_ENABLED.*true.*false/],
     [{ ANALYTICS_RETENTION_DAYS: '0' }, /ANALYTICS_RETENTION_DAYS.*1.*365/],
     [{ ANALYTICS_RETENTION_DAYS: '7.5' }, /ANALYTICS_RETENTION_DAYS.*integer/],
+    [{ ANALYTICS_INTERNAL_IPS: '23.254.158.109,not-an-ip' }, /ANALYTICS_INTERNAL_IPS.*exact IP/],
     [{ ANALYTICS_DETAILS_ENABLED: 'true' }, /ANALYTICS_GEOIP_CITY_DB_PATH.*required/],
     [{ ANALYTICS_DETAILS_ENABLED: 'true', ANALYTICS_GEOIP_CITY_DB_PATH: '/tmp/city.mmdb' }, /ANALYTICS_PUBLIC_ORIGIN.*required/],
     [{
@@ -57,10 +59,12 @@ test('analytics config is fail-fast and details-only settings are conditional', 
   const enabled = parseAnalyticsConfig(analyticsEnv({
     ANALYTICS_DETAILS_ENABLED: 'true',
     ANALYTICS_GEOIP_CITY_DB_PATH: '/tmp/GeoLite2-City.mmdb',
-    ANALYTICS_PUBLIC_ORIGIN: 'https://blog.example.com/'
+    ANALYTICS_PUBLIC_ORIGIN: 'https://blog.example.com/',
+    ANALYTICS_INTERNAL_IPS: '23.254.158.109, ::ffff:203.0.113.10,23.254.158.109'
   }));
   assert.equal(enabled.publicOrigin, 'https://blog.example.com');
   assert.equal(enabled.geoIpUpdateStatusPath, '/tmp/update-status.json');
+  assert.deepEqual(enabled.internalIps, ['23.254.158.109', '203.0.113.10']);
 });
 
 test('analytics module exposes mountable surfaces and owns lifecycle resources', async () => {
@@ -169,5 +173,46 @@ test('detailed collector records exact event data after a successful HTML respon
   assert.equal(row.duration_ms, 25);
   assert.equal(row.response_bytes, null);
   assert.doesNotMatch(row.referrer, /SECRET/);
+  db.close();
+});
+
+test('detailed collector treats configured server-IP referrers as internal', () => {
+  const db = new Database(':memory:');
+  db.pragma('foreign_keys = ON');
+  initializeAnalytics(db);
+  let finish;
+  const response = {
+    statusCode: 200,
+    locals: {},
+    on(event, listener) { if (event === 'finish') finish = listener; },
+    getHeader: () => 'text/html; charset=utf-8'
+  };
+  const middleware = createAnalyticsMiddleware({
+    db,
+    secret: VALID_SECRET,
+    detailsEnabled: true,
+    publicOrigin: 'https://blog.example.com',
+    internalIps: ['23.254.158.109'],
+    geoResolver: {
+      resolve: () => ({ status: 'not_found', data: null }),
+      getStatus: () => ({ reader: null })
+    },
+    clientParser: { parse: () => ({ status: 'unknown', data: null }) },
+    tokenSigner: {
+      createEventId: () => 'abcdef0123456789abcdef0123456789',
+      sign: () => 'v1.fixture.signature'
+    }
+  });
+  const headers = {
+    'user-agent': 'Mozilla/5.0',
+    referer: 'http://23.254.158.109/'
+  };
+  middleware({
+    method: 'GET', path: '/', originalUrl: '/', ip: '203.0.113.20',
+    get: name => headers[name.toLowerCase()]
+  }, response, () => {});
+  finish();
+  const row = db.prepare('SELECT referrer, referrer_host, referrer_parse_status FROM access_event_details').get();
+  assert.deepEqual(row, { referrer: null, referrer_host: null, referrer_parse_status: 'internal' });
   db.close();
 });

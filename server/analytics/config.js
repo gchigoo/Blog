@@ -1,4 +1,5 @@
 const path = require('node:path');
+const { normalizeTrustedIp } = require('./request-security');
 
 const DEFAULT_RETENTION_DAYS = 30;
 const MIN_SECRET_BYTES = 32;
@@ -36,6 +37,23 @@ function parseRetentionDays(value) {
     throw new Error('ANALYTICS_RETENTION_DAYS must be between 1 and 365');
   }
   return parsed;
+}
+
+function parseInternalIps(value) {
+  if (value === undefined || value.trim() === '') return Object.freeze([]);
+  const internalIps = [];
+  const seen = new Set();
+  for (const item of value.split(',')) {
+    const normalized = normalizeTrustedIp(item);
+    if (!normalized) {
+      throw new Error('ANALYTICS_INTERNAL_IPS must be a comma-separated list of exact IP addresses');
+    }
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
+      internalIps.push(normalized);
+    }
+  }
+  return Object.freeze(internalIps);
 }
 
 function parsePublicOrigin(value, nodeEnv) {
@@ -76,12 +94,14 @@ function parseAnalyticsConfig(env = process.env) {
   );
   const hmacSecret = parseHmacSecret(env.ANALYTICS_HMAC_SECRET);
   const retentionDays = parseRetentionDays(env.ANALYTICS_RETENTION_DAYS);
+  const internalIps = parseInternalIps(env.ANALYTICS_INTERNAL_IPS);
 
   if (!detailsEnabled) {
     return Object.freeze({
       detailsEnabled,
       hmacSecret,
       retentionDays,
+      internalIps,
       geoIpCityDbPath: null,
       geoIpUpdateStatusPath: null,
       publicOrigin: null
@@ -100,6 +120,7 @@ function parseAnalyticsConfig(env = process.env) {
     detailsEnabled,
     hmacSecret,
     retentionDays,
+    internalIps,
     geoIpCityDbPath,
     geoIpUpdateStatusPath,
     publicOrigin

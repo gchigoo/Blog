@@ -87,7 +87,7 @@ Google Cloud 中的 OAuth client 类型必须是 **Web application**，Authorize
 
 ### 启用访问明细
 
-`ANALYTICS_HMAC_SECRET` 始终必填；访问明细默认关闭。生产环境需要先由每周 systemd updater 成功安装 GeoLite2 City，再设置 `ANALYTICS_DETAILS_ENABLED=true`。启用后会记录每次成功公开 HTML 访问的原始 IP、公开 URL/来源、近似地区、原始 User-Agent、浏览器/系统/设备解析结果，以及浏览器实际提供的屏幕、时区、语言和高熵 Client Hints。后台会把 `/tag/%E5%B7%A5%E5%85%B7` 等所有合法编码路径显示为可读 Unicode，同时保留原始编码值。
+`ANALYTICS_HMAC_SECRET` 始终必填；访问明细默认关闭。生产环境需要先由每周 systemd updater 成功安装 GeoLite2 City，再设置 `ANALYTICS_DETAILS_ENABLED=true`。启用后会记录每次成功公开 HTML 访问的原始 IP、公开 URL/来源、近似地区、原始 User-Agent、浏览器/系统/设备解析结果，以及浏览器实际提供的屏幕、时区、语言和高熵 Client Hints。后台会把 `/tag/%E5%B7%A5%E5%85%B7` 等所有合法编码路径显示为可读 Unicode，事件详情/API 仍保留原始编码值。loopback 地址始终不采集；生产主机自身的公网地址可通过 `ANALYTICS_INTERNAL_IPS` 排除。
 
 完整的首次安装、每周日 03:30 更新、原子回滚、保留周期和排障步骤见 [DEPLOY.md](./DEPLOY.md#访问明细与-geolite2-city)。
 
