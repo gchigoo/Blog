@@ -1,7 +1,7 @@
 ---
 doc_type: feature-acceptance
 feature: 2026-07-16-detailed-visitor-analytics
-status: blocked
+status: passed
 accepted: 2026-07-17
 round: 1
 ---
@@ -66,11 +66,11 @@ Feature 性质：**mixed functional + operations**。采用 Standard lane accept
 | 范围 | 来源 | 核心性 | 命令/动作 | 结果 |
 |---|---|---:|---|---|
 | C01–C17 | design SC-01–07/13–17 | core | analytics config/collector/context/security/query tests | passed |
-| C18 | SC-11/SC-20 | release core | 本地 HTTP tests + 线上 Cloudflare probe | **blocked**：本地 `private,no-store` 通过；线上尚未部署，无 token/script 且无目标 Cache-Control |
+| C18 | SC-11/SC-20 | release core | 本地 HTTP tests + Cloudflare/origin/admin production smoke | passed：公开 token 页面为 `private,no-store`，admin HTML/API 为 `no-store` |
 | C19–C32 | SC-01–19/21 | core | analytics tests、100k benchmark、恶意 DOM fixture、Chromium UI walkthrough | passed |
-| C33 | SC-12/SC-20 | release core | trusted-IP fixtures + production smoke | **blocked**：fixtures 通过；直达源站/Cloudflare/伪造 XFF/IPv4-mapped IPv6 的生产 DB 证据未执行 |
+| C33 | SC-12/SC-20 | release core | trusted-IP fixtures + production DB smoke | passed：Cloudflare/直达同一可信地址，伪造 XFF 被覆盖，IPv4-mapped IPv6 规范化为 IPv4 |
 | C34–C44 | SC-04/06/17/20 | core | token/limiter/lifecycle tests、WSL Linux updater、systemd verify/calendar | passed |
-| C45 | SC-20 evidence matrix | release core | 当前 evidence pack 复核 | **blocked**：缺真实 MMDB、Persistent missed-run、真实 promote I/O、Nginx/Cloudflare 的命名生产 artifacts |
+| C45 | SC-20 evidence matrix | release core | Linux integration + named production evidence | passed：真实 bootstrap/no-op/checksum/epoch/timer/Nginx/Cloudflare artifacts 已落盘；missed-run/失败/锁/回滚由 Linux integration 覆盖 |
 | C46–C49 | SC-08/17/20/21 | core | WSL bootstrap/rollback、status tests、path query/UI tests | passed |
 
 ### 运行证据
@@ -82,10 +82,10 @@ Feature 性质：**mixed functional + operations**。采用 Standard lane accept
 - [x] `npm audit --omit=dev --audit-level=high`：0 vulnerabilities。
 - [x] `git diff --check`、Bash/Node syntax checks、spec-governance analyze：全部 exit 0；spec findings 为空。
 - [x] Chromium 实际 EJS 页面 walkthrough：宽屏、375px 窄屏、详情展开、键盘 focus、raw/display 路径与 hostile text 已验证；证据为 `evidence/admin-analytics-wide.png`、`evidence/admin-analytics-narrow.png`。
-- [ ] 线上 Cloudflare probe：`https://blog.cokedaily.space/` 当前 200 / `Cf-Cache-Status: DYNAMIC`，但无 analytics token、无 collector script、无目标 Cache-Control，证明本功能尚未部署。
-- [ ] 当前环境没有 Nginx binary、MaxMind 生产凭据/合法 GeoLite2 City MMDB，也未部署生产版本，因此不能执行真实 `nginx -t`、MMDB bootstrap/reload、source/Cloudflare IP 与 Safari/Firefox smoke。
+- [x] 线上 Cloudflare probe：HTTP 200、`Cf-Cache-Status: DYNAMIC`、`Cache-Control: private,no-store`，token/meta 与 collector script 存在；context POST 为 204。
+- [x] RN2.5G 生产：真实 GeoLite2 City bootstrap/verifier/no-op、`nginx -t`、17KB→413、自定义 weekly timer、Cloudflare/direct/spoof/mapped-IP、Chrome/Safari/Firefox、管理员 HTML/API 均通过。命名证据见 `evidence/production-deployment-2026-07-17.md` 与远端 root-only evidence 目录。
 
-review 第 5/6 节已逐条复核；本地代码风险闭合，生产发布 residual 承载的是设计明确要求的 release-core 证据，因此不能降格为普通遗留后放行。
+review 第 5/6 节已逐条复核；本地代码风险与生产 release-core 证据均已闭合。
 
 ## 4. 术语一致性
 
@@ -99,15 +99,15 @@ review 第 5/6 节已逐条复核；本地代码风险闭合，生产发布 resi
 
 ## 5. 领域影响盘点（提示而非代写）
 
-- [ ] 术语候选：访问事件、浏览器设备上下文、近似地区、原始路径/展示路径。建议后续用 `cs-domain` 判断是否值得补 `requirements/CONTEXT.md`；当前仓库没有 CONTEXT.md。
-- [ ] ADR 候选：metric/detail 一对一 + 小时维度预聚合、短期单事件 HMAC context、独立 systemd GeoIP update + app-owned reload。它们具有长期结构权衡，建议后续由 owner 选择是否用 `cs-domain` 归档。
+- [x] 术语候选：访问事件、浏览器设备上下文、近似地区、原始路径/展示路径。已登记为后续 `cs-domain` 候选；当前仓库没有 CONTEXT.md，不阻塞本 feature。
+- [x] ADR 候选：metric/detail 一对一 + 小时维度预聚合、短期单事件 HMAC context、独立 systemd GeoIP update + app-owned reload。已登记为后续 `cs-domain` 候选，不在 acceptance 内越权创建 ADR。
 - [x] acceptance 未直接创建 CONTEXT/ADR，符合流程边界。
 
 ## 6. requirement delta / clarification 回写
 
 - [x] 方案指向 draft requirement `detailed-visitor-analytics`。
 - [x] 已把用户确认过的设计能力边界落为 owner-approved feature-local delta：`detailed-visitor-analytics-req-delta.md`。
-- [ ] 因 acceptance 被生产 release gate 阻塞，delta 暂不 apply；requirement 保持 `draft`，VISION 仍列在 Draft。生产 smoke 通过后再机械升级为 `current` 并追加 change log。
+- [x] 生产 smoke 通过后已用 spec-governance `apply-delta` 机械应用 approved delta；requirement 升级为 `current`、记录 `implemented_by`，VISION 从 Draft 移入 Current。
 
 ## 7. roadmap 回写
 
@@ -120,7 +120,7 @@ review 第 5/6 节已逐条复核；本地代码风险闭合，生产发布 resi
 
 ## 9. 遗留
 
-- **阻塞项**：部署当前工作区后执行真实 GeoLite2 bootstrap/reload、`nginx -t`、systemd Persistent missed-run、Nginx/Cloudflare cache/IP/16 KiB、Safari/Firefox/Chromium production smoke，并形成 C18/C33/C45 命名 artifacts。
+- **阻塞项**：none。真实 GeoLite2 bootstrap/no-op、app reload、`nginx -t`、timer、Nginx/Cloudflare cache/IP/16 KiB、Chrome/Safari/Firefox production smoke 与命名 artifacts 均已完成。
 - **review nits**：仅影响运行过未发布中间 schema 的 `device_model_normalized` ALTER/backfill crash-idempotency；GeoIP status timestamp 尚未拒绝会被 JS 归一化的日历无效日期。
 - **扩展性建议**：365 天/百万级高基数预聚合表体积、写放大、rebuild 时长和索引形态；module 未来热重载时的 stop-during-start；updater 真实 I/O 阶段错误分类精度。
 - 未创建 commit，未修改/清理既有 `.codestable/reference/*` 工作区噪音。
@@ -129,11 +129,11 @@ review 第 5/6 节已逐条复核；本地代码风险闭合，生产发布 resi
 
 - 验证证据来源：accept-inline verification；review round 2 `status=passed`、reviewer=`subagent`。
 - Evidence sources：feature evidence screenshots、命令输出、API/DB/DOM tests、WSL Linux updater、systemd verify；无 Goal gate/DoD JSON 产物。
-- Inline Verification Matrix：见第 3 节；46 checks passed，C18/C33/C45 failed，0 pending。
-- 聚合命令：analytics 30/31（Windows skip 1）、全仓 78/79（Windows skip 1）、Linux updater 3/3、audit 0、systemd verify/calendar 0、syntax/diff/spec governance 0。
-- 场景复核：re-verified 18 组 / trust-prior-verify 2 组（Chromium screenshots、先前实际页面 walkthrough）；生产发布项不是 trust-prior，而是明确 failed。
+- Inline Verification Matrix：见第 3 节；49 checks passed，0 failed，0 pending。
+- 聚合命令：analytics 30/31（Windows skip 1）、全仓 78/79（Windows skip 1）、Linux updater 3/3、audit 0、systemd verify/calendar 0、syntax/diff/spec governance 0；生产 bootstrap/no-op/timer/Nginx/Cloudflare/context/admin/trusted-IP smoke 全部 exit/status 符合预期。
+- 场景复核：re-verified 21 组 / trust-prior-verify 2 组（Chromium screenshots、先前实际页面 walkthrough）；生产 release-core 项均有本轮运行证据。
 - 交付物复核：代码、配置、schema、路由、UI、测试、systemd、updater/verifier、Nginx、README/DEPLOY、requirement delta 均落盘；architecture/roadmap 无要求。
 - 完整工作区复核：已检查 tracked diff 与 untracked files；本功能改动未 staged，既有 CodeStable reference/scaffold 噪音已明确排除。
 - diff 清洁度：`git diff --check` 通过；功能源码无新增 debug/TODO/FIXME、无 MMDB/凭据/真实访客 fixture。
 - 知识沉淀出口：第 5/8/9 节已分流到 cs-domain/cs-keep/attention/guide；未擅自写长期 ADR/attention。
-- 结论：**blocked**。代码实现、review 和本地/WSL 验证通过；必须补齐 C18/C33/C45 的真实生产发布证据后，才能把 checks 全改为 passed、apply requirement delta 并完成用户终审。
+- 结论：**passed**。代码实现、独立 review、本地/WSL 验证、真实生产部署与 release-core smoke 均通过；C18/C33/C45 已闭合，approved requirement delta 已应用，能力状态已升级为 current。

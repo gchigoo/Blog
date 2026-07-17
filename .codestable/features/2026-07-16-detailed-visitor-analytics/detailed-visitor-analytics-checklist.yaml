@@ -103,7 +103,7 @@ checks:
   - id: C18
     item: "tracked public HTML 为 private,no-store，admin HTML/API 为 no-store，Nginx/Cloudflare 最终头已验证"
     source: "设计 1.3.11；SC-11/SC-20"
-    status: failed
+    status: passed
   - id: C19
     item: "raw 值只经 EJS <%= 或 DOM textContent 展示；不得传给 <%-/innerHTML/raw JSON script；静态受信 include 可用 <%- include>"
     source: "设计 1.3.12；SC-08"
@@ -163,7 +163,7 @@ checks:
   - id: C33
     item: "direct source、Cloudflare、伪造 XFF、IPv4-mapped IPv6 的可信 IP 结果有独立 fixture 与生产 smoke"
     source: "Top risk 1.6；SC-12/SC-20"
-    status: failed
+    status: passed
   - id: C34
     item: "ANALYTICS_HMAC_SECRET 必须 canonical unpadded base64url 且解码后至少32 bytes；信号调用 lifecycle.stop"
     source: "配置/lifecycle 1.4；SC-17"
@@ -211,7 +211,7 @@ checks:
   - id: C45
     item: "GeoIP evidence matrix 每个场景包含前置、命令、exit/status、checksum/epoch/lookup/secret断言和命名artifact"
     source: "GeoIP updater evidence matrix 1.4；SC-20"
-    status: failed
+    status: passed
   - id: C46
     item: "首次无live时verified candidate可原子bootstrap且previous缺席合法；部署必须bootstrap成功后才启用details/启动应用"
     source: "GeoLite2 City 每周更新契约 1.4；SC-17/SC-20"
