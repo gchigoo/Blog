@@ -1,0 +1,269 @@
+feature: 2026-07-16-detailed-visitor-analytics
+created: 2026-07-16
+
+steps:
+  - id: S1
+    action: "Requirement/config/编排：建立 fail-fast config、async factory/lifecycle、GeoResolver status seam 和 Express 挂载顺序"
+    exit_signal: "配置/首装/status-provider/启动-stop 测试通过；publicContextRouter 顺序正确；node --test test/analytics*.test.js 通过"
+    status: done
+  - id: S2
+    action: "计算与安全节点：实现可信 IP、URL/Referrer 凭据脱敏、GeoIP、Bowser、v1 token、canonical context、限流和输入校验"
+    exit_signal: "test/analytics-security.test.js 覆盖 OAuth/畸形Referrer/credential/XSS/body/有界限流，Geo/Bowser tagged-result 与 token fixture 通过"
+    status: done
+  - id: S3
+    action: "持久化与生命周期：新增明细侧表/索引、基础事务、context hash 原子幂等、旧库兼容和启动/6h 清理"
+    exit_signal: "test/analytics-collector.test.js 与 test/analytics-context.test.js 覆盖迁移、并发、同值204/异值409、旧行 overview-only、非整点 exact/legacy 清理"
+    status: done
+  - id: S4
+    action: "公共采集：接通 tracked HTML token/meta/script、private no-store、425 有界重试与完整排除规则"
+    exit_signal: "test/analytics-browser.test.js 覆盖立即/1/2/4/8 秒重试和 JS 降级；OAuth/API/static/失败响应不写事件；最终 Cache-Control 有集成证据"
+    status: done
+  - id: S5
+    action: "管理查询：实现 overview top50/other 边界、normalized filter、cursor event list/detail、100k query plan/性能/响应预算"
+    exit_signal: "query测试通过；全部路径统一生成raw/display且多个中文标签可读、无标签/路由白名单；列表p95<=250ms；高基数overview p95<=500ms/body<=256KiB且计数守恒"
+    status: done
+  - id: S6
+    action: "管理 UI：完成聚合下钻、筛选、分页、完整详情和纯文本安全渲染的可见状态/响应式/键盘 polish"
+    exit_signal: "多个中文tag及其他编码路径均显示可读且raw可核对；恶意编码/raw不执行；旧文案已更新；各状态/长文本/窄屏/focus证据通过"
+    status: done
+  - id: S7
+    action: "发布验证：完成测试/audit、Nginx/Cloudflare、GeoIP 每周 systemd timer/atomic update/reload/rollback、多浏览器 smoke 和文档"
+    exit_signal: "CMD-001~007通过；Linux bootstrap/timer/missed-run/锁/no-op/失败保旧/回滚、status API、app交换、secret scan和多浏览器有证据"
+    status: done
+
+checks:
+  - id: C01
+    item: "detailed-visitor-analytics requirement 为 draft，旧 anonymous requirement 为 outdated 且 VISION 索引一致"
+    source: "requirement artifacts；设计 1.1"
+    status: passed
+  - id: C02
+    item: "access_metrics 与 GET /api/admin/analytics 原字段/口径兼容，旧行只进入 overview"
+    source: "设计 1.3.1/1.3.14；SC-09/SC-15"
+    status: passed
+  - id: C03
+    item: "access_event_details.metric_id 一对一，event_id 为 128-bit 唯一外部 id，metric_id 仅内部使用"
+    source: "设计 1.3.2；数据模型 2.1"
+    status: passed
+  - id: C04
+    item: "原始 IP、UA、允许的 Client Hints、公开 URL/Referrer 与浏览器 context 按 owner 边界明文保存"
+    source: "设计 1.1/1.3.3；SC-01/SC-02"
+    status: passed
+  - id: C05
+    item: "Cookie/Authorization/Proxy-Authorization/OAuth code/state/凭据值不进入 analytics DB、API raw 或 analytics 模块日志"
+    source: "采集边界 1.5；SC-07"
+    status: passed
+  - id: C06
+    item: "完整排除 /auth、/admin、/api、static、bot、非 GET/HEAD、非 HTML、4xx/5xx 和 context endpoint"
+    source: "采集边界 1.5；SC-07/SC-14"
+    status: passed
+  - id: C07
+    item: "full_url 使用 ANALYTICS_PUBLIC_ORIGIN，不信任 Host；URL/Referrer 清 userinfo/凭据，解析失败不保留原 query/referrer"
+    source: "配置/采集边界 1.4/1.5"
+    status: passed
+  - id: C08
+    item: "GeoLite2 使用Buffer reader；60秒poller候选交换/失败保旧；getStatus覆盖update状态、14天stale和stop"
+    source: "设计 1.3.4/1.4；SC-13/SC-17"
+    status: passed
+  - id: C09
+    item: "bowser 2.14.x 保存 raw 并返回 parsed/unknown/error tagged result，解析失败不丢基础事件"
+    source: "设计 1.3.5/1.3.15；SC-13"
+    status: passed
+  - id: C10
+    item: "第一方脚本仅收集设计列出的 UAData/屏幕/视口/语言/时区/硬件/触控/网络字段"
+    source: "设计 1.3.6；反向核对 3.2"
+    status: passed
+  - id: C11
+    item: "token 为 v1+audience+event+iat/exp，domain-separated HMAC、timingSafeEqual、固定600秒 TTL"
+    source: "设计 1.3.7；SC-04"
+    status: passed
+  - id: C12
+    item: "context allowlist/范围校验后 canonical sorted JSON + SHA-256 hash，原子 null-to-value 更新"
+    source: "设计 1.3.8；SC-04"
+    status: passed
+  - id: C13
+    item: "相同 canonical context 首次/并发/重试返回204，不同 context 返回409，不可覆盖其他 event"
+    source: "设计 1.3.8；SC-04"
+    status: passed
+  - id: C14
+    item: "event_not_ready 使用425+Retry-After，客户端只按立即/1/2/4/8秒重试且有终止测试"
+    source: "设计 1.3.9；SC-05"
+    status: passed
+  - id: C15
+    item: "public context 路由先验 token/限流/长度再用 route-local 16kb strict JSON parser"
+    source: "设计 1.3.10/2.4；SC-06"
+    status: passed
+  - id: C16
+    item: "wrong content-type、oversize Content-Length、chunked oversize、malformed JSON 和 flood 分别有稳定 415/413/400/429"
+    source: "API 2.2；SC-06"
+    status: passed
+  - id: C17
+    item: "context POST 校验配置 Origin；验签前按可信 IP 30/min burst10，验签后按 event 8/10min 限流"
+    source: "采集边界 1.5；SC-06"
+    status: passed
+  - id: C18
+    item: "tracked public HTML 为 private,no-store，admin HTML/API 为 no-store，Nginx/Cloudflare 最终头已验证"
+    source: "设计 1.3.11；SC-11/SC-20"
+    status: failed
+  - id: C19
+    item: "raw 值只经 EJS <%= 或 DOM textContent 展示；不得传给 <%-/innerHTML/raw JSON script；静态受信 include 可用 <%- include>"
+    source: "设计 1.3.12；SC-08"
+    status: passed
+  - id: C20
+    item: "恶意 UA/URL/Referrer/context/JSON fixture 不产生 script/img/event handler/javascript link"
+    source: "采集边界 1.5；SC-08"
+    status: passed
+  - id: C21
+    item: "retention 默认30/范围1-365；detail 按 exact observedAt、legacy 按完整过期小时清理，边界不提前删并级联"
+    source: "设计 1.3.13/1.4；SC-16"
+    status: passed
+  - id: C22
+    item: "配置开关、secret、retention、origin、MMDB 缺失/损坏/类型错误均在监听前给出确定结果"
+    source: "配置 1.4；SC-17"
+    status: passed
+  - id: C23
+    item: "Geo/Bowser lookup error 保存 raw 基础事件与错误 status；仅 SQLite 基础事务失败允许丢 analytics event"
+    source: "设计 1.3.15/2.3；SC-13"
+    status: passed
+  - id: C24
+    item: "管理员 filter 的 exact/prefix/normalization/长度/cursor 语义与 API 契约一致"
+    source: "API 2.2；SC-10"
+    status: passed
+  - id: C25
+    item: "列表只返回有 detail 的事件且不含 raw 大字段；详情按 event_id 返回完整 raw/normalized 字段"
+    source: "设计 1.3.14；API 2.2；SC-10/SC-15"
+    status: passed
+  - id: C26
+    item: "100k fixture 覆盖高基数 referrer/model；列表无无约束full scan且p95<=250ms，overview p95<=500ms/body<=256KiB"
+    source: "数据模型/性能 2.1/2.5；SC-09/SC-18"
+    status: passed
+  - id: C27
+    item: "response_bytes 只来自可信数字 Content-Length，否则为 null；设备自报来源在 UI 标识"
+    source: "数据模型 2.1；SC-01"
+    status: passed
+  - id: C28
+    item: "管理员 JWT 与 public event token 不互换，管理员 401/403/404 语义保持"
+    source: "API 2.2；SC-10/SC-11"
+    status: passed
+  - id: C29
+    item: "管理 UI 覆盖下钻、filter、pagination、detail、empty/loading/error/unknown/长文本/窄屏/focus，匿名旧文案已更新"
+    source: "SC-19"
+    status: passed
+  - id: C30
+    item: "不新增长期 visitor/session cookie，不采集交互内容，不引入在线 GeoIP/第三方 SDK/实时/地图/热力图/导出"
+    source: "范围 1.1；反向核对 3.2"
+    status: passed
+  - id: C31
+    item: "MMDB、GeoIP 凭据、真实 token/secret/JWT 和真实访客 fixture 不进入仓库"
+    source: "风险依赖 1.6；反向核对 3.2"
+    status: passed
+  - id: C32
+    item: "指定六个 analytics 测试文件含 test/analytics-geoip-update.test.js；通用npm test与Linux updater测试边界明确"
+    source: "Coverage 3.3"
+    status: passed
+  - id: C33
+    item: "direct source、Cloudflare、伪造 XFF、IPv4-mapped IPv6 的可信 IP 结果有独立 fixture 与生产 smoke"
+    source: "Top risk 1.6；SC-12/SC-20"
+    status: failed
+  - id: C34
+    item: "ANALYTICS_HMAC_SECRET 必须 canonical unpadded base64url 且解码后至少32 bytes；信号调用 lifecycle.stop"
+    source: "配置/lifecycle 1.4；SC-17"
+    status: passed
+  - id: C35
+    item: "浏览器补充使用 fetch keepalive 而非 sendBeacon，自定义 token header 与有界重试保持可用"
+    source: "编排 2.4；SC-02/SC-05"
+    status: passed
+  - id: C36
+    item: "Nginx context 精确 location 设置16k body 上限，应用 route-local parser 仍是最终校验边界"
+    source: "设计 1.3.10；SC-06/SC-20"
+    status: passed
+  - id: C37
+    item: "IP/event limiter entry 有 TTL、4096/8192 容量、每分钟回收、满容量429、unref timer 和 lifecycle stop 清理"
+    source: "采集边界 1.5；SC-06/SC-17"
+    status: passed
+  - id: C38
+    item: "新增 overview 维度统一 items<=50、稳定排序、distinct/truncated/otherPageViews，恶意高基数计数守恒"
+    source: "Overview 2.2；SC-09/SC-18"
+    status: passed
+  - id: C39
+    item: "v1 token key 使用固定 HKDF salt/info，签名输入/encoding 明确并有跨实现固定 fixture"
+    source: "设计 1.3.7；SC-04"
+    status: passed
+  - id: C40
+    item: "systemd timer 每周日03:30运行，30分钟jitter、5分钟accuracy、Persistent补跑且flock防并发"
+    source: "GeoLite2 City 每周更新契约 1.4；SC-20"
+    status: passed
+  - id: C41
+    item: "updater 按 lock→staging→verify→no-op/prepare previous→fsync→atomic promote→status 状态机执行；rollback同样原子"
+    source: "GeoLite2 City 每周更新契约 1.4；SC-17/SC-20"
+    status: passed
+  - id: C42
+    item: "MaxMind凭据仅在root-owned 0600 /etc/GeoIP.conf，不进env/仓库/命令行/日志；运维命令与文档完整"
+    source: "GeoLite2 City 每周更新契约 1.4；SC-20 secrets evidence"
+    status: passed
+  - id: C43
+    item: "Linux路径固定为/root/Blog、/var/lib/blog/geoip与systemd RuntimeDirectory；owner/mode、ANALYTICS path和hardening逐项校验"
+    source: "GeoLite2 City 每周更新契约 1.4；SC-20"
+    status: passed
+  - id: C44
+    item: "poller fingerprint/inflight/5分钟失败限频明确；损坏/I-O失败时进程不中断、旧reader继续lookup，stop无残留handle"
+    source: "配置与生命周期 1.4；SC-17"
+    status: passed
+  - id: C45
+    item: "GeoIP evidence matrix 每个场景包含前置、命令、exit/status、checksum/epoch/lookup/secret断言和命名artifact"
+    source: "GeoIP updater evidence matrix 1.4；SC-20"
+    status: failed
+  - id: C46
+    item: "首次无live时verified candidate可原子bootstrap且previous缺席合法；部署必须bootstrap成功后才启用details/启动应用"
+    source: "GeoLite2 City 每周更新契约 1.4；SC-17/SC-20"
+    status: passed
+  - id: C47
+    item: "GeoResolver.getStatus缓存严格<=4KiB status schema；missing/corrupt/unreadable不影响lookup并经overview/UI展示"
+    source: "配置/lifecycle与Overview 1.4/2.2；SC-17"
+    status: passed
+  - id: C48
+    item: "path原始编码值/聚合identity/API path保持不变；overview每行及list/detail每条结果都additive返回displayPath与decode status，旧数据无需迁移"
+    source: "设计 1.3.17/数据模型/API；SC-21"
+    status: passed
+  - id: C49
+    item: "formatAnalyticsPath统一处理全部路径且无标签/路由白名单；先decode/fallback再NFC和Cc/Cf可见转义；多个中文标签可读、reserved保留、非法percent+原始bidi/control也安全"
+    source: "设计 1.3.17；SC-08/SC-21"
+    status: passed
+
+dod:
+  commands:
+    - id: CMD-001
+      command: "node --test test/analytics*.test.js"
+      core: true
+      failure_handling: fix-or-block
+    - id: CMD-002
+      command: "npm test"
+      core: true
+      failure_handling: fix-or-block
+    - id: CMD-003
+      command: "npm audit --omit=dev --audit-level=high"
+      core: true
+      failure_handling: fix-or-block
+    - id: CMD-004
+      command: "nginx -t"
+      core: false
+      failure_handling: document-baseline
+    - id: CMD-005
+      command: "100k fixture + list/overview EXPLAIN QUERY PLAN benchmark and response-size assertion"
+      core: true
+      failure_handling: fix-or-block
+    - id: CMD-006
+      command: "node --test test/analytics-geoip-update.test.js (Linux)"
+      core: true
+      failure_handling: fix-or-block
+    - id: CMD-007
+      command: "systemd-analyze verify deploy/systemd/blog-geoip-update.service deploy/systemd/blog-geoip-update.timer"
+      core: true
+      failure_handling: fix-or-block
+  evidence_required: [command_output, api_response, database_assertion, query_plan_report, performance_report, malicious_dom_fixture, browser_screenshot, cross_browser_smoke, nginx_smoke, cache_header_smoke, systemd_timer_status, mmdb_bootstrap_smoke, mmdb_update_smoke, mmdb_failure_rollback_smoke, mmdb_reload_smoke, geoip_status_provider_report, diff_summary]
+  cleanliness:
+    debug_output: forbidden
+    todo_fixme: forbidden
+    commented_code: forbidden
+    unused_imports: forbidden
+    secrets_in_analytics_logs: forbidden
+    production_user_fixtures: forbidden

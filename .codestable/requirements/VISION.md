@@ -1,13 +1,14 @@
 ---
 doc_type: requirement-index
-last_reviewed: 2026-07-15
+last_reviewed: 2026-07-17
 ---
 
 # Requirements vision
 
 ## Draft
 
-- [`anonymous-access-analytics`](anonymous-access-analytics.md) — 在不保存访客原始 IP 或追踪点击的前提下，看清博客的访问趋势与内容触达。
+- [`detailed-visitor-analytics`](detailed-visitor-analytics.md) — 查看每次公开页面访问的原始 IP、近似地区、完整客户端与设备上下文，并保留趋势统计。
+- [`reader-comments`](reader-comments.md) — 让读者用可信身份参与文章讨论，同时由博主决定哪些内容公开。
 
 ## Current
 
@@ -15,4 +16,4 @@ _None._
 
 ## Outdated
 
-_None._
+- [`anonymous-access-analytics`](anonymous-access-analytics.md) — 已由 `detailed-visitor-analytics` 取代；保留为历史匿名边界记录。

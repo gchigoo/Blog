@@ -3,6 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <% if (typeof analyticsEventToken === 'string' && analyticsEventToken) { %>
+    <meta name="analytics-event-token" content="<%= analyticsEventToken %>">
+    <script src="/js/analytics-context.js?v=20260717" defer></script>
+  <% } %>
   <title><%= typeof title !== 'undefined' ? title + ' - ' : '' %>我的博客</title>
   <!-- new.css 官方推荐的引入方式 -->
   <link rel="stylesheet" href="https://fonts.xz.style/serve/inter.css">

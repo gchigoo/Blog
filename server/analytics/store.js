@@ -1,4 +1,8 @@
 const crypto = require('crypto');
+const { cleanupAnalytics, initializeEventDetails } = require('./repository');
+const { formatAnalyticsPath } = require('./path-display');
+const { getOverviewDimensions } = require('./query/analytics-query');
+const { getCachedOverview, markOverviewDirty, setCachedOverview } = require('./overview-cache');
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -27,6 +31,7 @@ function initializeAnalytics(db) {
     CREATE INDEX IF NOT EXISTS idx_access_metrics_bucket ON access_metrics(bucket_utc);
     CREATE INDEX IF NOT EXISTS idx_access_metrics_path_bucket ON access_metrics(path, bucket_utc);
   `);
+  initializeEventDetails(db);
 }
 
 function recordMetric(db, metric) {
@@ -34,15 +39,18 @@ function recordMetric(db, metric) {
     INSERT INTO access_metrics (bucket_utc, path, visitor_day_hmac, device_kind)
     VALUES (?, ?, ?, ?)
   `).run(metric.bucketUtc, metric.path, metric.visitorDayHmac, metric.deviceKind);
+  markOverviewDirty(db);
 }
 
 function cleanupMetrics(db, now = Date.now(), retentionDays = RETENTION_DAYS) {
-  const cutoff = new Date(now - retentionDays * DAY_MS).toISOString();
-  return db.prepare('DELETE FROM access_metrics WHERE bucket_utc < ?').run(cutoff).changes;
+  return cleanupAnalytics(db, now, retentionDays);
 }
 
-function getOverview(db, now = Date.now(), days = 7) {
-  const rangeDays = Math.min(Math.max(Number.parseInt(days, 10) || 7, 1), RETENTION_DAYS);
+function getOverview(db, now = Date.now(), days = 7, retentionDays = RETENTION_DAYS, geoData = null) {
+  const rangeDays = Math.min(Math.max(Number.parseInt(days, 10) || 7, 1), retentionDays);
+  const cacheKey = `${Math.floor(now / 15_000)}:${rangeDays}:${retentionDays}`;
+  const cached = getCachedOverview(db, cacheKey);
+  if (cached) return { ...cached, geoData };
   const since = new Date(now - rangeDays * DAY_MS).toISOString();
   const total = db.prepare(`
     SELECT COUNT(*) AS page_views,
@@ -50,7 +58,13 @@ function getOverview(db, now = Date.now(), days = 7) {
     FROM access_metrics WHERE bucket_utc >= ?
   `).get(since);
 
-  return {
+  const byPage = db.prepare(`
+    SELECT path, COUNT(*) AS pageViews,
+      COUNT(DISTINCT visitor_day_hmac) AS anonymousVisitors
+    FROM access_metrics WHERE bucket_utc >= ?
+    GROUP BY path ORDER BY pageViews DESC, path ASC
+  `).all(since).map(row => ({ ...row, ...formatAnalyticsPath(row.path) }));
+  const overview = {
     days: rangeDays,
     pageViews: total.page_views,
     anonymousVisitors: total.anonymous_visitors,
@@ -60,18 +74,16 @@ function getOverview(db, now = Date.now(), days = 7) {
       FROM access_metrics WHERE bucket_utc >= ?
       GROUP BY bucket_utc ORDER BY bucket_utc ASC
     `).all(since),
-    byPage: db.prepare(`
-      SELECT path, COUNT(*) AS pageViews,
-        COUNT(DISTINCT visitor_day_hmac) AS anonymousVisitors
-      FROM access_metrics WHERE bucket_utc >= ?
-      GROUP BY path ORDER BY pageViews DESC, path ASC
-    `).all(since),
+    byPage,
     byDevice: db.prepare(`
       SELECT device_kind AS deviceKind, COUNT(*) AS pageViews
       FROM access_metrics WHERE bucket_utc >= ?
       GROUP BY device_kind ORDER BY pageViews DESC, device_kind ASC
-    `).all(since)
+    `).all(since),
+    ...getOverviewDimensions(db, since)
   };
+  setCachedOverview(db, cacheKey, overview);
+  return { ...overview, geoData };
 }
 
 module.exports = {

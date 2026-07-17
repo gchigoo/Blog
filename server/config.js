@@ -1,14 +1,25 @@
 const { parseCommentsConfig } = require('./comments/config');
+const { parseAnalyticsConfig } = require('./analytics/config');
 
-module.exports = {
-  port: process.env.PORT || 3000,
-  jwtSecret: process.env.JWT_SECRET || 'change-this-secret-in-production-' + Math.random(),
+function createBaseConfig(env) {
+  return {
+  port: env.PORT || 3000,
+  jwtSecret: env.JWT_SECRET || 'change-this-secret-in-production-' + Math.random(),
   jwtExpire: '7d',
-  analyticsHmacSecret: process.env.ANALYTICS_HMAC_SECRET || '',
   uploadDir: 'uploads/temp',
   imagesDir: 'public/images',
   articlesDir: 'articles',
   imageQuality: 80,
   pageSize: 20,
-  comments: parseCommentsConfig(process.env)
-};
+  comments: parseCommentsConfig(env)
+  };
+}
+
+const config = createBaseConfig(process.env);
+
+config.loadRuntimeConfig = (env = process.env) => Object.freeze({
+  ...createBaseConfig(env),
+  analytics: parseAnalyticsConfig(env)
+});
+
+module.exports = config;

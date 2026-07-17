@@ -1,26 +1,22 @@
 const express = require('express');
 const path = require('path');
 const cookieParser = require('cookie-parser');
-const config = require('./config');
+const config = require('./config').loadRuntimeConfig(process.env);
 
-const { createAnalyticsMiddleware } = require('./analytics/middleware');
-const { initializeAnalytics } = require('./analytics/store');
+const { createAnalyticsModule } = require('./analytics/module');
 const { db, dbGet, dbAll } = require('./db');
 
 const app = express();
 app.set('trust proxy', 'loopback');
 app.locals.commentsEnabled = config.comments.enabled;
-initializeAnalytics(db);
+app.locals.analyticsDetailsEnabled = config.analytics.detailsEnabled;
+const analyticsModule = createAnalyticsModule({ db, config: config.analytics });
 
 // 中间件
+app.use(analyticsModule.publicContextRouter);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
-app.use(express.static(path.join(__dirname, '..', 'public')));
-app.use(createAnalyticsMiddleware({
-  db: require('./db').db,
-  secret: config.analyticsHmacSecret
-}));
 
 // 视图引擎
 app.set('view engine', 'ejs');
@@ -49,11 +45,15 @@ if (config.comments.enabled) {
 // API 路由
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/articles', require('./routes/articles'));
-app.use('/api/admin/analytics', require('./routes/analytics'));
+app.use('/api/admin/analytics', analyticsModule.adminApiRouter);
 app.use('/api/admin', require('./routes/admin'));
 
+// 公开页面采集必须位于 API 之后、公开页面与静态资源之前。
+app.use(analyticsModule.collectorMiddleware);
+app.use(express.static(path.join(__dirname, '..', 'public')));
+app.use(analyticsModule.adminPageRouter);
+
 // 前台页面路由
-const { getOverview } = require('./analytics/store');
 const { optionalAuth } = require('./middleware/auth');
 
 // 首页 - 文章列表
@@ -264,35 +264,42 @@ app.get('/admin/articles', authenticateToken, (req, res) => {
   }
 });
 
-app.get('/admin/analytics', authenticateToken, (req, res) => {
-  try {
-    const formatBeijingHour = bucketUtc => new Intl.DateTimeFormat('zh-CN', {
-      timeZone: 'Asia/Shanghai',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      hourCycle: 'h23'
-    }).format(new Date(bucketUtc));
-
-    res.render('admin/analytics', {
-      overview: getOverview(db, Date.now(), req.query.days),
-      formatBeijingHour,
-      user: req.user
-    });
-  } catch (error) {
-    console.error('渲染访问统计失败:', error);
-    res.status(500).send('服务器错误');
-  }
-});
-
 // 404 页面
 app.use((req, res) => {
   res.status(404).render('404', { user: req.user || null });
 });
 
 // 启动服务器
-app.listen(config.port, () => {
-  console.log(`博客服务器运行在 http://localhost:${config.port}`);
-  console.log(`后台管理: http://localhost:${config.port}/admin`);
+let server = null;
+let stopping = false;
+
+async function stop() {
+  if (stopping) return;
+  stopping = true;
+  if (server) {
+    await new Promise(resolve => server.close(resolve));
+  }
+  analyticsModule.lifecycle.stop();
+  db.close();
+}
+
+async function start() {
+  await analyticsModule.lifecycle.start();
+  server = app.listen(config.port, () => {
+    console.log(`博客服务器运行在 http://localhost:${config.port}`);
+    console.log(`后台管理: http://localhost:${config.port}/admin`);
+  });
+}
+
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  process.once(signal, () => {
+    stop().finally(() => process.exit(0));
+  });
+}
+
+start().catch(error => {
+  console.error(`[analytics] startup failed: ${error.message}`);
+  analyticsModule.lifecycle.stop();
+  db.close();
+  process.exitCode = 1;
 });

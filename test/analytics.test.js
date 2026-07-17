@@ -8,7 +8,9 @@ function makeResponse(statusCode = 200) {
   const listeners = new Map();
   return {
     statusCode,
+    locals: {},
     on(event, listener) { listeners.set(event, listener); },
+    getHeader(name) { return name.toLowerCase() === 'content-type' ? 'text/html; charset=utf-8' : undefined; },
     finish() { listeners.get('finish')?.(); }
   };
 }
@@ -39,11 +41,16 @@ test('analytics excludes admin, API, assets, bots, and failed responses', () => 
   const middleware = createAnalyticsMiddleware({ db, secret: 'test-secret' });
   for (const request of [
     makeRequest({ path: '/admin/analytics' }), makeRequest({ path: '/api/admin/analytics' }),
+    makeRequest({ path: '/auth/google/callback?code=SECRET&state=STATE' }),
     makeRequest({ path: '/css/custom.css' }), makeRequest({ path: '/', userAgent: 'Googlebot/2.1' })
   ]) {
     const response = makeResponse(); middleware(request, response, () => {}); response.finish();
   }
   const failed = makeResponse(404); middleware(makeRequest({ path: '/missing' }), failed, () => {}); failed.finish();
+  const nonHtml = makeResponse();
+  nonHtml.getHeader = () => 'application/json';
+  middleware(makeRequest({ path: '/feed' }), nonHtml, () => {});
+  nonHtml.finish();
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM access_metrics').get().count, 0);
   assert.equal(isTrackableRequest(makeRequest({ method: 'POST' })), false);
 });

@@ -2,13 +2,16 @@
 doc_type: requirement
 slug: anonymous-access-analytics
 pitch: 在不保存访客原始 IP 或追踪点击的前提下，看清博客的访问趋势与内容触达。
-status: draft
-last_reviewed: 2026-07-15
+status: outdated
+last_reviewed: 2026-07-16
 implemented_by: []
+superseded_by: detailed-visitor-analytics
 tags: [analytics, privacy, admin]
 ---
 
 # 匿名访问统计
+
+> **状态说明（2026-07-16）**：owner 已明确允许保存原始 IP、完整设备信息和逐次访问明细。本 requirement 的匿名边界已由 [`detailed-visitor-analytics`](detailed-visitor-analytics.md) 取代；本文仅保留为历史需求记录。
 
 ## 用户故事
 

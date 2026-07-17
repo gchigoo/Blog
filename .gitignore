@@ -11,3 +11,4 @@ articles/*
 !articles/.gitkeep
 .codelf/
 .cursor/
+*.mmdb

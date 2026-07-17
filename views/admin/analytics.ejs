@@ -1,52 +1,183 @@
 <%- include('../partials/admin-header', { title: '访问统计' }) %>
 
 <h2>访问统计</h2>
-<p>统计范围：近 <%= overview.days %> 天。时间按北京时间显示；数据为匿名聚合，不保存原始 IP、完整设备信息或点击轨迹。</p>
+<p>
+  统计范围：近 <%= overview.days %> 天。时间按北京时间显示；详细分析会按配置的保留期记录原始 IP、公开 URL、近似地区、客户端与浏览器提供的设备上下文，不采集点击、表单、键盘内容或页面正文。
+</p>
 
-<nav aria-label="统计时间范围">
-  <a href="/admin/analytics?days=1">近 1 天</a> /
-  <a href="/admin/analytics?days=7">近 7 天</a> /
-  <a href="/admin/analytics?days=30">近 30 天</a>
+<nav aria-label="统计时间范围" class="analytics-range-nav">
+  <a href="/admin/analytics?days=1" <%= overview.days === 1 ? 'aria-current=page' : '' %>>近 1 天</a> /
+  <a href="/admin/analytics?days=7" <%= overview.days === 7 ? 'aria-current=page' : '' %>>近 7 天</a> /
+  <a href="/admin/analytics?days=30" <%= overview.days === 30 ? 'aria-current=page' : '' %>>近 30 天</a>
 </nav>
 
-<h3>概览</h3>
-<ul>
-  <li>页面访问：<strong><%= overview.pageViews %></strong></li>
-  <li>匿名访客（按天去重）：<strong><%= overview.anonymousVisitors %></strong></li>
-</ul>
-
-<h3>按访问时段</h3>
-<% if (overview.byHour.length === 0) { %>
-  <p>暂无统计数据。</p>
-<% } else { %>
-  <table>
-    <thead><tr><th>北京时间</th><th>页面访问</th><th>匿名访客</th></tr></thead>
-    <tbody>
-      <% overview.byHour.forEach(row => { %>
-        <tr><td><%= formatBeijingHour(row.bucketUtc) %></td><td><%= row.pageViews %></td><td><%= row.anonymousVisitors %></td></tr>
-      <% }) %>
-    </tbody>
-  </table>
+<% if (pageError) { %>
+  <p class="message error" role="alert"><%= pageError %></p>
 <% } %>
 
-<h3>按页面</h3>
-<table>
-  <thead><tr><th>页面</th><th>页面访问</th><th>匿名访客</th></tr></thead>
-  <tbody>
-    <% overview.byPage.forEach(row => { %>
-      <tr><td><code><%= row.path %></code></td><td><%= row.pageViews %></td><td><%= row.anonymousVisitors %></td></tr>
-    <% }) %>
-  </tbody>
-</table>
+<section aria-labelledby="analytics-overview-title">
+  <h3 id="analytics-overview-title">概览</h3>
+  <ul class="analytics-summary">
+    <li>页面访问：<strong><%= overview.pageViews %></strong></li>
+    <li>按天去重访客：<strong><%= overview.anonymousVisitors %></strong></li>
+    <li>含完整明细的访问：<strong><%= overview.detailCoverage.pageViews %></strong></li>
+  </ul>
+</section>
 
-<h3>按设备类别</h3>
-<table>
-  <thead><tr><th>类别</th><th>页面访问</th></tr></thead>
-  <tbody>
-    <% overview.byDevice.forEach(row => { %>
-      <tr><td><%= row.deviceKind %></td><td><%= row.pageViews %></td></tr>
-    <% }) %>
-  </tbody>
-</table>
+<% if (overview.geoData) { %>
+  <section class="analytics-geo-status" aria-labelledby="geo-status-title">
+    <h3 id="geo-status-title">GeoLite2 City 状态</h3>
+    <dl>
+      <dt>数据集日期</dt><dd><%= overview.geoData.reader?.datasetDate || '未知' %></dd>
+      <dt>应用重载</dt><dd><%= overview.geoData.reader?.reloadStatus || '不可用' %></dd>
+      <dt>更新状态</dt><dd><%= overview.geoData.updater?.state || '未知' %> / <%= overview.geoData.updater?.result || 'unknown' %></dd>
+      <dt>最近成功</dt><dd><%= overview.geoData.updater?.lastSuccessAt || '暂无' %></dd>
+    </dl>
+    <% if (overview.geoData.stale) { %>
+      <p class="message error" role="alert">GeoLite2 City 数据集已超过 14 天，请检查每周更新任务。</p>
+    <% } %>
+    <% if (overview.geoData.updater?.state !== 'ok') { %>
+      <p class="message info">更新状态文件不可用；当前 reader 如仍有效，会继续提供地区查询。</p>
+    <% } %>
+  </section>
+<% } %>
 
+<section aria-labelledby="page-stats-title">
+  <h3 id="page-stats-title">按页面</h3>
+  <% if (overview.byPage.length === 0) { %>
+    <p>暂无页面统计。</p>
+  <% } else { %>
+    <div class="analytics-table-wrap">
+      <table>
+        <thead><tr><th>页面</th><th>页面访问</th><th>按天去重访客</th></tr></thead>
+        <tbody>
+          <% overview.byPage.forEach(row => { %>
+            <tr>
+              <td>
+                <code class="analytics-break"><%= row.displayPath %></code>
+                <% if (row.displayPath !== row.path) { %>
+                  <details><summary>原始编码</summary><code class="analytics-break"><%= row.path %></code></details>
+                <% } %>
+              </td>
+              <td><%= row.pageViews %></td><td><%= row.anonymousVisitors %></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  <% } %>
+</section>
+
+<section aria-labelledby="dimension-title">
+  <h3 id="dimension-title">明细覆盖维度（最多显示前 50 项）</h3>
+  <div class="analytics-dimension-grid">
+    <% [
+      ['国家/地区', 'country', overview.byCountry],
+      ['一级行政区', 'subdivision', overview.bySubdivision],
+      ['城市', 'city', overview.byCity],
+      ['浏览器', 'browser', overview.byBrowser],
+      ['操作系统', 'os', overview.byOs],
+      ['来源域', 'referrerHost', overview.byReferrerHost],
+      ['设备型号', null, overview.byDeviceModel]
+    ].forEach(([title, filterName, dimension]) => { %>
+      <section class="analytics-dimension-card">
+        <h4><%= title %></h4>
+        <% if (dimension.items.length === 0) { %>
+          <p>暂无明细。</p>
+        <% } else { %>
+          <ul>
+            <% dimension.items.forEach(item => { %>
+              <li>
+                <% const filterable = filterName && !item.key.split(':').includes('unknown'); %>
+                <% if (filterable) { %>
+                  <button type="button" class="analytics-filter-shortcut" data-filter-name="<%= filterName %>" data-filter-value="<%= item.key %>"><%= item.label %></button>
+                <% } else { %>
+                  <span><%= item.label %></span>
+                <% } %>
+                <strong><%= item.pageViews %></strong>
+              </li>
+            <% }) %>
+          </ul>
+        <% } %>
+        <% if (dimension.truncated) { %><p>另有 <%= dimension.otherPageViews %> 次访问未在前 50 项中展示。</p><% } %>
+      </section>
+    <% }) %>
+  </div>
+</section>
+
+<section aria-labelledby="event-filter-title">
+  <h3 id="event-filter-title">访问明细筛选</h3>
+  <form id="analytics-filter-form" class="analytics-filter-form" method="get" action="/admin/analytics">
+    <label>天数<input name="days" type="number" min="1" max="365" value="<%= filters.days %>"></label>
+    <label>完整 IP<input name="ip" value="<%= filters.ip %>" placeholder="203.0.113.10"></label>
+    <label>国家代码<input name="country" maxlength="2" value="<%= filters.country %>" placeholder="CN"></label>
+    <label>一级行政区<input name="subdivision" value="<%= filters.subdivision %>" placeholder="beijing"></label>
+    <label>城市<input name="city" value="<%= filters.city %>" placeholder="beijing"></label>
+    <label>浏览器<input name="browser" value="<%= filters.browser %>" placeholder="chrome"></label>
+    <label>操作系统<input name="os" value="<%= filters.os %>" placeholder="windows"></label>
+    <label>设备类别
+      <select name="device">
+        <option value="">全部</option>
+        <% ['desktop', 'mobile', 'tablet', 'other'].forEach(value => { %>
+          <option value="<%= value %>" <%= filters.device === value ? 'selected' : '' %>><%= value %></option>
+        <% }) %>
+      </select>
+    </label>
+    <label>路径前缀<input name="pathPrefix" value="<%= filters.pathPrefix %>" placeholder="/article/"></label>
+    <label>来源域<input name="referrerHost" value="<%= filters.referrerHost %>" placeholder="example.com"></label>
+    <div class="analytics-filter-actions">
+      <button type="submit">应用筛选</button>
+      <a href="/admin/analytics?days=<%= overview.days %>">清除筛选</a>
+    </div>
+  </form>
+</section>
+
+<section aria-labelledby="event-list-title">
+  <h3 id="event-list-title">逐次访问明细</h3>
+  <% if (events.items.length === 0) { %>
+    <p class="analytics-empty">暂无符合条件的访问明细。</p>
+  <% } else { %>
+    <div class="analytics-table-wrap">
+      <table>
+        <thead><tr><th>时间</th><th>页面</th><th>IP / 地区</th><th>客户端</th><th>来源</th><th>操作</th></tr></thead>
+        <tbody>
+          <% events.items.forEach(event => { %>
+            <tr>
+              <td><time datetime="<%= event.observedAtUtc %>"><%= formatBeijingTime(event.observedAtUtc) %></time></td>
+              <td>
+                <code class="analytics-break"><%= event.displayPath %></code>
+                <% if (event.displayPath !== event.requestPath) { %>
+                  <details><summary>原始编码</summary><code class="analytics-break"><%= event.requestPath %></code></details>
+                <% } %>
+              </td>
+              <td><code><%= event.ipAddress %></code><br><%= event.location.country.name || '未知' %> / <%= event.location.subdivision.name || '未知' %> / <%= event.location.city || '未知' %></td>
+              <td><%= event.client.deviceType || '未知' %><br><%= event.client.browser.name || '未知' %> <%= event.client.browser.version || '' %><br><%= event.client.os.name || '未知' %> <%= event.client.os.version || '' %></td>
+              <td class="analytics-break"><%= event.referrer || '直接访问/未知' %></td>
+              <td><button type="button" class="analytics-detail-button" data-event-id="<%= event.id %>">查看详情</button></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+    <% if (eventNextUrl) { %><p><a href="<%= eventNextUrl %>">下一页 →</a></p><% } %>
+  <% } %>
+</section>
+
+<p id="analytics-detail-status" class="message info" role="status" tabindex="-1" hidden></p>
+<section id="analytics-detail-panel" class="analytics-detail-panel" aria-labelledby="analytics-detail-title" tabindex="-1" hidden>
+  <h3 id="analytics-detail-title">访问详情</h3>
+  <dl>
+    <dt>事件 ID</dt><dd id="analytics-detail-id"></dd>
+    <dt>时间</dt><dd id="analytics-detail-time"></dd>
+    <dt>可读路径</dt><dd id="analytics-detail-display-path"></dd>
+    <dt>原始路径</dt><dd id="analytics-detail-raw-path"></dd>
+    <dt>完整 IP</dt><dd id="analytics-detail-ip"></dd>
+    <dt>浏览器</dt><dd id="analytics-detail-browser"></dd>
+  </dl>
+  <h4>完整结构化与原始字段</h4>
+  <pre id="analytics-detail-json" class="analytics-detail-json"></pre>
+</section>
+<noscript><p class="message info">启用 JavaScript 后可在本页展开单条完整详情；筛选和分页仍可直接使用。</p></noscript>
+
+<script src="/js/admin-analytics.js?v=20260717" defer></script>
 <%- include('../partials/admin-footer') %>

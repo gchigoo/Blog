@@ -94,6 +94,7 @@ async function startServer(t, root, env = {}) {
       ...process.env,
       PORT: String(port),
       JWT_SECRET: 'test-only-jwt-secret-with-at-least-32-characters',
+      ANALYTICS_HMAC_SECRET: Buffer.alloc(32, 7).toString('base64url'),
       NODE_PATH: TEST_NODE_PATH,
       ...env
     },

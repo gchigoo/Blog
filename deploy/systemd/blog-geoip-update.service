@@ -1,0 +1,21 @@
+[Unit]
+Description=Update and atomically promote the blog GeoLite2 City database
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/GeoIP.conf
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/root/Blog
+ExecStart=/root/Blog/scripts/update-geoip.sh
+RuntimeDirectory=blog-geoip-update
+RuntimeDirectoryMode=0755
+UMask=0022
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/blog/geoip /run/blog-geoip-update

@@ -1,6 +1,9 @@
-const { cleanupMetrics, hourBucket, recordMetric, visitorDayHmac } = require('./store');
+const net = require('node:net');
+const { recordAccessEvent } = require('./repository');
+const { captureRequestClient, normalizeTrustedIp, sanitizePublicRequestUrl, sanitizeReferrer } = require('./request-security');
+const { hourBucket, recordMetric, visitorDayHmac } = require('./store');
 
-const EXCLUDED_PREFIXES = ['/admin', '/api', '/images'];
+const EXCLUDED_PREFIXES = ['/auth', '/admin', '/api', '/images'];
 const EXCLUDED_EXTENSIONS = /\.(?:css|js|webp|ico|png|jpe?g|gif|svg|xml|txt)$/i;
 const BOT_PATTERN = /bot|crawler|spider|slurp|bingpreview|facebookexternalhit|telegrambot/i;
 
@@ -18,35 +21,97 @@ function isTrackableRequest(req) {
   return !BOT_PATTERN.test(req.get('user-agent') || '');
 }
 
-function createAnalyticsMiddleware({ db, secret, now = () => Date.now() }) {
-  let lastCleanupDay = '';
-
+function createAnalyticsMiddleware({
+  db,
+  secret,
+  now = () => Date.now(),
+  detailsEnabled = false,
+  publicOrigin = null,
+  geoResolver = null,
+  clientParser = null,
+  tokenSigner = null,
+  logger = console
+}) {
   return (req, res, next) => {
     if (!isTrackableRequest(req)) return next();
 
+    const startedAt = now();
     const capturedPath = req.path.split('?')[0];
-    const capturedIp = req.ip;
-    const capturedDevice = deviceKind(req.get('user-agent') || '');
+    const capturedIp = normalizeTrustedIp(req);
+    const capturedClient = captureRequestClient(req);
+    const capturedDevice = deviceKind(capturedClient.userAgent);
+    const capturedOriginalUrl = req.originalUrl || req.path;
+    const capturedReferrer = req.get('referer') || req.get('referrer') || null;
+    let eventId = null;
+
+    if (detailsEnabled) {
+      eventId = tokenSigner.createEventId();
+      res.locals = res.locals || {};
+      res.locals.analyticsEventId = eventId;
+      res.locals.analyticsEventToken = tokenSigner.sign(eventId, startedAt);
+      if (typeof res.render === 'function') {
+        const render = res.render;
+        res.render = function renderTrackedPage(...args) {
+          if (res.statusCode >= 200 && res.statusCode < 400) {
+            res.set('Cache-Control', 'private, no-store');
+          } else {
+            delete res.locals.analyticsEventId;
+            delete res.locals.analyticsEventToken;
+          }
+          return render.apply(this, args);
+        };
+      }
+    }
 
     res.on('finish', () => {
       if (res.statusCode < 200 || res.statusCode >= 400) return;
+      const contentType = String(res.getHeader?.('content-type') || '');
+      if (!/^text\/html(?:;|$)/i.test(contentType)) return;
 
       try {
-        const timestamp = now();
-        const currentDay = new Date(timestamp).toISOString().slice(0, 10);
-        if (currentDay !== lastCleanupDay) {
-          cleanupMetrics(db, timestamp);
-          lastCleanupDay = currentDay;
+        const finishedAt = now();
+        const base = {
+          bucketUtc: hourBucket(startedAt),
+          path: capturedPath,
+          visitorDayHmac: visitorDayHmac(capturedIp || 'invalid', secret, startedAt),
+          deviceKind: capturedDevice
+        };
+        if (!detailsEnabled) {
+          recordMetric(db, base);
+          return;
         }
 
-        recordMetric(db, {
-          bucketUtc: hourBucket(timestamp),
-          path: capturedPath,
-          visitorDayHmac: visitorDayHmac(capturedIp, secret, timestamp),
-          deviceKind: capturedDevice
+        const url = sanitizePublicRequestUrl(capturedOriginalUrl, publicOrigin);
+        const referrer = sanitizeReferrer(capturedReferrer);
+        const geo = geoResolver.resolve(capturedIp);
+        geo.datasetDate = geoResolver.getStatus().reader?.datasetDate || null;
+        const responseLength = res.getHeader?.('content-length');
+        const responseBytes = /^\d+$/.test(String(responseLength ?? ''))
+          ? Number(responseLength)
+          : null;
+        recordAccessEvent(db, {
+          ...base,
+          eventId,
+          observedAtUtc: new Date(startedAt).toISOString(),
+          method: req.method,
+          requestPath: url.requestPath,
+          queryString: url.queryString,
+          fullUrl: url.fullUrl,
+          referrer: referrer.value,
+          referrerHost: referrer.host,
+          urlSanitizationStatus: url.status,
+          referrerParseStatus: referrer.status,
+          statusCode: res.statusCode,
+          durationMs: Math.max(0, Math.round(finishedAt - startedAt)),
+          responseBytes,
+          ipAddress: capturedIp,
+          ipFamily: net.isIP(capturedIp),
+          geo,
+          requestClient: capturedClient,
+          client: clientParser.parse(capturedClient.userAgent)
         });
-      } catch (error) {
-        console.error('匿名访问统计写入失败:', error.message);
+      } catch {
+        logger.error('[analytics] event write failed');
       }
     });
 

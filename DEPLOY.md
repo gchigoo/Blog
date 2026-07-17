@@ -9,10 +9,11 @@
 3. [Google 登录评论配置](#google-登录评论配置)
 4. [PM2 进程管理](#pm2-进程管理)
 5. [Nginx 反向代理](#nginx-反向代理)
-6. [HTTPS 配置](#https-配置)
-7. [日常维护](#日常维护)
-8. [故障排除](#故障排除)
-9. [依赖说明](#依赖说明)
+6. [访问明细与 GeoLite2 City](#访问明细与-geolite2-city)
+7. [HTTPS 配置](#https-配置)
+8. [日常维护](#日常维护)
+9. [故障排除](#故障排除)
+10. [依赖说明](#依赖说明)
 
 ---
 
@@ -22,7 +23,7 @@
 - **Git**: 代码管理
 - **PM2**: 进程守护（生产环境）
 - **Nginx**: 反向代理（可选但推荐）
-- **系统**: Linux / macOS / Windows
+- **系统**: 应用可在 Linux / macOS / Windows 开发；GeoLite2 自动更新仅支持 Linux + systemd
 
 ---
 
@@ -43,6 +44,7 @@ npm run init-db
 unset INITIAL_ADMIN_PASSWORD
 
 # 4. 启动测试
+export ANALYTICS_HMAC_SECRET="$(node -p "require('node:crypto').randomBytes(32).toString('base64url')")"
 npm start
 ```
 
@@ -52,7 +54,7 @@ npm start
 
 ### 配置文件（可选）
 
-通过环境变量设置端口和 JWT 密钥；生产环境必须设置稳定、足够长的 `JWT_SECRET`：
+通过环境变量设置端口和密钥；生产环境必须设置稳定、足够长的 `JWT_SECRET`，并提供独立、canonical unpadded base64url 格式的 `ANALYTICS_HMAC_SECRET`：
 
 ```javascript
 module.exports = {
@@ -61,6 +63,12 @@ module.exports = {
   // ...
 };
 ```
+
+```bash
+node -p "require('node:crypto').randomBytes(32).toString('base64url')"
+```
+
+把输出写入主机或部署平台的 secret manager，不要写入 `ecosystem.config.js`、`.env`、脚本、日志或 Git 历史。轮换该密钥会使尚未提交的短期 analytics event token 失效，不影响已保存的数据。
 
 ## Google 登录评论配置
 
@@ -227,6 +235,119 @@ sudo systemctl reload nginx     # 重新加载配置
 sudo systemctl status nginx     # 查看状态
 sudo nginx -t                   # 测试配置
 ```
+
+---
+
+## 访问明细与 GeoLite2 City
+
+### 数据边界与应用配置
+
+访问明细默认关闭。启用后，成功的公开 HTML 页面访问会在 `blog.db` 中保存原始 IP、请求时间、公开 URL/查询、Referrer、原始 User-Agent、允许的 Client Hints、GeoLite2 City 近似地区、浏览器/系统/设备解析结果和浏览器实际提供的设备上下文。Cookie、Authorization、OAuth code/state 和凭据参数值不会进入 analytics 数据。默认保留 30 天，每 6 小时清理一次；数据库备份也会包含这些明细。
+
+| 环境变量 | 生产值/约束 |
+|---|---|
+| `ANALYTICS_HMAC_SECRET` | 始终必填；canonical unpadded base64url，解码后至少 32 bytes，必须从 secret manager 注入 |
+| `ANALYTICS_DETAILS_ENABLED` | 首次 GeoIP bootstrap 验证成功后才设置为 `true`；仅接受 `true`/`false` |
+| `ANALYTICS_RETENTION_DAYS` | 可选，默认 `30`，整数 `1`–`365` |
+| `ANALYTICS_GEOIP_CITY_DB_PATH` | `/var/lib/blog/geoip/GeoLite2-City.mmdb` |
+| `ANALYTICS_GEOIP_UPDATE_STATUS_PATH` | `/var/lib/blog/geoip/update-status.json` |
+| `ANALYTICS_PUBLIC_ORIGIN` | `https://blog.cokedaily.space`，只能是 HTTPS origin，不能带 path/query/credentials |
+
+生产配置示例只展示固定路径，不包含密钥值：
+
+```bash
+export ANALYTICS_DETAILS_ENABLED=true
+export ANALYTICS_RETENTION_DAYS=30
+export ANALYTICS_GEOIP_CITY_DB_PATH=/var/lib/blog/geoip/GeoLite2-City.mmdb
+export ANALYTICS_GEOIP_UPDATE_STATUS_PATH=/var/lib/blog/geoip/update-status.json
+export ANALYTICS_PUBLIC_ORIGIN=https://blog.cokedaily.space
+pm2 restart blog --update-env
+```
+
+应用启动时会把 MMDB 完整读入内存并验证 City metadata 与固定 lookup；首个 reader 无法建立时拒绝监听。运行中每 60 秒检测一次原子替换，候选损坏时继续使用旧 reader。数据集 build epoch 超过 14 天时，管理员访问统计页显示 stale，但事件写入不会停止。
+
+### 首次安装 GeoLite2 City updater
+
+需要官方 `geoipupdate`、`flock`（通常来自 `util-linux`）、Node.js 24 和 systemd。canonical 生产路径固定为 `/root/Blog` 与 `/var/lib/blog/geoip`。
+
+```bash
+# 1. 安装操作系统依赖（包名按发行版调整）
+sudo apt update
+sudo apt install geoipupdate util-linux
+
+# 2. 创建数据目录；wrapper 必须由 root 拥有且可执行
+sudo install -d -o root -g root -m 0755 /var/lib/blog/geoip
+sudo install -d -o root -g root -m 0755 /var/lib/blog/geoip/staging
+sudo chown root:root /root/Blog/scripts/update-geoip.sh
+sudo chmod 0755 /root/Blog/scripts/update-geoip.sh
+test "$(stat -c '%U:%G %a' /root/Blog/scripts/update-geoip.sh)" = 'root:root 755'
+
+# 3. 创建只允许 root 读取的 MaxMind 配置，再用编辑器填入账号和 License Key
+sudo install -o root -g root -m 0600 /dev/null /etc/GeoIP.conf
+sudoedit /etc/GeoIP.conf
+sudo test "$(stat -c '%U:%G %a' /etc/GeoIP.conf)" = 'root:root 600'
+sudo grep -Eq '^EditionIDs[[:space:]]+GeoLite2-City([[:space:]]|$)' /etc/GeoIP.conf
+
+# 4. 安装并静态验证 units
+sudo install -o root -g root -m 0644 deploy/systemd/blog-geoip-update.service /etc/systemd/system/
+sudo install -o root -g root -m 0644 deploy/systemd/blog-geoip-update.timer /etc/systemd/system/
+sudo systemd-analyze verify /etc/systemd/system/blog-geoip-update.service /etc/systemd/system/blog-geoip-update.timer
+sudo systemctl daemon-reload
+
+# 5. 在启用访问明细和启动应用之前完成 bootstrap
+sudo systemctl start blog-geoip-update.service
+sudo systemctl status blog-geoip-update.service
+sudo node /root/Blog/scripts/verify-geoip-db.js /var/lib/blog/geoip/GeoLite2-City.mmdb
+sudo test "$(stat -c '%U:%G %a' /var/lib/blog/geoip/GeoLite2-City.mmdb)" = 'root:root 644'
+sudo -u "$(stat -c '%U' /root/Blog/blog.db)" test -r /var/lib/blog/geoip/GeoLite2-City.mmdb
+
+# 6. 注入上表 analytics 环境变量、启动应用，最后启用每周 timer
+sudo systemctl enable --now blog-geoip-update.timer
+systemctl list-timers blog-geoip-update.timer
+```
+
+`/etc/GeoIP.conf` 必须包含 `EditionIDs GeoLite2-City`。MaxMind Account ID 与 License Key 只能保存在这个 root-owned `0600` 文件内；不要把值放进环境变量、仓库、命令行、Issue 或日志。bootstrap 失败时不要设置 `ANALYTICS_DETAILS_ENABLED=true`，修复凭据或网络后直接重跑同一 service。
+
+### 每周更新、状态与原子性
+
+timer 按服务器本地时区每周日 03:30 运行，最多随机延迟 30 分钟，调度精度 5 分钟，并通过 `Persistent=true` 在关机错过后补跑。wrapper 使用非阻塞 `flock`；并发运行立即以 exit 75 和 `already_running` 退出。
+
+正常状态机为：同盘 `0700` staging 下载 → Buffer reader 校验 City metadata/build epoch/固定 lookup → checksum/epoch no-op 判断 → fsync 并原子保存 previous → fsync 并单次 rename live → fsync parent → 原子写 `update-status.json`。下载或候选校验失败不会触碰 live；应用最迟 60 秒后切换到新 reader。
+
+```bash
+# 手动更新及查看安全状态（只含时间、结果、错误类别和 dataset epoch）
+sudo systemctl start blog-geoip-update.service
+systemctl status blog-geoip-update.service
+journalctl -u blog-geoip-update.service --since today
+cat /var/lib/blog/geoip/update-status.json
+
+# 确认 timer 和下次计划执行时间
+systemctl list-timers blog-geoip-update.timer
+systemctl show blog-geoip-update.timer -p LastTriggerUSec -p NextElapseUSecRealtime
+
+# 原子回滚到 previous；previous 本身会保留
+sudo /root/Blog/scripts/update-geoip.sh --rollback
+sudo node /root/Blog/scripts/verify-geoip-db.js /var/lib/blog/geoip/GeoLite2-City.mmdb
+```
+
+发布证据至少保存：命令与 exit code、更新前后 SHA-256、verifier 的 dataset epoch、固定 lookup、`update-status.json`、`systemctl list-timers`、应用 60 秒内 reader 切换，以及 journal/进程环境/仓库扫描未出现 MaxMind 凭据。覆盖 bootstrap、no-op、正常更新、锁冲突、下载失败保旧、校验失败保旧、回滚和 missed-run 补跑。
+
+### Nginx 与 Cloudflare 验证
+
+使用仓库中的 `deploy/nginx/blog.conf`。其中精确 `location = /api/analytics/client-context` 把请求体限制为 16 KiB；应用的 route-local JSON parser 仍是最终校验边界。Cloudflare 只向源站提供可信地址，Nginx 会覆盖而不是追加客户端传入的 X-Forwarded-For。
+
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+
+# 生产 smoke：页面不得进入共享缓存；oversize context 应由 Nginx 返回 413
+curl -sSI https://blog.cokedaily.space/ | grep -i '^cache-control:.*private.*no-store'
+head -c 17000 /dev/zero | curl -sS -o /dev/null -w '%{http_code}\n' \
+  -H 'Content-Type: application/json' --data-binary @- \
+  https://blog.cokedaily.space/api/analytics/client-context
+```
+
+Cloudflare 不得对公开 HTML、`/admin/*`、`/api/admin/analytics*` 或 `/api/analytics/client-context` 建立 Cache Everything 规则，也不得覆盖源站 `private, no-store`。线上 smoke 还应分别验证直达源站、Cloudflare、伪造 XFF 和 IPv4-mapped IPv6 的最终 `req.ip` 记录。
 
 ---
 
@@ -488,7 +609,7 @@ htop
 
 ## 依赖说明
 
-### 核心功能包 (14 个生产依赖)
+### 核心功能包 (16 个生产依赖)
 
 #### Web 框架
 - **express** (5.2.1): HTTP 服务器和路由
@@ -515,6 +636,8 @@ htop
 
 #### 工具库
 - **slugify** (1.6.9): 生成 URL 友好 slug
+- **@maxmind/geoip2-node** (7.1.x): 从本地 GeoLite2 City 数据库查询近似地区
+- **bowser** (2.14.x): 解析浏览器、系统、引擎和设备信息
 
 ### 开发依赖 (1 个)
 - **nodemon** (3.1.14): 开发环境自动重启
@@ -530,9 +653,12 @@ SQLite → EJS → HTML
 **用户认证**:  
 bcrypt → JWT → cookie-parser
 
+**访问明细**:
+Express request → GeoLite2 City / Bowser → SQLite → 管理员 analytics API/UI
+
 ### 为什么选择这些包？
 
-1. ✅ **极简原则**: 仅 14 个生产依赖，避免过度依赖
+1. ✅ **极简原则**: 仅 16 个生产依赖，避免过度依赖
 2. ✅ **性能优先**: better-sqlite3 比 sqlite3 快，Sharp 比 imagemagick 快
 3. ✅ **安全第一**: 生产锁文件经 `npm audit --omit=dev` 验证；Google token 不写入数据库
 4. ✅ **易于维护**: 依赖少，升级简单
@@ -546,6 +672,7 @@ bcrypt → JWT → cookie-parser
 | sharp | 0.33 → 0.35 | 支持 Node.js 24 |
 | multer / adm-zip | 2.0 / 0.5 → 2.2 / 0.6 | 更新上传依赖 |
 | google-auth-library | 新增 10.9 | Google OAuth code exchange 与 ID token 验证 |
+| @maxmind/geoip2-node / bowser | 新增 7.1 / 2.14 | 本地地区解析与客户端解析 |
 
 ---
 
