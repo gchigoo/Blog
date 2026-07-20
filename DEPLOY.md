@@ -351,6 +351,43 @@ head -c 17000 /dev/zero | curl -sS -o /dev/null -w '%{http_code}\n' \
 
 Cloudflare 不得对公开 HTML、`/admin/*`、`/api/admin/analytics*` 或 `/api/analytics/client-context` 建立 Cache Everything 规则，也不得覆盖源站 `private, no-store`。线上 smoke 还应分别验证直达源站、Cloudflare、伪造 XFF 和 IPv4-mapped IPv6 的最终 `req.ip` 记录。
 
+文章图片继续由 VPS 的 `/images/*` 提供，并通过 Cloudflare Cache Rule 缓存在边缘：
+
+- 规则名：`Cache blog images at Cloudflare edge`
+- 匹配表达式：`(http.host eq "blog.cokedaily.space" and http.request.uri.path wildcard r"/images/*")`
+- Cache eligibility：`Eligible for cache`
+- Edge TTL：存在 `Cache-Control` 时遵循源站；缺少时使用 Cloudflare 对响应状态码的默认 TTL。成功 WebP 继续使用 Nginx 返回的 30 天，404 等错误响应不再套用 1 年覆盖值
+- Tiered Cache：保持 `Active`
+
+图片文件名由当前发布链路生成且不会原地覆盖。不要把规则扩大到其他 hostname、HTML、管理端或 API。发布后传入一个真实存在的 WebP URL 做烟测；脚本同时断言 HTTP 200、图片类型、`MISS → HIT`，并确认首页仍为 `DYNAMIC`：
+
+```bash
+set -euo pipefail
+IMAGE_URL="${1:?usage: $0 https://blog.cokedaily.space/images/existing.webp}"
+SMOKE_URL="${IMAGE_URL}?cf-cache-smoke=$(date +%s)"
+FIRST_HEADERS="$(mktemp)"
+SECOND_HEADERS="$(mktemp)"
+HOME_HEADERS="$(mktemp)"
+trap 'rm -f "$FIRST_HEADERS" "$SECOND_HEADERS" "$HOME_HEADERS"' EXIT
+
+FIRST_STATUS="$(curl -sS --max-time 30 -D "$FIRST_HEADERS" -o /dev/null -w '%{http_code}' "$SMOKE_URL")"
+sleep 1
+SECOND_STATUS="$(curl -sS --max-time 30 -D "$SECOND_HEADERS" -o /dev/null -w '%{http_code}' "$SMOKE_URL")"
+HOME_STATUS="$(curl -sS --max-time 30 -D "$HOME_HEADERS" -o /dev/null -w '%{http_code}' https://blog.cokedaily.space/)"
+
+test "$FIRST_STATUS" = 200
+test "$SECOND_STATUS" = 200
+test "$HOME_STATUS" = 200
+grep -qi '^content-type: image/webp' "$FIRST_HEADERS"
+grep -qi '^cache-control: public, max-age=2592000' "$FIRST_HEADERS"
+grep -qi '^cf-cache-status: MISS' "$FIRST_HEADERS"
+grep -qi '^cf-cache-status: HIT' "$SECOND_HEADERS"
+grep -qi '^cache-control: private, no-store' "$HOME_HEADERS"
+grep -qi '^cf-cache-status: DYNAMIC' "$HOME_HEADERS"
+```
+
+回滚时在 Cloudflare Cache Rules 中禁用该规则。若未来允许图片在同一路径原地更新，发布后还必须 purge 对应 URL，或继续改用带版本的新文件名。
+
 ---
 
 ## HTTPS 配置
