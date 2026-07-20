@@ -4,6 +4,7 @@ const cookieParser = require('cookie-parser');
 const config = require('./config').loadRuntimeConfig(process.env);
 
 const { createAnalyticsModule } = require('./analytics/module');
+const { AUDIO_FORMATS } = require('./article-audio/formats');
 const { db, dbGet, dbAll } = require('./db');
 
 const app = express();
@@ -11,6 +12,20 @@ app.set('trust proxy', 'loopback');
 app.locals.commentsEnabled = config.comments.enabled;
 app.locals.analyticsDetailsEnabled = config.analytics.detailsEnabled;
 const analyticsModule = createAnalyticsModule({ db, config: config.analytics });
+const articleAudioPath = new RegExp(
+  `^/[a-z0-9]+(?:-[a-z0-9]+)*/[a-f0-9]{64}(${Object.keys(AUDIO_FORMATS)
+    .map(extension => extension.replace('.', '\\.'))
+    .join('|')})$`
+);
+const articleAudioStatic = express.static(
+  path.resolve(__dirname, '..', config.audioDir),
+  {
+    setHeaders(res, filePath) {
+      const format = AUDIO_FORMATS[path.extname(filePath)];
+      if (format) res.setHeader('Content-Type', format.mimeType);
+    }
+  }
+);
 
 // 中间件
 app.use(analyticsModule.publicContextRouter);
@@ -50,6 +65,14 @@ app.use('/api/admin', require('./routes/admin'));
 
 // 公开页面采集必须位于 API 之后、公开页面与静态资源之前。
 app.use(analyticsModule.collectorMiddleware);
+app.use('/audio', (req, res, next) => {
+  const match = articleAudioPath.exec(req.path);
+  if (!match || !AUDIO_FORMATS[match[1]]) return res.sendStatus(404);
+  articleAudioStatic(req, res, error => {
+    if (error) return next(error);
+    res.sendStatus(404);
+  });
+});
 app.use(express.static(path.join(__dirname, '..', 'public')));
 app.use(analyticsModule.adminPageRouter);
 

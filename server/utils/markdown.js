@@ -2,6 +2,11 @@ const MarkdownIt = require('markdown-it');
 const markdownItAnchor = require('markdown-it-anchor');
 const matter = require('gray-matter');
 const slugify = require('slugify');
+const {
+  collectArticleAudioBlocks,
+  installArticleAudioMarkdown,
+  renderArticleMarkdown
+} = require('../article-audio/markdown');
 
 /**
  * 配置 Markdown 解析器
@@ -27,43 +32,57 @@ const md = new MarkdownIt({
   //   symbol: '#',
   //   placement: 'before'
   // })
-});
+}).use(installArticleAudioMarkdown);
+
+function normalizeMetadata(data) {
+  if (!data.slug && data.title) {
+    data.slug = generateSlug(data.title);
+  }
+
+  if (data.tags && typeof data.tags === 'string') {
+    data.tags = data.tags.split(',').map(tag => tag.trim());
+  } else if (!data.tags) {
+    data.tags = [];
+  }
+
+  if (data.date) {
+    data.date = new Date(data.date).toISOString();
+  } else {
+    data.date = new Date().toISOString();
+  }
+
+  return data;
+}
+
+function parseMarkdownDocument(content) {
+  const { data, content: markdownContent } = matter(content);
+  normalizeMetadata(data);
+
+  return {
+    data,
+    content: markdownContent,
+    audioBlocks: collectArticleAudioBlocks(md, markdownContent)
+  };
+}
+
+function renderMarkdown(markdownContent, { resolvedAudioBlocks } = {}) {
+  return renderArticleMarkdown(md, markdownContent, resolvedAudioBlocks);
+}
 
 /**
  * 解析 Markdown 文件内容
  * @param {string} content - Markdown 文件内容
  * @returns {Object} - { data: 元数据, content: 正文, html: HTML }
  */
-function parseMarkdown(content) {
-  // 解析 Front Matter
-  const { data, content: markdownContent } = matter(content);
-  
-  // 转换 Markdown 为 HTML
-  const html = md.render(markdownContent);
-  
-  // 自动生成 slug（如果没有提供）
-  if (!data.slug && data.title) {
-    data.slug = generateSlug(data.title);
-  }
-  
-  // 确保标签是数组
-  if (data.tags && typeof data.tags === 'string') {
-    data.tags = data.tags.split(',').map(tag => tag.trim());
-  } else if (!data.tags) {
-    data.tags = [];
-  }
-  
-  // 确保日期格式正确
-  if (data.date) {
-    data.date = new Date(data.date).toISOString();
-  } else {
-    data.date = new Date().toISOString();
-  }
-  
+function parseMarkdown(content, options = {}) {
+  const { data, content: markdownContent, audioBlocks } = parseMarkdownDocument(content);
+  const html = renderMarkdown(markdownContent, options);
+
   return {
     data,
     content: markdownContent,
-    html
+    html,
+    audioBlocks
   };
 }
 
@@ -148,6 +167,8 @@ function replaceHtmlImagePaths(html, imageMap) {
 
 module.exports = {
   parseMarkdown,
+  parseMarkdownDocument,
+  renderMarkdown,
   generateSlug,
   extractImages,
   replaceImagePaths,

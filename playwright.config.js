@@ -107,6 +107,43 @@ module.exports = defineConfig({
     desktopProject('desktop-4k', 3840, 2160),
     mobileProject('iphone-17', 402, 874),
     mobileProject('iphone-air', 420, 912),
-    mobileProject('iphone-17-pro-max', 440, 956)
+    mobileProject('iphone-17-pro-max', 440, 956),
+    {
+      name: 'article-audio-desktop',
+      testMatch: /article-audio-browser\.spec\.js/,
+      use: {
+        ...commonUse,
+        browserName: 'chromium',
+        viewport: { width: 1440, height: 900 },
+        deviceScaleFactor: 1
+      }
+    },
+    {
+      name: 'article-audio-mobile',
+      testMatch: /article-audio-browser\.spec\.js/,
+      use: {
+        ...commonUse,
+        browserName: 'chromium',
+        viewport: { width: 390, height: 844 },
+        screen: { width: 390, height: 844 },
+        deviceScaleFactor: 3,
+        isMobile: true,
+        hasTouch: true
+      }
+    },
+    {
+      name: 'article-audio-webkit',
+      testMatch: /article-audio-browser\.spec\.js/,
+      use: {
+        ...commonUse,
+        browserName: 'webkit',
+        viewport: { width: 390, height: 844 },
+        screen: { width: 390, height: 844 },
+        deviceScaleFactor: 3,
+        isMobile: true,
+        hasTouch: true,
+        userAgent: mobileUserAgent
+      }
+    }
   ]
 });

@@ -1,0 +1,85 @@
+.article-audio {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  margin: 2rem 0;
+  padding: clamp(1rem, 3vw, 1.5rem);
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+  border-radius: 1rem;
+  background-image:
+    radial-gradient(circle at 100% 0, rgb(126 87 194 / 18%), transparent 42%),
+    linear-gradient(145deg, rgb(255 255 255 / 96%), rgb(245 244 250 / 92%));
+  box-shadow: 0 0.75rem 2rem rgb(20 18 28 / 10%);
+}
+
+.article-audio__meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.35rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.article-audio__title,
+.article-audio__artist {
+  overflow-wrap: anywhere;
+}
+
+.article-audio__title {
+  color: inherit;
+  font-size: clamp(1.05rem, 2.5vw, 1.25rem);
+  line-height: 1.35;
+}
+
+.article-audio__artist {
+  color: color-mix(in srgb, currentColor 68%, transparent);
+  font-size: 0.9rem;
+}
+
+.article-audio__control {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+}
+
+.article-audio__fallback {
+  display: inline-block;
+  margin-top: 0.65rem;
+  color: inherit;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+  text-decoration-thickness: 0.08em;
+  text-underline-offset: 0.18em;
+}
+
+.article-audio__caption {
+  margin: 0.8rem 0 0;
+  color: color-mix(in srgb, currentColor 72%, transparent);
+  font-size: 0.88rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 32rem) {
+  .article-audio {
+    margin: 1.5rem 0;
+    border-radius: 0.8rem;
+  }
+
+  .article-audio__meta {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .article-audio {
+    background-image:
+      radial-gradient(circle at 100% 0, rgb(149 117 205 / 24%), transparent 42%),
+      linear-gradient(145deg, rgb(37 35 44 / 96%), rgb(27 26 32 / 96%));
+    box-shadow: 0 0.75rem 2rem rgb(0 0 0 / 24%);
+  }
+}

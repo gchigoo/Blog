@@ -8,6 +8,7 @@ function createBaseConfig(env) {
   jwtExpire: '7d',
   uploadDir: 'uploads/temp',
   imagesDir: 'public/images',
+  audioDir: 'public/audio',
   articlesDir: 'articles',
   imageQuality: 80,
   pageSize: 20,

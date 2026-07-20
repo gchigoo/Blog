@@ -6,6 +6,7 @@
 
 - 📝 Markdown 写作，支持 Front Matter 元数据
 - 🖼️ 自动图片转 WebP，减少 25-35% 体积
+- 🎵 随文章发布 MP3、AAC/M4A 或 FLAC，在正文指定位置显示原生音频作品卡片
 - 🏷️ 标签分类 + 按月归档
 - 🔐 JWT 认证，安全后台管理
 - 💬 Google 登录评论，管理员审核后公开
@@ -44,7 +45,7 @@ npm start
 1. 登录后台 → 上传文章
 2. 支持两种方式：
    - **单个 .md 文件**：纯文本文章
-   - **ZIP 压缩包**：包含 Markdown + 图片
+   - **ZIP 压缩包**：包含 Markdown + 图片，也可包含文章引用的音频文件
 
 ### 文章格式
 
@@ -61,6 +62,50 @@ date: 2026-01-16
 
 ![图片](./images/pic.jpg)
 ```
+
+### 在文章中发布音乐
+
+含音乐的文章必须使用 ZIP 上传。音频文件路径以 ZIP 中 Markdown 文件所在目录为基准，例如：
+
+```text
+ai-song-article.zip
+└── posts/
+    ├── article.md
+    ├── images/
+    │   └── cover.png
+    └── audio/
+        └── final.mp3
+```
+
+在 `posts/article.md` 中，把音频块放到希望出现播放器的位置：
+
+```markdown
+---
+title: 一次 AI 歌曲实验
+slug: ai-song-experiment
+tags: [AI, 音乐]
+---
+
+# 创作过程
+
+这里记录歌词、旋律和声音实验的过程。
+
+![歌曲封面](./images/cover.png)
+
+:::audio
+title: Stay Until Tomorrow
+artist: AI Voice Experiment
+src: ./audio/final.mp3
+caption: 最终混音版
+:::
+```
+
+- `title`、`src` 必填，`artist`、`caption` 可选；只接受这四个字段。
+- 支持小写 `.mp3`、`.aac`、`.m4a`、`.flac`；`.aac` 是连续 ADTS AAC-LC，`.m4a` 是 AAC-LC（AOT 2）容器。不接受大写扩展名、绝对路径、外部 URL、查询参数或片段。
+- MP3/AAC/M4A 单文件不得超过 20 MiB，FLAC 不得超过 50 MiB；ZIP 上传文件和声明展开总量均不得超过 100 MiB。
+- 服务端不会转码或生成兼容副本；浏览器无法解码时，可以使用播放器下方的“无法播放时打开音频文件”链接。
+- 同一音频被多次引用时只发布一份；页面不会自动播放。
+- 单独上传含 `:::audio` 块的 `.md` 会失败，因为它没有可验证的音频资产上下文。
 
 ### 功能页面
 

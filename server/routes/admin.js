@@ -5,17 +5,33 @@ const path = require('path');
 const fs = require('fs').promises;
 const fsSync = require('fs');
 const AdmZip = require('adm-zip');
-const { dbRun, dbGet, dbAll } = require('../db');
+const { db, dbRun, dbGet, dbAll } = require('../db');
 const { authenticateToken } = require('../middleware/auth');
-const { parseMarkdown, extractImages, replaceImagePaths, replaceHtmlImagePaths } = require('../utils/markdown');
-const { convertToWebP, isImage, createWebPFromBuffer } = require('../utils/image');
+const {
+  parseMarkdownDocument,
+  renderMarkdown,
+  extractImages,
+  replaceImagePaths
+} = require('../utils/markdown');
+const { convertToWebP, isImage } = require('../utils/image');
 const {
   isSafeSlug,
   isSafeZipEntryName,
-  resolveArticlePath,
   resolveZipEntryPath
 } = require('../utils/path-security');
+const {
+  buildArchiveEntryIndex,
+  normalizeArchiveEntryName,
+  prepareArticleAudioAssets
+} = require('../article-audio/assets');
+const { articleAudioError, isArticleAudioInputError } = require('../article-audio/errors');
+const {
+  deleteArticlePublication,
+  publishArticle,
+  serializeArticlePublication
+} = require('../article-audio/publication');
 const config = require('../config');
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
 // 配置文件上传
 const storage = multer.diskStorage({
@@ -35,49 +51,105 @@ const storage = multer.diskStorage({
 
 const upload = multer({ 
   storage,
-  limits: { fileSize: 50 * 1024 * 1024 } // 50MB
+  // Busboy emits LIMIT_FILE_SIZE when the byte count reaches the configured value.
+  // Keeping one sentinel byte makes the documented 100 MiB boundary inclusive.
+  limits: { fileSize: MAX_UPLOAD_BYTES + 1 }
 });
+
+function receiveArticleUpload(req, res, next) {
+  upload.single('file')(req, res, error => {
+    if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({
+        error: '上传文件超过 100 MiB',
+        code: 'upload_file_too_large'
+      });
+    }
+    if (error) return next(error);
+    next();
+  });
+}
+
+function emptyAudioAssets() {
+  return {
+    resolvedBlocks: [],
+    publishedCount: 0,
+    async promote() {},
+    async rollback() {}
+  };
+}
+
+async function cleanupTemporaryPaths(paths) {
+  for (const temporaryPath of paths) {
+    try {
+      await fs.rm(temporaryPath, { recursive: true, force: true });
+    } catch {
+      console.error('[article-upload] temporary cleanup failed');
+    }
+  }
+}
+
+function selectAvailableArticleSlug(requestedSlug) {
+  if (!dbGet('SELECT id FROM articles WHERE slug = ?', [requestedSlug])) {
+    return requestedSlug;
+  }
+
+  let suffix = Date.now();
+  let candidate;
+  do {
+    candidate = `${requestedSlug}-${suffix}`;
+    suffix += 1;
+  } while (dbGet('SELECT id FROM articles WHERE slug = ?', [candidate]));
+  return candidate;
+}
 
 /**
  * POST /api/admin/upload
  * 上传 Markdown 文章（支持单文件或 ZIP）
  */
-router.post('/upload', authenticateToken, upload.single('file'), async (req, res) => {
-  let tempFiles = [];
+router.post('/upload', authenticateToken, receiveArticleUpload, async (req, res) => {
+  const temporaryPaths = [];
+  let articleSlug = null;
   
   try {
     if (!req.file) {
       return res.status(400).json({ error: '请上传文件' });
     }
     
-    tempFiles.push(req.file.path);
+    temporaryPaths.push(req.file.path);
     const fileExt = path.extname(req.file.originalname).toLowerCase();
     
     let markdownContent = '';
-    let imageFiles = [];
+    let markdownEntryName = null;
+    let archiveEntries = [];
+    const imageFiles = [];
     
     // 处理 ZIP 文件
     if (fileExt === '.zip') {
       const zip = new AdmZip(req.file.path);
-      const zipEntries = zip.getEntries();
+      archiveEntries = zip.getEntries();
 
-      if (zipEntries.some(entry => !isSafeZipEntryName(entry.entryName))) {
+      if (archiveEntries.some(entry => !isSafeZipEntryName(entry.entryName))) {
         return res.status(400).json({ error: 'ZIP 包含不安全路径' });
       }
+      buildArchiveEntryIndex(archiveEntries);
       
       // 提取目录
-      const extractDir = path.join(config.uploadDir, `extract-${Date.now()}`);
+      const extractDir = path.join(
+        config.uploadDir,
+        `extract-${Date.now()}-${Math.round(Math.random() * 1E9)}`
+      );
       await fs.mkdir(extractDir, { recursive: true });
-      tempFiles.push(extractDir);
+      temporaryPaths.push(extractDir);
       
       // 解压文件
       zip.extractAllTo(extractDir, true);
       
       // 查找 Markdown 文件
-      for (const entry of zipEntries) {
+      for (const entry of archiveEntries) {
         if (!entry.isDirectory && entry.entryName.endsWith('.md')) {
           const mdPath = resolveZipEntryPath(extractDir, entry.entryName);
           markdownContent = await fs.readFile(mdPath, 'utf-8');
+          markdownEntryName = normalizeArchiveEntryName(entry.entryName);
           break;
         }
       }
@@ -87,7 +159,7 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req, res
       }
       
       // 收集图片文件
-      for (const entry of zipEntries) {
+      for (const entry of archiveEntries) {
         if (!entry.isDirectory && isImage(entry.entryName)) {
           const imgPath = resolveZipEntryPath(extractDir, entry.entryName);
           imageFiles.push({
@@ -105,8 +177,16 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req, res
       return res.status(400).json({ error: '仅支持 .md 或 .zip 文件' });
     }
     
-    // 解析 Markdown
-    const { data, content, html } = parseMarkdown(markdownContent);
+    // 先解析作者态文档；音频路径只有在 ZIP 资产完成验证后才能进入最终 HTML。
+    const { data, content, audioBlocks } = parseMarkdownDocument(markdownContent);
+
+    if (fileExt === '.md' && audioBlocks.length > 0) {
+      throw articleAudioError(
+        400,
+        'audio_archive_required',
+        '包含音频块的文章必须使用 ZIP 上传'
+      );
+    }
     
     // 验证必需字段
     if (!data.title) {
@@ -117,128 +197,147 @@ router.post('/upload', authenticateToken, upload.single('file'), async (req, res
       return res.status(400).json({ error: 'slug 格式不安全' });
     }
     
-    // 检查 slug 是否已存在
-    const existingArticle = dbGet(
-      'SELECT id FROM articles WHERE slug = ?',
-      [data.slug]
-    );
-    
-    if (existingArticle) {
-      // 如果存在，添加时间戳
-      data.slug = `${data.slug}-${Date.now()}`;
-    }
-    
-    // 处理图片
-    const imageMap = {};
-    const extractedImages = extractImages(markdownContent);
-    
-    for (const imgRef of extractedImages) {
-      // 查找匹配的图片文件
-      const matchedImage = imageFiles.find(img => 
-        img.originalPath.includes(path.basename(imgRef)) ||
-        imgRef.includes(path.basename(img.originalPath))
-      );
-      
-      if (matchedImage) {
-        try {
-          // 转换为 WebP
-          const outputPath = await convertToWebP(
-            matchedImage.fullPath,
-            config.imagesDir
-          );
-          
-          const webPath = `/images/${path.basename(outputPath)}`;
-          imageMap[imgRef] = webPath;
-          
-          console.log(`图片已转换: ${imgRef} -> ${webPath}`);
-        } catch (error) {
-          console.error(`图片转换失败: ${imgRef}`, error);
+    const publication = await serializeArticlePublication(async () => {
+      let audioAssets = emptyAudioAssets();
+      let publicationStarted = false;
+      try {
+        articleSlug = selectAvailableArticleSlug(data.slug);
+        const publicationStage = path.join(
+          config.uploadDir,
+          `publish-${Date.now()}-${Math.round(Math.random() * 1E9)}`
+        );
+        temporaryPaths.push(publicationStage);
+
+        if (audioBlocks.length > 0) {
+          audioAssets = await prepareArticleAudioAssets({
+            articleSlug,
+            markdownEntryName,
+            audioBlocks,
+            archiveEntries,
+            stagingRoot: publicationStage,
+            publicAudioRoot: config.audioDir
+          });
         }
-      }
-    }
-    
-    // 更新 Markdown 和 HTML 中的图片路径
-    let updatedContent = content;
-    let updatedHtml = html;
-    
-    if (Object.keys(imageMap).length > 0) {
-      updatedContent = replaceImagePaths(content, imageMap);
-      updatedHtml = replaceHtmlImagePaths(html, imageMap);
-    }
-    
-    // 保存文章到数据库
-    const result = dbRun(
-      `INSERT INTO articles (title, slug, content, html, tags, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        data.title,
-        data.slug,
-        updatedContent,
-        updatedHtml,
-        JSON.stringify(data.tags),
-        data.date,
-        new Date().toISOString()
-      ]
-    );
-    
-    // 保存 Markdown 原文
-    const articlesDir = config.articlesDir;
-    await fs.mkdir(articlesDir, { recursive: true });
-    const mdFilePath = resolveArticlePath(articlesDir, data.slug);
-    await fs.writeFile(mdFilePath, `---
+
+        // 处理图片
+        const imageMap = {};
+        const extractedImages = extractImages(markdownContent);
+
+        for (const imgRef of extractedImages) {
+          // 查找匹配的图片文件
+          const matchedImage = imageFiles.find(img =>
+            img.originalPath.includes(path.basename(imgRef)) ||
+            imgRef.includes(path.basename(img.originalPath))
+          );
+
+          if (matchedImage) {
+            try {
+              // 转换为 WebP
+              const outputPath = await convertToWebP(
+                matchedImage.fullPath,
+                config.imagesDir
+              );
+
+              const webPath = `/images/${path.basename(outputPath)}`;
+              imageMap[imgRef] = webPath;
+            } catch {
+              console.error('[article-upload] image conversion failed');
+            }
+          }
+        }
+
+        // 图片路径先写回作者态 Markdown，再使用 resolved audio blocks 生成最终 HTML。
+        let updatedContent = content;
+        if (Object.keys(imageMap).length > 0) {
+          updatedContent = replaceImagePaths(content, imageMap);
+        }
+        const updatedHtml = renderMarkdown(updatedContent, {
+          resolvedAudioBlocks: audioAssets.resolvedBlocks
+        });
+        const savedMarkdown = `---
 title: ${data.title}
 tags: ${JSON.stringify(data.tags)}
 date: ${data.date}
 ---
 
-${updatedContent}`);
-    
-    // 清理临时文件
-    for (const tempFile of tempFiles) {
-      try {
-        const stat = await fs.stat(tempFile);
-        if (stat.isDirectory()) {
-          await fs.rm(tempFile, { recursive: true, force: true });
-        } else {
-          await fs.unlink(tempFile);
-        }
+${updatedContent}`;
+
+        const insertArticle = db.transaction(() => {
+          const info = db.prepare(
+            `INSERT INTO articles (title, slug, content, html, tags, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`
+          ).run(
+            data.title,
+            articleSlug,
+            updatedContent,
+            updatedHtml,
+            JSON.stringify(data.tags),
+            data.date,
+            new Date().toISOString()
+          );
+          return { id: info.lastInsertRowid, changes: info.changes };
+        });
+
+        publicationStarted = true;
+        const result = await publishArticle({
+          articleSlug,
+          markdown: savedMarkdown,
+          stagingRoot: publicationStage,
+          articlesRoot: config.articlesDir,
+          audioAssets,
+          commitDatabase: insertArticle
+        });
+        return {
+          id: result.id,
+          slug: articleSlug,
+          imagesConverted: Object.keys(imageMap).length,
+          audioPublished: audioAssets.publishedCount
+        };
       } catch (error) {
-        console.error(`清理临时文件失败: ${tempFile}`, error);
+        if (!publicationStarted) {
+          try {
+            await audioAssets.rollback();
+          } catch {
+            throw articleAudioError(
+              500,
+              'article_publish_rollback_failed',
+              '文章发布补偿失败'
+            );
+          }
+        }
+        throw error;
       }
-    }
+    });
     
-    res.json({
+    return res.json({
       success: true,
       message: '文章上传成功',
       article: {
-        id: result.id,
+        id: publication.id,
         title: data.title,
-        slug: data.slug,
+        slug: publication.slug,
         tags: data.tags,
-        imagesConverted: Object.keys(imageMap).length
+        imagesConverted: publication.imagesConverted,
+        audioPublished: publication.audioPublished
       }
     });
   } catch (error) {
-    console.error('上传文章失败:', error);
-    
-    // 清理临时文件
-    for (const tempFile of tempFiles) {
-      try {
-        const stat = await fs.stat(tempFile);
-        if (stat.isDirectory()) {
-          await fs.rm(tempFile, { recursive: true, force: true });
-        } else {
-          await fs.unlink(tempFile);
-        }
-      } catch (error) {
-        // 忽略清理错误
+    if (isArticleAudioInputError(error)) {
+      if (error.status >= 500) {
+        console.error(
+          `[article-upload] failed slug=${articleSlug || 'unassigned'} stage=publication code=${error.code}`
+        );
       }
+      return res.status(error.status).json({
+        error: error.safeMessage,
+        code: error.code
+      });
     }
-    
-    res.status(500).json({ 
-      error: '上传失败', 
-      details: error.message 
-    });
+
+    console.error(`[article-upload] failed slug=${articleSlug || 'unassigned'} stage=upload`);
+    return res.status(500).json({ error: '上传失败' });
+  } finally {
+    await cleanupTemporaryPaths(temporaryPaths);
   }
 });
 
@@ -270,35 +369,41 @@ router.get('/articles', authenticateToken, (req, res) => {
  * DELETE /api/admin/articles/:id
  * 删除文章
  */
-router.delete('/articles/:id', authenticateToken, (req, res) => {
+router.delete('/articles/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    
-    // 获取文章信息
-    const article = dbGet('SELECT slug FROM articles WHERE id = ?', [id]);
-    
-    if (!article) {
+    const deletion = await serializeArticlePublication(async () => {
+      const article = dbGet('SELECT slug FROM articles WHERE id = ?', [id]);
+      if (!article) return { status: 'not-found' };
+      if (!isSafeSlug(article.slug)) return { status: 'unsafe-slug' };
+
+      const result = await deleteArticlePublication({
+        articleSlug: article.slug,
+        articlesRoot: config.articlesDir,
+        publicAudioRoot: config.audioDir,
+        commitDatabase: () => dbRun('DELETE FROM articles WHERE id = ?', [id])
+      });
+      return {
+        status: 'deleted',
+        slug: article.slug,
+        cleanupFailed: result.cleanupFailed
+      };
+    });
+
+    if (deletion.status === 'not-found') {
       return res.status(404).json({ error: '文章不存在' });
     }
-
-    if (!isSafeSlug(article.slug)) {
+    if (deletion.status === 'unsafe-slug') {
       return res.status(400).json({ error: '文章 slug 格式不安全' });
     }
+    if (deletion.cleanupFailed) {
+      console.error(`[article-delete] tombstone cleanup pending id=${id} slug=${deletion.slug}`);
+    }
 
-    const mdFilePath = resolveArticlePath(config.articlesDir, article.slug);
-    
-    // 删除数据库记录
-    dbRun('DELETE FROM articles WHERE id = ?', [id]);
-    
-    // 删除 Markdown 文件
-    fs.unlink(mdFilePath).catch(error => {
-      console.error('删除 Markdown 文件失败:', error);
-    });
-    
-    res.json({ success: true, message: '文章已删除' });
-  } catch (error) {
-    console.error('删除文章失败:', error);
-    res.status(500).json({ error: '服务器错误' });
+    return res.json({ success: true, message: '文章已删除' });
+  } catch {
+    console.error('[article-delete] failed');
+    return res.status(500).json({ error: '服务器错误' });
   }
 });
 

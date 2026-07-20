@@ -1,0 +1,125 @@
+feature: 2026-07-17-article-audio-multi-format
+created: 2026-07-17
+
+steps:
+  - id: S1
+    action: "格式 seam 微重构：把既有 MP3 constants/parser/validator 从资产生命周期搬到独立格式 registry，保持 MP3-only 行为等价。"
+    exit_signal: "assets.js 继续 re-export 原 MAX_AUDIO_BYTES/validateMp3Buffer；不改测试 import 时旧 MP3 markdown/assets/upload/publication 全绿，safe message、URL、code、计数和 rollback 无变化。"
+    status: done
+  - id: S2
+    action: "AAC validator：实现可选 ID3v2 后从首帧到 EOF 的 ADTS 连续消费。"
+    exit_signal: "合法 AAC-LC、7/9-byte header 通过；坏 ID3/前缀、单 frame、非法字段、尾随垃圾和截断稳定返回 audio_content_invalid。"
+    status: done
+  - id: S3
+    action: "M4A validator：实现有界 ISO BMFF box tree、soun/mp4a/esds descriptor 与 AAC-LC AOT 契约。"
+    exit_signal: "合法 AAC-LC M4A 通过；size=0/1、越界/超深/超数、brand、track、descriptor、HE-AAC/HE-AACv2、ALAC、MP3-in-MP4 反例稳定拒绝。"
+    status: done
+  - id: S4
+    action: "FLAC validator：实现 STREAMINFO/metadata chain 与首 frame-header CRC-8 校验并固定 header-only 深度。"
+    exit_signal: "合法 FLAC 通过；STREAMINFO/metadata/header/CRC 反例拒绝；合法 header+损坏 payload 用例明确按结构 gate 处理。"
+    status: done
+  - id: S5
+    action: "资源与通用资产：接通格式上限、100 MiB upload/expanded gate、逐 entry stage/释放和 (sha256, extension) promotion。"
+    exit_signal: "等于/+1 边界返回精确 code；Buffer 不跨 entry 累积、promotion 流式验 hash；SC-01/02/08 通过。"
+    status: done
+  - id: S6
+    action: "DOM 与静态读取：输出 typed source/可见文件链接，为 /audio 接通 canonical MIME 和精确 GET/HEAD/Range/416。"
+    exit_signal: "SC-09/12 通过；四扩展 MIME、长度、HEAD 空 body、206 Content-Range/bytes、416 与 analytics 均精确。"
+    status: done
+  - id: S7
+    action: "发布生命周期兼容：覆盖混合格式 promotion 复用/冲突、SQLite failure、rollback、删除与同 slug 并发。"
+    exit_signal: "SC-03/09/10 通过；失败零残留、rollback-failed 脱敏且不越锁重试，删除后所有格式 URL 404。"
+    status: done
+  - id: S8
+    action: "自动化与作者说明：加入确定性合成格式 fixtures、HTTP/安全回归和 README 格式/限制表。"
+    exit_signal: "CMD-001/002 通过；SC-01-SC-10/12 及 SC-13 服务端结构 gate 有证据，仓库无真实歌曲、runtime ffmpeg、路径泄漏或新依赖；SC-13 浏览器部分由 S9 完成。"
+    status: done
+  - id: S9
+    action: "浏览器与冻结基线：按 browser/format 尝试真实播放并记录 played|fallback，重跑完整 EJS gate。"
+    exit_signal: "SC-11 与 CMD-003-005 通过；仅 WebKit+FLAC 可条件 fallback，链接 focus/open/HTTP 成功，桌面/手机截图存在，旧 expected 零改动。"
+    status: done
+
+checks:
+  - item: "支持扩展名严格为 .mp3/.aac/.m4a/.flac，格式 registry 是 MIME、大小、validator 的唯一事实源。"
+    source: "§0；§1.3 D1；§2.1"
+    status: passed
+  - item: "MP3 既有连续 frame、错误 code、URL、去重和 rollback 行为在 seam 微重构后等价。"
+    source: "§1.2 Compatibility；S1；SC-03"
+    status: passed
+  - item: "AAC 从可选合法 ID3v2 后首字节开始，至少两个连续完整 AAC-LC ADTS frame 并恰好消费到 EOF；坏前缀/尾部/7或9-byte header 反例明确。"
+    source: "§1.3 D2；SC-05"
+    status: passed
+  - item: "M4A box depth<=8/count<=4096，size=0/1、brand、soun/mp4a/esds descriptor 完整；OTI=0x40、streamType=0x05、AOT 仅 2，明确拒绝 5/29。"
+    source: "§0；§1.3 D2；SC-06"
+    status: passed
+  - item: "FLAC 需要 fLaC、字段合法的首个 34-byte STREAMINFO、闭合 metadata chain 和 CRC-8 合法首 frame header；明确不校验 payload/footer/MD5。"
+    source: "§0；§1.3 D2；SC-07"
+    status: passed
+  - item: "MP3/AAC/M4A 上限 20 MiB，FLAC 50 MiB，ZIP compressed/expanded 100 MiB；等于允许、+1 返回 upload_file_too_large/archive_expanded_too_large/audio_asset_too_large。"
+    source: "§1.2 Performance；SC-08"
+    status: passed
+  - item: "最终 URL 保留真实扩展名并按 (sha256, extension) 去重；每个 unique entry 立即 stage/释放 Buffer，已发布冲突流式 hash，不跨格式合并。"
+    source: "§1.2 Compatibility；§1.3 D3；SC-01/02"
+    status: passed
+  - item: "renderer 仅接受支持格式的 published URL/MIME，输出 typed source、无 autoplay 的原生控件和始终可见文件入口。"
+    source: "§1.2 Compatibility；§1.3 D4；SC-11/12"
+    status: passed
+  - item: "/audio 返回 canonical MIME；HEAD 无 body且长度正确；Range 206 的 Accept/Content-Range/字节片段精确，越界 416+bytes */size，analytics 排除。"
+    source: "§1.2 Operations；SC-09"
+    status: passed
+  - item: "扩展名/内容错配返回 audio_content_invalid，未支持扩展返回 audio_format_unsupported，响应/日志不泄漏内部解析细节。"
+    source: "§1.2 Security；SC-04-SC-07"
+    status: passed
+  - item: "混合格式 promotion/SQLite/rollback/并发/删除保持 ownership 和 serializer 语义。"
+    source: "§2.2 流程约束；SC-09/10"
+    status: passed
+  - item: "浏览器矩阵先尝试真实播放；仅 WebKit+FLAC 失败时允许 fallback，且文件链接可见/聚焦/打开200；若 WebKit 可播放则必须记录 played。"
+    source: "§1.4 spike；SC-11"
+    status: passed
+  - item: "不新增转码/媒体解析依赖、全站播放器、歌曲实体、格式字段或范围外扩展。"
+    source: "§1.1 明确不做；§3.2"
+    status: passed
+  - item: "README、architecture 和自动化矩阵反映四格式、大小与浏览器边界；requirement 正文保持不变但 implemented_by/change log 必须追加本 feature。"
+    source: "§1.4 交付物；§4"
+    status: passed
+  - item: "冻结 EJS/custom.css/旧 snapshots 零改动，仓库无真实歌曲、runtime ffmpeg、调试残留或本地绝对路径。"
+    source: "§1.4 清洁度；§3.2"
+    status: passed
+
+dod:
+  commands:
+    - id: CMD-001
+      command: "node --test test/article-audio-formats.test.js test/article-audio-assets.test.js test/article-audio-upload.test.js"
+      core: true
+      failure_handling: fix-or-block
+    - id: CMD-002
+      command: "npm test"
+      core: true
+      failure_handling: fix-or-block
+    - id: CMD-003
+      command: "npm run test:article-audio-browser"
+      core: true
+      failure_handling: fix-or-block
+    - id: CMD-004
+      command: "npm run test:ejs-upgrade-gate"
+      core: true
+      failure_handling: fix-or-block
+    - id: CMD-005
+      command: "npm ls --depth=0"
+      core: false
+      failure_handling: fix-or-block
+  evidence_required:
+    - command_output
+    - diff_summary
+    - api_responses
+    - browser_playback_matrix
+    - browser_screenshots
+    - filesystem_assertions
+  cleanliness:
+    debug_output: forbidden
+    todo_fixme: forbidden
+    commented_out_code: forbidden
+    unused_dependencies: forbidden
+    real_audio_fixture: forbidden
+    runtime_ffmpeg: forbidden
+    local_absolute_paths: forbidden

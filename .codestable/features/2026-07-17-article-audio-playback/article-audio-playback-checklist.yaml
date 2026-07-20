@@ -1,0 +1,112 @@
+feature: 2026-07-17-article-audio-playback
+created: 2026-07-17
+
+steps:
+  - id: S1
+    action: "作者契约与 DOM：实现作者态音频块解析、resolved block 固定安全 DOM 和普通 Markdown 零变化路径。"
+    exit_signal: "SC-04/SC-07/SC-11 通过，合法块生成约定 DOM，恶意/不完整/单 .md 块稳定拒绝，原始 HTML 仍被转义。"
+    status: done
+  - id: S2
+    action: "ZIP 路径边界：保留 Markdown entryName，实现相对基准、规范化、重复 entry 和展开总量校验。"
+    exit_signal: "SC-05 与 ZIP 总量边界通过，根/子目录、点段、大小写、反斜杠、百分号字面值、逃逸和重复规范路径均有 yes/no 断言。"
+    status: done
+  - id: S3
+    action: "MP3 资产节点：实现非空/大小、ID3、至少两个连续完整 MPEG frame、SHA-256、stage、冲突保护和同内容去重。"
+    exit_signal: "SC-02/SC-06 通过，含两个连续完整 frame 的合成最小 MP3 稳定 stage；单 frame、非连续伪造、超限和冲突目标在公开写入前失败且不覆盖。"
+    status: done
+  - id: S4
+    action: "发布 transaction：接通 resolved HTML、Markdown stage、文件 promotion、SQLite transaction、成功计数和幂等补偿。"
+    exit_signal: "SC-01/SC-03/SC-09 通过，真实 ZIP 端到端落盘；每个注入失败阶段的 DB row、Markdown、音频和 rollback 错误均符合契约。"
+    status: done
+  - id: S5
+    action: "文章生命周期与静态读取：接通文章删除清理、Content-Type/HEAD/Range 和访问统计排除。"
+    exit_signal: "SC-08/SC-09 通过，音频可 seek、不计页面访问，删除文章后专属 URL 返回 404。"
+    status: done
+  - id: S6
+    action: "UI 与作者说明：新增按需文章音频 stylesheet 和 README 发布包示例，不修改冻结 EJS 或 custom.css。"
+    exit_signal: "SC-10 有桌面/手机初步证据，作者能按 README 组成发布包，固定 DOM 无 autoplay 且原生控件可聚焦。"
+    status: done
+  - id: S7
+    action: "自动化回归：补齐正常、边界、安全、旧 Markdown/图片流程、范围守护和清洁度断言。"
+    exit_signal: "SC-01 至 SC-09、SC-11 与 §3.2 由 CMD-001 证明，无真实歌曲 fixture、路径泄漏或临时产物。"
+    status: done
+  - id: S8
+    action: "浏览器与冻结基线证明：运行独立音频 Playwright scenario，并证明历史 EJS/hash/snapshot 基线零改动。"
+    exit_signal: "SC-10 有运行期桌面/手机截图，CMD-002 至 CMD-004 完成，旧 expected 未更新且无未解释失败。"
+    status: done
+
+checks:
+  - item: "文章音频块只接受 title/src/artist/caption，长度、必填、重复、未知 key、闭合规则和固定 DOM 符合契约。"
+    source: "§1.3 决策 1/4；§3.1 SC-04/SC-07/SC-10"
+    status: passed
+  - item: "src 以 Markdown entry 所在目录为基准，只接受 ZIP 内区分大小写精确匹配的相对 .mp3；路径规范化、重复 entry、外链、逃逸、伪造和超限输入稳定拒绝。"
+    source: "§2.1 ZIP 路径契约；§1.3 决策 2/6；§3.1 SC-05/SC-06"
+    status: passed
+  - item: "发布音频使用最终文章 slug 子目录和内容哈希命名，同一内容去重且不新增数据库实体。"
+    source: "§1.3 决策 3；§3.1 SC-01/SC-02"
+    status: passed
+  - item: "输出仅含转义元数据和原生 audio controls + preload=metadata，不含 autoplay 或自定义播放器脚本。"
+    source: "§1.3 决策 4；§3.1 SC-07/SC-10"
+    status: passed
+  - item: "普通输入/持久化失败经幂等补偿后不产生 DB row、Markdown 或公开音频；rollback 失败返回专用脱敏错误且不伪报零残留。"
+    source: "§1.3 决策 5；§2.2 流程级约束；§3.1 SC-04-SC-06/SC-09"
+    status: passed
+  - item: "不含音频块的现有 Markdown、图片 ZIP、文章内容和响应字段保持兼容。"
+    source: "§1.2 Compatibility；§3.1 SC-03"
+    status: passed
+  - item: "Markdown :::audio、管理员上传、/audio 静态命名空间和文章内固定样式链接四个挂载点全部存在且可卸载。"
+    source: "§2.3 挂载点清单"
+    status: passed
+  - item: "文章删除会安全清理其专属音频目录；MP3 GET/HEAD/Range 正常且不进入页面访问统计。"
+    source: "§2.2 变化；§3.1 SC-08/SC-09"
+    status: passed
+  - item: "不实现全站播放器、跨页续播、音乐作品集、歌曲表、播放列表、收藏或播放统计。"
+    source: "§1.1 明确不做；§3.2"
+    status: passed
+  - item: "不实现转码、波形、歌词、音频编辑、站外音频源或专用封面字段。"
+    source: "§1.1 明确不做；§3.2"
+    status: passed
+  - item: "不开放 Markdown 原始 HTML，不新增自定义 JavaScript 播放内核或非必要第三方依赖。"
+    source: "§1.1 明确不做；§3.2"
+    status: passed
+  - item: "作品卡片在桌面/手机无溢出，原生控件可聚焦，README 说明足以组成合法文章发布包，冻结 EJS/custom.css 和旧 snapshots 零改动。"
+    source: "§3.1 SC-10"
+    status: passed
+  - item: "含音频块的单独 .md 返回 audio_archive_required，作者态相对 src 不会直接进入最终 HTML。"
+    source: "§2.1 两阶段类型；§3.1 SC-07/SC-11"
+    status: passed
+  - item: "日志与 API 错误不泄漏原始音频元数据、本地绝对路径、文件内容或内部异常原文。"
+    source: "§1.4 清洁度；§2.2 可观测性；§3.1 SC-05"
+    status: passed
+
+dod:
+  commands:
+    - id: CMD-001
+      command: "npm test"
+      core: true
+      failure_handling: fix-or-block
+    - id: CMD-002
+      command: "npm run test:article-audio-browser"
+      core: true
+      failure_handling: fix-or-block
+    - id: CMD-003
+      command: "npm run test:ejs-upgrade-gate"
+      core: true
+      failure_handling: fix-or-block
+    - id: CMD-004
+      command: "npm ls --depth=0"
+      core: false
+      failure_handling: fix-or-block
+  evidence_required:
+    - command_output
+    - diff_summary
+    - api_responses
+    - browser_screenshots
+    - filesystem_assertions
+  cleanliness:
+    debug_output: forbidden
+    todo_fixme: forbidden
+    commented_out_code: forbidden
+    unused_dependencies: forbidden
+    real_audio_fixture: forbidden
+    local_absolute_paths: forbidden

@@ -14,19 +14,54 @@ global.Date = FixedDate;
 
 const express = require('express');
 const cookieParser = require('cookie-parser');
+const crypto = require('node:crypto');
 const Database = require('better-sqlite3');
+const fs = require('node:fs');
 const jwt = require('jsonwebtoken');
 const path = require('node:path');
 const appConfig = require('../../server/config');
 const { parseCommentsConfig } = require('../../server/comments/config');
 const { createCommentsModule } = require('../../server/comments/module');
 const { createTokenService, sessionCookieOptions } = require('../../server/comments/security');
+const { renderMarkdown } = require('../../server/utils/markdown');
 
 const PORT = Number(process.env.BROWSER_HARNESS_PORT || 4173);
 const SESSION_SECRET = 'ejs-visual-session-secret-0123456789abcdef';
 const FIXED_NOW = new Date(FIXED_NOW_MS);
 const clock = { now: () => new Date(FIXED_NOW) };
 const db = new Database(':memory:');
+const AUDIO_FIXTURE_DIRECTORY = path.resolve(__dirname, '..', 'fixtures', 'article-audio');
+const AUDIO_FIXTURES = [
+  { extension: 'mp3', mimeType: 'audio/mpeg', title: 'Stay Until Tomorrow' },
+  { extension: 'aac', mimeType: 'audio/aac', title: 'AAC-LC ADTS Mix' },
+  { extension: 'm4a', mimeType: 'audio/mp4', title: 'AAC-LC M4A Mix' },
+  { extension: 'flac', mimeType: 'audio/flac', title: 'Lossless FLAC Mix' }
+].map(fixture => {
+  const buffer = fs.readFileSync(path.join(AUDIO_FIXTURE_DIRECTORY, `tone.${fixture.extension}`));
+  const hash = crypto.createHash('sha256').update(buffer).digest('hex');
+  return {
+    ...fixture,
+    buffer,
+    fileName: `${hash}.${fixture.extension}`,
+    src: `/audio/audio-browser/${hash}.${fixture.extension}`
+  };
+});
+const AUDIO_FIXTURES_BY_FILE = new Map(AUDIO_FIXTURES.map(fixture => [fixture.fileName, fixture]));
+const AUDIO_ARTICLE_HTML = renderMarkdown(`## 从灵感到最终混音
+
+我先记录歌词、旋律与声音实验，再把最终版本放在文章中。
+
+${AUDIO_FIXTURES.map(fixture => `:::audio
+title: ${fixture.title}
+artist: AI Voice Experiment
+src: ./audio/tone.${fixture.extension}
+caption: ${fixture.extension.toUpperCase()} 合成音频播放验证
+:::`).join('\n\n')}`, {
+  resolvedAudioBlocks: AUDIO_FIXTURES.map(fixture => ({
+    src: fixture.src,
+    mimeType: fixture.mimeType
+  }))
+});
 
 db.pragma('foreign_keys = ON');
 db.exec(`
@@ -279,6 +314,34 @@ app.use(commentsModule.commenterSession);
 
 const tokens = createTokenService(SESSION_SECRET, clock);
 app.get('/__visual/ready', (req, res) => res.type('text').send('ready'));
+app.get('/audio/audio-browser/:fileName', (req, res) => {
+  const fixture = AUDIO_FIXTURES_BY_FILE.get(req.params.fileName);
+  if (!fixture) return res.sendStatus(404);
+  const range = req.get('range');
+  res.set('Content-Type', fixture.mimeType);
+  res.set('Accept-Ranges', 'bytes');
+  if (!range) {
+    res.set('Content-Length', String(fixture.buffer.length));
+    return res.send(fixture.buffer);
+  }
+
+  const match = /^bytes=(\d+)-(\d*)$/.exec(range);
+  if (!match) {
+    res.set('Content-Range', `bytes */${fixture.buffer.length}`);
+    return res.status(416).end();
+  }
+  const start = Number(match[1]);
+  const end = match[2] ? Number(match[2]) : fixture.buffer.length - 1;
+  if (start > end || end >= fixture.buffer.length) {
+    res.set('Content-Range', `bytes */${fixture.buffer.length}`);
+    return res.status(416).end();
+  }
+  const chunk = fixture.buffer.subarray(start, end + 1);
+  res.status(206);
+  res.set('Content-Range', `bytes ${start}-${end}/${fixture.buffer.length}`);
+  res.set('Content-Length', String(chunk.length));
+  return res.send(chunk);
+});
 app.get('/__test/commenter-login', (req, res) => {
   res.cookie('comment_session', tokens.createSession({
     commenterId: commenter.id,
@@ -310,6 +373,19 @@ app.get('/article/comments-disabled', (req, res) => {
   const article = normalizeArticle(db.prepare('SELECT * FROM articles WHERE slug = ?').get('comments-disabled'));
   return res.render('article', { article, user: null, comments: { enabled: false } });
 });
+app.get('/__audio/article', (req, res) => res.render('article', {
+  article: {
+    id: 99,
+    title: '一次 AI 歌曲实验：从过程到成品',
+    slug: 'audio-browser',
+    content: 'audio browser fixture',
+    html: AUDIO_ARTICLE_HTML,
+    tags: ['AI', '音乐', '创作过程'],
+    created_at: '2026-07-17T08:00:00.000Z'
+  },
+  user: null,
+  comments: { enabled: false }
+}));
 app.get('/article/:slug', (req, res) => {
   const row = db.prepare('SELECT * FROM articles WHERE slug = ?').get(req.params.slug);
   if (!row) return res.status(404).render('404', { user: null });

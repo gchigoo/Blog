@@ -3,7 +3,7 @@ const { recordAccessEvent } = require('./repository');
 const { captureRequestClient, normalizeTrustedIp, sanitizePublicRequestUrl, sanitizeReferrer } = require('./request-security');
 const { hourBucket, recordMetric, visitorDayHmac } = require('./store');
 
-const EXCLUDED_PREFIXES = ['/auth', '/admin', '/api', '/images'];
+const EXCLUDED_PREFIXES = ['/auth', '/admin', '/api', '/images', '/audio'];
 const EXCLUDED_EXTENSIONS = /\.(?:css|js|webp|ico|png|jpe?g|gif|svg|xml|txt)$/i;
 const BOT_PATTERN = /bot|crawler|spider|slurp|bingpreview|facebookexternalhit|telegrambot/i;
 

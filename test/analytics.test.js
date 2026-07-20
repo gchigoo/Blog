@@ -42,7 +42,9 @@ test('analytics excludes admin, API, assets, bots, and failed responses', () => 
   for (const request of [
     makeRequest({ path: '/admin/analytics' }), makeRequest({ path: '/api/admin/analytics' }),
     makeRequest({ path: '/auth/google/callback?code=SECRET&state=STATE' }),
-    makeRequest({ path: '/css/custom.css' }), makeRequest({ path: '/', userAgent: 'Googlebot/2.1' })
+    makeRequest({ path: '/css/custom.css' }),
+    makeRequest({ path: '/audio/example-song/track.mp3' }),
+    makeRequest({ path: '/', userAgent: 'Googlebot/2.1' })
   ]) {
     const response = makeResponse(); middleware(request, response, () => {}); response.finish();
   }

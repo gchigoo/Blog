@@ -58,6 +58,7 @@ async function createProjectFixture(t) {
   await fs.mkdir(path.join(root, 'articles'), { recursive: true });
   await fs.mkdir(path.join(root, 'uploads', 'temp'), { recursive: true });
   await fs.mkdir(path.join(root, 'public', 'images'), { recursive: true });
+  await fs.mkdir(path.join(root, 'public', 'audio'), { recursive: true });
   registerCleanup(t, async () => {
     await fs.rm(root, { recursive: true, force: true });
   });

@@ -11,6 +11,7 @@
     "test:baseline-manifest": "node test/visual/verify-baseline-manifest.js",
     "test:html-snapshots": "playwright test ejs-html.spec.js",
     "test:visual": "playwright test ejs-visual.spec.js",
+    "test:article-audio-browser": "playwright test article-audio-browser.spec.js",
     "test:ejs-upgrade-gate": "npm run test:view-hashes && npm run test:baseline-manifest && npm test && npm run test:html-snapshots && npm run test:visual",
     "visual:evidence": "node test/visual/generate-baseline-evidence.js",
     "init-db": "node server/scripts/init-db.js",
