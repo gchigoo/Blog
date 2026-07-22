@@ -17,16 +17,15 @@ const LIST_FIELDS = `
 `;
 
 function invalidFilter() {
-  const error = new Error('invalid_filter');
-  error.code = 'invalid_filter';
-  throw error;
+  throw Object.assign(new Error('invalid_filter'), { code: 'invalid_filter' });
 }
 
-function singleString(value, maxLength) {
+function optionalString(value, maxLength) {
   if (value === undefined) return null;
   if (typeof value !== 'string') invalidFilter();
   const trimmed = value.trim();
-  if (!trimmed || [...trimmed].length > maxLength) invalidFilter();
+  if (!trimmed) return null;
+  if ([...trimmed].length > maxLength) invalidFilter();
   return trimmed;
 }
 
@@ -39,7 +38,7 @@ function integer(value, defaultValue, min, max) {
 }
 
 function normalized(value, maxLength = 128) {
-  const parsed = singleString(value, maxLength);
+  const parsed = optionalString(value, maxLength);
   return parsed ? parsed.normalize('NFKC').toLowerCase() : null;
 }
 
@@ -64,8 +63,9 @@ function decodeCursor(value) {
 }
 
 function normalizeHost(value) {
-  const host = singleString(value, 255);
-  if (!host || /[\/@?#]/.test(host)) invalidFilter();
+  const host = optionalString(value, 255);
+  if (!host) return null;
+  if (/[/@?#]/.test(host)) invalidFilter();
   const ascii = domainToASCII(host.toLowerCase());
   if (!ascii || ascii.length > 255) invalidFilter();
   return ascii;
@@ -76,14 +76,19 @@ function parseEventListQuery(query = {}, retentionDays = 30) {
   const limit = integer(query.limit, 50, 1, 100);
   let ip = null;
   if (query.ip !== undefined) {
-    const rawIp = singleString(query.ip, 64);
-    ip = normalizeTrustedIp(rawIp);
-    if (!ip || !net.isIP(ip)) invalidFilter();
+    const rawIp = optionalString(query.ip, 64);
+    if (rawIp) {
+      ip = normalizeTrustedIp(rawIp);
+      if (!ip || !net.isIP(ip)) invalidFilter();
+    }
   }
   let country = null;
   if (query.country !== undefined) {
-    country = singleString(query.country, 2).toUpperCase();
-    if (!/^[A-Z]{2}$/.test(country)) invalidFilter();
+    const rawCountry = optionalString(query.country, 2);
+    if (rawCountry) {
+      country = rawCountry.toUpperCase();
+      if (!/^[A-Z]{2}$/.test(country)) invalidFilter();
+    }
   }
   const subdivision = normalized(query.subdivision);
   const city = normalized(query.city);
@@ -103,7 +108,7 @@ function parseEventListQuery(query = {}, retentionDays = 30) {
       browser: normalized(query.browser),
       os: normalized(query.os),
       device,
-      pathPrefix: singleString(query.pathPrefix, 2048),
+      pathPrefix: optionalString(query.pathPrefix, 2048),
       referrerHost: query.referrerHost === undefined ? null : normalizeHost(query.referrerHost)
     }
   });

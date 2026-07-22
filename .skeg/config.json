@@ -1,0 +1,89 @@
+{
+  "defaultPolicy": "lean",
+  "guidance": "standard",
+  "protectedPaths": [
+    ".env*",
+    "infra/prod/**"
+  ],
+  "migrationPaths": [
+    "migrations/**",
+    "**/migrations/**",
+    "*.sql",
+    "**/*.sql"
+  ],
+  "dependencyFiles": [
+    "package.json",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "bun.lock",
+    "bun.lockb"
+  ],
+  "authPaths": [
+    "server/auth/**",
+    "server/middleware/auth.js",
+    "server/routes/auth.js",
+    "server/comments/**",
+    "server/utils/password.js",
+    "scripts/change-password.js"
+  ],
+  "apiPaths": [
+    "server/routes/**",
+    "server/analytics/admin-api.js",
+    "server/analytics/public-context.js",
+    "server/comments/module.js",
+    "server/index.js"
+  ],
+  "policies": {
+    "protectedPaths": {
+      "risk": "guarded",
+      "action": "confirm"
+    },
+    "dangerousCommand": {
+      "risk": "guarded",
+      "action": "confirm"
+    },
+    "databaseMigration": {
+      "risk": "guarded",
+      "action": "confirm"
+    },
+    "dependencyChange": {
+      "risk": "guarded",
+      "action": "confirm"
+    },
+    "publicApiChange": {
+      "risk": "guarded",
+      "action": "confirm"
+    },
+    "authChange": {
+      "risk": "guarded",
+      "action": "confirm"
+    }
+  },
+  "checks": {
+    "default": [
+      "targeted-test",
+      "diff"
+    ],
+    "guarded": [
+      "test",
+      "typecheck",
+      "lint",
+      "diff"
+    ],
+    "commands": {
+      "test": {
+        "kind": "package-script",
+        "script": "test"
+      },
+      "typecheck": {
+        "kind": "package-script",
+        "script": "typecheck"
+      },
+      "lint": {
+        "kind": "package-script",
+        "script": "lint"
+      }
+    }
+  }
+}

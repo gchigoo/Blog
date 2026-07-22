@@ -14,6 +14,7 @@ function createClientParser(bowser = Bowser) {
       }
       try {
         const result = bowser.parse(userAgent);
+        const platform = /** @type {typeof result.platform & { architecture?: string }} */ (result.platform);
         const data = {
           browserName: result.browser?.name || null,
           browserVersion: result.browser?.version || null,
@@ -23,11 +24,11 @@ function createClientParser(bowser = Bowser) {
           osNameNormalized: normalized(result.os?.name),
           engineName: result.engine?.name || null,
           engineVersion: result.engine?.version || null,
-          deviceType: result.platform?.type || null,
-          deviceVendor: result.platform?.vendor || null,
-          deviceModel: result.platform?.model || null,
-          deviceTypeNormalized: normalized(result.platform?.type),
-          cpuArchitecture: result.platform?.architecture || null
+          deviceType: platform?.type || null,
+          deviceVendor: platform?.vendor || null,
+          deviceModel: platform?.model || null,
+          deviceTypeNormalized: normalized(platform?.type),
+          cpuArchitecture: platform?.architecture || null
         };
         const known = data.browserName || data.osName || data.deviceType || data.engineName;
         return known ? { status: 'parsed', data } : { status: 'unknown', data };

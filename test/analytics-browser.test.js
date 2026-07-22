@@ -160,6 +160,15 @@ test('admin analytics API/page require authentication, are no-store, and expose 
   assert.match(page.headers.get('cache-control') || '', /no-store/);
   assert.match(html, /逐次访问明细/);
   assert.match(html, /203\.0\.113|127\.0\.0\.1|::1/);
+
+  const operaSearch = await fetch(
+    `${baseUrl}/admin/analytics?days=7&ip=&country=&subdivision=&city=&browser=opera&os=&device=&pathPrefix=&referrerHost=`,
+    { headers: { cookie: adminCookie } }
+  );
+  const operaHtml = await operaSearch.text();
+  assert.equal(operaSearch.status, 200);
+  assert.doesNotMatch(operaHtml, /筛选条件无效/);
+  assert.match(operaHtml, /name="browser" value="opera"/);
 });
 
 test('browser collector retries only 425 on immediate/1/2/4/8 second attempts', async () => {

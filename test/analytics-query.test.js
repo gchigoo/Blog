@@ -70,6 +70,34 @@ test('analytics paths decode every valid UTF-8 path without changing reserved or
   assert.match(formatAnalyticsPath('/bad/%E5%A‮').displayPath, /\\u\{202E\}/);
 });
 
+test('browser filter accepts the analytics form empty controls', () => {
+  const options = parseEventListQuery({
+    days: '7',
+    ip: '',
+    country: '',
+    subdivision: '',
+    city: '',
+    browser: '  Opera  ',
+    os: '',
+    device: '',
+    pathPrefix: '',
+    referrerHost: ''
+  }, 30);
+
+  assert.equal(options.filters.browser, 'opera');
+  assert.deepEqual(options.filters, {
+    ip: null,
+    country: null,
+    subdivision: null,
+    city: null,
+    browser: 'opera',
+    os: null,
+    device: null,
+    pathPrefix: null,
+    referrerHost: null
+  });
+});
+
 test('event list/detail use normalized filters, stable cursors, and exclude legacy-only rows', () => {
   const db = createDb();
   recordAccessEvent(db, event(1));
