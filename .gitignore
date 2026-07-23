@@ -2,6 +2,7 @@ node_modules/
 blog.db
 blog.db-*
 *.log
+pi-session-*.html
 .DS_Store
 .env
 uploads/temp/

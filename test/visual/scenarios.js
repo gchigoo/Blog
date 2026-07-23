@@ -12,6 +12,7 @@ const scenarios = Object.freeze([
   { id: 'archive', path: '/archive' },
   { id: 'tags', path: '/tags' },
   { id: 'tag-upgrade', path: '/tag/upgrade' },
+  { id: 'search', path: '/search?q=EJS' },
   { id: 'about', path: '/about' },
   { id: 'not-found', path: '/visual-not-found' },
   { id: 'admin-login', path: '/admin/login' },

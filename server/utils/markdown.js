@@ -1,12 +1,19 @@
 const MarkdownIt = require('markdown-it');
-const markdownItAnchor = require('markdown-it-anchor');
+const markdownItAnchor = /** @type {any} */ (require('markdown-it-anchor'));
 const matter = require('gray-matter');
 const slugify = require('slugify');
+const hljs = /** @type {any} */ (require('highlight.js'));
 const {
   collectArticleAudioBlocks,
   installArticleAudioMarkdown,
   renderArticleMarkdown
 } = require('../article-audio/markdown');
+
+class MarkdownMetadataError extends Error {}
+
+function invalidMetadata(message) {
+  throw new MarkdownMetadataError(message);
+}
 
 /**
  * 配置 Markdown 解析器
@@ -17,7 +24,13 @@ const md = new MarkdownIt({
   html: false,       // 原始 HTML 按文本处理，避免持久化 XSS
   linkify: true,     // 自动转换 URL 为链接
   typographer: true, // 美化排版（智能引号等）
-  breaks: true       // 换行转为 <br>
+  breaks: true,      // 换行转为 <br>
+  highlight(code, language) {
+    if (language && hljs.getLanguage(language)) {
+      return hljs.highlight(code, { language, ignoreIllegals: true }).value;
+    }
+    return md.utils.escapeHtml(code);
+  }
 }).use(markdownItAnchor, {
   level: 1,          // 为 h1-h6 所有标题添加锚点
   slugify: (s) => slugify(s, { 
@@ -35,18 +48,46 @@ const md = new MarkdownIt({
 }).use(installArticleAudioMarkdown);
 
 function normalizeMetadata(data) {
+  if (data.title !== undefined) {
+    if (typeof data.title !== 'string' || !data.title.trim() || data.title.length > 200) {
+      invalidMetadata('title 必须是 1 到 200 个字符的字符串');
+    }
+    data.title = data.title.trim();
+  }
+
   if (!data.slug && data.title) {
     data.slug = generateSlug(data.title);
   }
 
   if (data.tags && typeof data.tags === 'string') {
-    data.tags = data.tags.split(',').map(tag => tag.trim());
+    data.tags = data.tags.split(',').map(tag => tag.trim()).filter(Boolean);
   } else if (!data.tags) {
     data.tags = [];
+  } else if (!Array.isArray(data.tags)) {
+    invalidMetadata('tags 必须是字符串或字符串数组');
+  }
+
+  if (data.tags.length > 20
+    || data.tags.some(tag => typeof tag !== 'string' || !tag.trim() || tag.length > 50)) {
+    invalidMetadata('tags 最多 20 个，每个标签必须是 1 到 50 个字符的字符串');
+  }
+  data.tags = [...new Set(data.tags.map(tag => tag.trim()))];
+
+  if (data.description !== undefined
+    && (typeof data.description !== 'string' || data.description.trim().length > 300)) {
+    invalidMetadata('description 必须是不超过 300 个字符的字符串');
+  }
+  data.description = typeof data.description === 'string' ? data.description.trim() : '';
+
+  if (data.status === undefined) data.status = data.draft === true ? 'draft' : 'published';
+  if (!['draft', 'published'].includes(data.status)) {
+    invalidMetadata('status 必须是 draft 或 published');
   }
 
   if (data.date) {
-    data.date = new Date(data.date).toISOString();
+    const date = new Date(data.date);
+    if (Number.isNaN(date.getTime())) invalidMetadata('date 必须是有效日期');
+    data.date = date.toISOString();
   } else {
     data.date = new Date().toISOString();
   }
@@ -65,8 +106,12 @@ function parseMarkdownDocument(content) {
   };
 }
 
-function renderMarkdown(markdownContent, { resolvedAudioBlocks } = {}) {
+function renderMarkdown(markdownContent, { resolvedAudioBlocks = undefined } = {}) {
   return renderArticleMarkdown(md, markdownContent, resolvedAudioBlocks);
+}
+
+function serializeMarkdownDocument(markdownContent, metadata) {
+  return matter.stringify(markdownContent, metadata);
 }
 
 /**
@@ -166,9 +211,11 @@ function replaceHtmlImagePaths(html, imageMap) {
 }
 
 module.exports = {
+  MarkdownMetadataError,
   parseMarkdown,
   parseMarkdownDocument,
   renderMarkdown,
+  serializeMarkdownDocument,
   generateSlug,
   extractImages,
   replaceImagePaths,

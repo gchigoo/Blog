@@ -10,7 +10,7 @@
       <li>
         <a href="/article/<%= article.slug %>"><%= article.title %></a>
         <span class="article-meta">
-          <%= new Date(article.created_at).toLocaleDateString('zh-CN') %>
+          <%= typeof formatDate === 'function' ? formatDate(article.created_at, { year: 'numeric', month: '2-digit', day: '2-digit' }) : article.created_at %>
         </span>
       </li>
     <% }) %>

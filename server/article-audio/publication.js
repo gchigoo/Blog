@@ -9,7 +9,7 @@ let publicationTail = Promise.resolve();
 
 async function serializeArticlePublication(action) {
   const previous = publicationTail;
-  let release;
+  let release = () => {};
   publicationTail = new Promise(resolve => { release = resolve; });
   await previous;
   try {
@@ -107,6 +107,74 @@ async function deleteArticlePublication({
   };
 }
 
+async function replaceArticlePublication({
+  articleSlug,
+  markdown,
+  stagingRoot,
+  articlesRoot,
+  publicAudioRoot,
+  audioAssets,
+  commitDatabase,
+  fileSystem = fs,
+  replacementId = crypto.randomUUID()
+}) {
+  if (!/^[A-Za-z0-9-]+$/.test(replacementId)) {
+    throw articleAudioError(500, 'article_replace_failed', '文章替换失败');
+  }
+  const markdownStagePath = path.resolve(stagingRoot, 'article.md');
+  const markdownFinalPath = resolveArticlePath(articlesRoot, articleSlug);
+  const audioFinalDirectory = resolveArticleAudioDirectory(publicAudioRoot, articleSlug);
+  const resources = [
+    {
+      source: markdownFinalPath,
+      tombstone: path.join(path.dirname(markdownFinalPath), `.replacing-${replacementId}.md`),
+      recursive: false
+    },
+    {
+      source: audioFinalDirectory,
+      tombstone: path.join(path.dirname(audioFinalDirectory), `.replacing-${replacementId}`),
+      recursive: true
+    }
+  ];
+  const moved = [];
+  let markdownPromoted = false;
+  try {
+    await fileSystem.mkdir(stagingRoot, { recursive: true });
+    await fileSystem.writeFile(markdownStagePath, markdown, { flag: 'wx' });
+    for (const resource of resources) {
+      if (await moveIfPresent(fileSystem, resource.source, resource.tombstone)) moved.push(resource);
+    }
+    await fileSystem.mkdir(articlesRoot, { recursive: true });
+    await fileSystem.link(markdownStagePath, markdownFinalPath);
+    markdownPromoted = true;
+    await fileSystem.unlink(markdownStagePath);
+    await audioAssets.promote();
+    const databaseResult = await commitDatabase();
+    if (databaseResult?.changes === 0) throw new Error('article replace did not change a row');
+    const cleanupResults = await Promise.allSettled(moved.map(resource => (
+      fileSystem.rm(resource.tombstone, { recursive: resource.recursive, force: true })
+    )));
+    return {
+      ...databaseResult,
+      cleanupFailed: cleanupResults.some(result => result.status === 'rejected')
+    };
+  } catch (error) {
+    let rollbackFailed = false;
+    try { await fileSystem.rm(markdownStagePath, { force: true }); } catch { rollbackFailed = true; }
+    if (markdownPromoted) {
+      try { await fileSystem.rm(markdownFinalPath, { force: true }); } catch { rollbackFailed = true; }
+    }
+    try { await audioAssets.rollback(); } catch { rollbackFailed = true; }
+    for (const resource of [...moved].reverse()) {
+      try { await fileSystem.rename(resource.tombstone, resource.source); } catch { rollbackFailed = true; }
+    }
+    if (rollbackFailed) {
+      throw articleAudioError(500, 'article_replace_rollback_failed', '文章替换补偿失败');
+    }
+    throw publicationFailure(error);
+  }
+}
+
 async function publishArticle({
   articleSlug,
   markdown,
@@ -162,5 +230,6 @@ async function publishArticle({
 module.exports = {
   deleteArticlePublication,
   publishArticle,
+  replaceArticlePublication,
   serializeArticlePublication
 };

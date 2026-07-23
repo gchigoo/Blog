@@ -4,11 +4,21 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   
-  <title>About - 我的博客</title>
-  <!-- new.css 官方推荐的引入方式 -->
-  <link rel="stylesheet" href="https://fonts.xz.style/serve/inter.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@exampledev/new.css@1.1.2/new.min.css">
-  <link rel="stylesheet" href="/css/custom.css?v=20260716-comments-3">
+  <title>关于 - 我的博客</title>
+  
+    <meta name="description" content="关于本站">
+    <link rel="canonical" href="https://example.test/about">
+    <meta property="og:title" content="关于">
+    <meta property="og:description" content="关于本站">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://example.test/about">
+    
+  
+  <link rel="alternate" type="application/rss+xml" title="RSS" href="/feed.xml">
+  <link rel="stylesheet" href="/vendor/inter.css?v=8d2c79ff9827">
+  <link rel="stylesheet" href="/vendor/new.css/new.min.css?v=3169a014d8fc">
+  <link rel="stylesheet" href="/css/highlight.css?v=4164771f545d">
+  <link rel="stylesheet" href="/css/custom.css?v=9b119440e4f1">
 </head>
 <body>
   <header>
@@ -17,6 +27,8 @@
       <a href="/">首页</a> /
       <a href="/archive">归档</a> /
       <a href="/tags">标签</a> /
+      <a href="/search">搜索</a> /
+      <a href="/feed.xml">RSS</a> /
       <a href="/about">关于</a>
       
     </nav>
@@ -25,82 +37,11 @@
   <main>
 
 
-<h2>About Me</h2>
+<article class="about-content">
+  <h1 id="">关于我</h1>
+<p>这是可配置的 Markdown 关于页面。</p>
 
-<div class="about-content">
-  <p>Welcome to my minimalist blog! 👋</p>
-  
-  <h3>Who am I?</h3>
-  <p>A underachieving tech nerd who loves to share thoughts and technical insights.</p>
-  
-  <h3>What you'll find here</h3>
-  <ul>
-    <li>Technical articles and tutorials</li>
-    <li>Programming experiences and best practices</li>
-    <li>Personal thoughts on technology</li>
-    <li>Learning notes and insights</li>
-  </ul>
-  
-  <h3>Connect with me</h3>
-  <p>
-    <a href="https://github.com/gchigoo" target="_blank" rel="noopener noreferrer">
-      🔗 GitHub: @gchigoo
-    </a>
-  </p>
-  <p>
-    <a href="https://cokedaily.space" target="_blank" rel="noopener noreferrer">
-      🌐 Website: cokedaily.space
-    </a>
-  </p>
-  
-  <h3>About this blog</h3>
-  <p>
-    This blog is built with a minimalist philosophy - clean design, fast loading, and focus on content.
-    Powered by Node.js, Express, SQLite, and styled with new.css.
-  </p>
-  
-  <hr style="margin: 2em 0;">
-  
-  <p style="text-align: center; color: #666;">
-    <em>"Keep it simple, keep it meaningful."</em>
-  </p>
-</div>
-
-<style>
-  .about-content {
-    max-width: 700px;
-    margin: 0 auto;
-    line-height: 1.8;
-  }
-  
-  .about-content h3 {
-    margin-top: 2em;
-    margin-bottom: 0.5em;
-  }
-  
-  .about-content ul {
-    padding-left: 1.5em;
-  }
-  
-  .about-content li {
-    margin-bottom: 0.5em;
-  }
-  
-  .about-content a {
-    text-decoration: none;
-    color: #0066cc;
-  }
-  
-  .about-content a:hover {
-    text-decoration: underline;
-  }
-  
-  @media (max-width: 767px) {
-    .about-content {
-      max-width: 100%;
-    }
-  }
-</style>
+</article>
 
   </main>
   

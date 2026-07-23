@@ -10,7 +10,7 @@
       <li>
         <a href="/article/<%= article.slug %>"><%= article.title %></a>
         <span class="article-meta">
-          <%= new Date(article.created_at).toLocaleDateString('zh-CN') %>
+          <%= typeof formatDate === 'function' ? formatDate(article.created_at, { year: 'numeric', month: '2-digit', day: '2-digit' }) : article.created_at %>
           <% if (article.tags && article.tags.length > 0) { %>
             · 
             <% article.tags.forEach((tag, index) => { %>
@@ -23,16 +23,13 @@
   </ul>
   
   <% if (totalPages > 1) { %>
-    <nav style="margin-top: 2em;">
-      <% if (page > 1) { %>
-        <a href="/?page=<%= page - 1 %>">← 上一页</a>
+    <nav class="pagination" aria-label="文章分页">
+      <% if (page > 1) { %><a href="/?page=<%= page - 1 %>" rel="prev">← 上一页</a><% } %>
+      <% const firstPage = Math.max(1, page - 3); const lastPage = Math.min(totalPages, page + 3); %>
+      <% for (let number = firstPage; number <= lastPage; number += 1) { %>
+        <a href="/?page=<%= number %>" <%= number === page ? 'aria-current=page' : '' %>><%= number %></a>
       <% } %>
-      
-      <span>第 <%= page %> 页 / 共 <%= totalPages %> 页</span>
-      
-      <% if (page < totalPages) { %>
-        <a href="/?page=<%= page + 1 %>">下一页 →</a>
-      <% } %>
+      <% if (page < totalPages) { %><a href="/?page=<%= page + 1 %>" rel="next">下一页 →</a><% } %>
     </nav>
   <% } %>
 <% } %>

@@ -1,6 +1,7 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 const bcrypt = require('bcrypt');
+const { migrateDatabase } = require('../migrations');
 const { validatePassword } = require('../utils/password');
 
 const DB_PATH = path.join(__dirname, '..', '..', 'blog.db');
@@ -22,6 +23,8 @@ try {
       content TEXT NOT NULL,
       html TEXT NOT NULL,
       tags TEXT,
+      status TEXT NOT NULL DEFAULT 'published' CHECK (status IN ('draft', 'published')),
+      description TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
@@ -43,6 +46,9 @@ try {
     )
   `);
   console.log('✓ users 表创建成功');
+
+  migrateDatabase(db);
+  console.log('✓ 数据库迁移完成');
 
   const existingUser = db.prepare('SELECT id FROM users WHERE username = ?').get(ADMIN_USERNAME);
 

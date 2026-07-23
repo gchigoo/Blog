@@ -10,8 +10,8 @@
 - targeted test: `node --test test/<name>.test.js`
 - HTML snapshots: `npm run test:html-snapshots`
 - visual/browser: `npm run test:visual` / `npm run test:article-audio-browser`
-- typecheck: `npm run typecheck` (analytics JavaScript scope)
-- lint: `npm run lint` (analytics implementation and regression tests)
+- typecheck: `npm run typecheck` (server and operational scripts)
+- lint: `npm run lint` (all first-party JavaScript)
 
 ## Boundaries
 - Do not edit generated/runtime data: `blog.db`, `articles/`, `uploads/`, `backups/`, `public/images/`, `test-results/`.

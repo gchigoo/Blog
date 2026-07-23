@@ -1,5 +1,5 @@
 const express = require('express');
-const { authenticateToken } = require('../middleware/auth');
+const { authenticatePage } = require('../middleware/auth');
 const { getOverview } = require('./store');
 const { listEvents, parseEventListQuery } = require('./query/analytics-query');
 
@@ -40,7 +40,7 @@ function createAdminPageRouter({ db, config, clock, geoResolver, logger = consol
     res.set('Cache-Control', 'no-store');
     next();
   });
-  router.get('/admin/analytics', authenticateToken, (req, res) => {
+  router.get('/admin/analytics', authenticatePage, (req, res) => {
     let options;
     let pageError = null;
     try {

@@ -44,7 +44,9 @@ npm run init-db
 unset INITIAL_ADMIN_PASSWORD
 
 # 4. 启动测试
+export JWT_SECRET="$(node -p "require('node:crypto').randomBytes(32).toString('base64url')")"
 export ANALYTICS_HMAC_SECRET="$(node -p "require('node:crypto').randomBytes(32).toString('base64url')")"
+export BLOG_PUBLIC_ORIGIN='http://localhost:3000'
 npm start
 ```
 
@@ -69,6 +71,21 @@ node -p "require('node:crypto').randomBytes(32).toString('base64url')"
 ```
 
 把输出写入主机或部署平台的 secret manager，不要写入 `ecosystem.config.js`、`.env`、脚本、日志或 Git 历史。轮换该密钥会使尚未提交的短期 analytics event token 失效，不影响已保存的数据。
+
+SEO、RSS、sitemap 使用 `BLOG_PUBLIC_ORIGIN` 生成绝对 URL。生产环境应设置为不带路径的 HTTPS origin，例如 `https://blog.cokedaily.space`。可用 `BLOG_TITLE` 和 `BLOG_DESCRIPTION` 覆盖站点名称与默认摘要。
+
+### 数据库迁移
+
+升级已有实例时，先备份，再执行幂等迁移，验证后重启：
+
+```bash
+npm run backup-db
+npm run migrate-db
+npm test
+pm2 restart blog --update-env
+```
+
+迁移会增加文章发布状态、摘要、规范化标签表和 FTS5 索引；现有文章会回填为 `published`。迁移只在本机数据库上执行，不会连接外部服务。回滚到不认识 `status` 的旧版本前必须恢复升级前备份，或先删除/发布所有草稿；否则旧版本可能把草稿当作普通文章公开。
 
 ## Google 登录评论配置
 
@@ -430,33 +447,20 @@ sudo certbot renew
 
 ### 数据备份
 
-**自动备份脚本** (`backup.sh`):
+SQLite 使用 WAL；不要在应用运行时直接 `cp blog.db`，否则可能漏掉已提交的 WAL 页面。项目内置在线备份会生成事务一致的临时文件、执行 `integrity_check`，验证成功后再原子改名：
 
 ```bash
-#!/bin/bash
-DATE=$(date +%Y%m%d_%H%M%S)
-BACKUP_DIR="./backups/$DATE"
-
-mkdir -p $BACKUP_DIR
-
-# 备份数据库
-cp blog.db $BACKUP_DIR/
-
-# 备份文章
-tar -czf $BACKUP_DIR/articles.tar.gz articles/
-
-# 备份图片
-tar -czf $BACKUP_DIR/images.tar.gz public/images/
-
-echo "备份完成: $BACKUP_DIR"
+cd /path/to/blog
+npm run backup-db
 ```
 
-**定时备份**（使用 cron）:
+默认部署不会自动安装备份计划。确认手工备份与恢复演练通过后，再显式配置 cron，例如每天凌晨 2 点：
 
-```bash
-# 每天凌晨 2 点备份
-0 2 * * * /path/to/blog/backup.sh
+```cron
+0 2 * * * cd /path/to/blog && /usr/bin/npm run backup-db >> /var/log/blog-backup.log 2>&1
 ```
+
+`articles/`、`public/images/` 和 `public/audio/` 仍需按部署平台的文件备份策略保存；数据库备份不能替代这些发布资产。
 
 ### 更新应用
 
@@ -641,14 +645,14 @@ htop
   npm outdated
   npm update
   ```
-- [x] 限制文件上传大小（当前 50MB）
+- [x] 限制文件上传大小（应用文件上限 100 MiB，Nginx 请求上限 101 MiB）
 - [x] 监控日志异常访问
 
 ---
 
 ## 依赖说明
 
-### 核心功能包 (16 个生产依赖)
+### 核心功能包 (17 个生产依赖)
 
 #### Web 框架
 - **express** (5.2.1): HTTP 服务器和路由
@@ -660,6 +664,7 @@ htop
 #### Markdown 处理
 - **markdown-it** (14.3.0): Markdown → HTML 解析器（原始 HTML 默认作为文本处理）
 - **markdown-it-anchor** (9.2.1): 为标题生成锚点 id
+- **highlight.js** (11.11.1): 服务端代码高亮
 - **gray-matter** (4.0.3): 解析 Front Matter 元数据
 
 #### 文件处理
@@ -698,7 +703,7 @@ Express request → GeoLite2 City / Bowser → SQLite → 管理员 analytics AP
 
 ### 为什么选择这些包？
 
-1. ✅ **极简原则**: 仅 16 个生产依赖，避免过度依赖
+1. ✅ **极简原则**: 仅 17 个生产依赖，避免过度依赖
 2. ✅ **性能优先**: better-sqlite3 比 sqlite3 快，Sharp 比 imagemagick 快
 3. ✅ **安全第一**: 生产锁文件经 `npm audit --omit=dev` 验证；Google token 不写入数据库
 4. ✅ **易于维护**: 依赖少，升级简单

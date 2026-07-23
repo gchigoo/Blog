@@ -2,9 +2,9 @@
 
 <h2>上传文章</h2>
 
-<div id="message"></div>
+<div id="message" role="status" aria-live="polite"></div>
 
-<div class="upload-area" id="uploadArea">
+<div class="upload-area" id="uploadArea" role="button" tabindex="0" aria-controls="fileInput">
   <p>点击选择文件或拖拽文件到此处</p>
   <p style="font-size: 0.9em; color: #666;">支持 .md 或 .zip 文件（ZIP 包含 Markdown 和图片）</p>
   <input type="file" id="fileInput" accept=".md,.zip" style="display: none;">
@@ -14,13 +14,19 @@
   <h3>文件信息</h3>
   <p><strong>文件名:</strong> <span id="fileName"></span></p>
   <p><strong>文件大小:</strong> <span id="fileSize"></span></p>
-  <button id="uploadBtn">上传</button>
-  <button id="cancelBtn">取消</button>
+  <button id="previewBtn" type="button">预览</button>
+  <button id="uploadBtn" type="button">上传</button>
+  <button id="cancelBtn" type="button">取消</button>
 </div>
 
-<div id="uploadProgress" style="display: none; margin-top: 1em;">
-  <p>上传中... <span class="loading"></span></p>
+<div id="uploadProgress" style="display: none; margin-top: 1em;" role="status">
+  <p>处理中... <span class="loading"></span></p>
 </div>
+
+<section id="previewPanel" class="upload-preview" aria-labelledby="previewTitle" hidden>
+  <h3 id="previewTitle">文章预览</h3>
+  <iframe id="previewFrame" title="文章渲染预览" sandbox="allow-same-origin"></iframe>
+</section>
 
 <hr style="margin-top: 3em;">
 
@@ -28,7 +34,9 @@
 <p>文章必须包含 Front Matter（文件开头的元数据）：</p>
 <pre><code>---
 title: 文章标题
+description: 一句话摘要
 tags: [标签1, 标签2]
+status: published # 或 draft
 date: 2026-01-16
 ---
 
@@ -54,16 +62,26 @@ date: 2026-01-16
   const fileInfo = document.getElementById('fileInfo');
   const fileName = document.getElementById('fileName');
   const fileSize = document.getElementById('fileSize');
+  const previewBtn = document.getElementById('previewBtn');
   const uploadBtn = document.getElementById('uploadBtn');
   const cancelBtn = document.getElementById('cancelBtn');
   const uploadProgress = document.getElementById('uploadProgress');
   const messageDiv = document.getElementById('message');
+  const previewPanel = document.getElementById('previewPanel');
+  const previewFrame = document.getElementById('previewFrame');
+  const replaceId = new URLSearchParams(window.location.search).get('replaceId');
   
   let selectedFile = null;
   
   // 点击上传区域
   uploadArea.addEventListener('click', () => {
     fileInput.click();
+  });
+  uploadArea.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      fileInput.click();
+    }
   });
   
   // 文件选择
@@ -110,14 +128,40 @@ date: 2026-01-16
     fileInput.value = '';
     fileInfo.style.display = 'none';
     uploadArea.style.display = 'block';
+    previewPanel.hidden = true;
+    previewFrame.removeAttribute('srcdoc');
+  });
+
+  async function submitFile(endpoint) {
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+    if (replaceId) formData.append('replaceId', replaceId);
+    const response = await fetch(endpoint, { method: 'POST', body: formData });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || '请求失败');
+    return data;
+  }
+
+  previewBtn.addEventListener('click', async () => {
+    if (!selectedFile) return;
+    previewBtn.disabled = true;
+    uploadProgress.style.display = 'block';
+    try {
+      const preview = await submitFile('/api/admin/preview');
+      previewFrame.srcdoc = `<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/vendor/new.css/new.min.css"><link rel="stylesheet" href="/css/custom.css"><main>${preview.html}</main>`;
+      previewPanel.hidden = false;
+      previewPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (error) {
+      showMessage('error', error.message);
+    } finally {
+      previewBtn.disabled = false;
+      uploadProgress.style.display = 'none';
+    }
   });
   
   // 上传文件
   uploadBtn.addEventListener('click', async () => {
     if (!selectedFile) return;
-    
-    const formData = new FormData();
-    formData.append('file', selectedFile);
     
     uploadBtn.disabled = true;
     cancelBtn.disabled = true;
@@ -125,29 +169,16 @@ date: 2026-01-16
     messageDiv.replaceChildren();
     
     try {
-      const response = await fetch('/api/admin/upload', {
-        method: 'POST',
-        body: formData
-      });
-      
-      const data = await response.json();
-      
+      const data = await submitFile('/api/admin/upload');
       uploadProgress.style.display = 'none';
-      
-      if (response.ok) {
-        showUploadSuccess(data.article);
-        
-        // 重置表单
-        selectedFile = null;
-        fileInput.value = '';
-        fileInfo.style.display = 'none';
-        uploadArea.style.display = 'block';
-      } else {
-        showMessage('error', data.error || '上传失败');
-      }
+      showUploadSuccess(data.article);
+      selectedFile = null;
+      fileInput.value = '';
+      fileInfo.style.display = 'none';
+      uploadArea.style.display = 'block';
     } catch (error) {
       uploadProgress.style.display = 'none';
-      showMessage('error', '网络错误，请稍后重试');
+      showMessage('error', error.message || '网络错误，请稍后重试');
     } finally {
       uploadBtn.disabled = false;
       cancelBtn.disabled = false;
@@ -168,7 +199,14 @@ date: 2026-01-16
 
     const title = document.createElement('span');
     title.textContent = article.title;
+    const action = article.replaced ? '文章替换成功！' : article.status === 'draft' ? '草稿保存成功！' : '文章上传成功！';
+    content.firstChild.textContent = `${action} 标题: `;
     content.append(title, ` Slug: ${article.slug} 图片转换: ${article.imagesConverted} 张`);
+    if (article.imageWarnings?.length) {
+      content.append(`；${article.imageWarnings.length} 张图片转换失败，请检查：${article.imageWarnings.join('、')}`);
+      content.classList.remove('success');
+      content.classList.add('info');
+    }
     messageDiv.replaceChildren(content);
   }
   

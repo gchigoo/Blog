@@ -5,10 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   
   <title>评论功能关闭时的文章详情 - 我的博客</title>
-  <!-- new.css 官方推荐的引入方式 -->
-  <link rel="stylesheet" href="https://fonts.xz.style/serve/inter.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@exampledev/new.css@1.1.2/new.min.css">
-  <link rel="stylesheet" href="/css/custom.css?v=20260716-comments-3">
+  
+  <link rel="alternate" type="application/rss+xml" title="RSS" href="/feed.xml">
+  <link rel="stylesheet" href="/vendor/inter.css?v=8d2c79ff9827">
+  <link rel="stylesheet" href="/vendor/new.css/new.min.css?v=3169a014d8fc">
+  <link rel="stylesheet" href="/css/highlight.css?v=4164771f545d">
+  <link rel="stylesheet" href="/css/custom.css?v=9b119440e4f1">
 </head>
 <body>
   <header>
@@ -17,6 +19,8 @@
       <a href="/">首页</a> /
       <a href="/archive">归档</a> /
       <a href="/tags">标签</a> /
+      <a href="/search">搜索</a> /
+      <a href="/feed.xml">RSS</a> /
       <a href="/about">关于</a>
       
     </nav>
@@ -57,7 +61,12 @@
   
   <!-- 底部导航 -->
   <div class="article-footer">
-    <a href="/" class="back-link">← 返回首页</a>
+    <nav class="article-navigation" aria-label="相邻文章">
+      
+      <a href="/" class="back-link">返回首页</a>
+      
+    </nav>
+    
   </div>
 </article>
 

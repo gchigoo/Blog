@@ -201,8 +201,10 @@ test('article UI explains public display names and exposes the correct login or 
   assert.match(loggedOutPage, /Google 登录/);
   assert.match(loggedOutPage, /审核通过/);
   assert.match(loggedOutPage, /当前 Google 展示名称/);
-  assert.match(loggedOutPage, /\/css\/custom\.css\?v=20260716-comments-3/);
-  assert.match(loggedOutPage, /\/js\/comments\.js\?v=20260716-comments-3/);
+  assert.match(loggedOutPage, /\/css\/custom\.css/);
+  assert.match(loggedOutPage, /\/js\/comments\.js/);
+  assert.match(loggedOutPage, /\/vendor\/inter\.css/);
+  assert.doesNotMatch(loggedOutPage, /fonts\.xz\.style|cdn\.jsdelivr\.net/);
   assert.doesNotMatch(loggedOutPage, /id="comment-form"/);
 
   const session = await login(baseUrl);

@@ -23,12 +23,12 @@ function collectBaselineFiles(directory, result = []) {
   return result;
 }
 
-if (manifest.baselineEngine !== 'ejs@3.1.10') {
+if (manifest.baselineEngine !== 'ejs@6.0.1') {
   throw new Error(`Unexpected baseline engine: ${manifest.baselineEngine}`);
 }
-if (manifest.htmlSnapshotCount !== 17
-  || manifest.layoutSnapshotCount !== 102
-  || manifest.imageSnapshotCount !== 102) {
+if (manifest.htmlSnapshotCount !== 18
+  || manifest.layoutSnapshotCount !== 108
+  || manifest.imageSnapshotCount !== 108) {
   throw new Error('Baseline manifest counts do not match the approved matrix.');
 }
 
@@ -41,7 +41,7 @@ for (const [relativePath, expectedHash] of Object.entries(manifest.files)) {
   }
 }
 
-const expectedTotal = 17 + 102 + 102;
+const expectedTotal = 18 + 108 + 108;
 if (Object.keys(manifest.files).length !== expectedTotal) {
   throw new Error(`Expected ${expectedTotal} immutable baseline files.`);
 }
@@ -52,4 +52,4 @@ if (JSON.stringify(actualPaths) !== JSON.stringify(expectedPaths)) {
   throw new Error('Baseline file set changed without an approved manifest update.');
 }
 
-console.log(`Verified ${expectedTotal} immutable EJS 3.1.10 baseline files.`);
+console.log(`Verified ${expectedTotal} immutable EJS 6.0.1 baseline files.`);

@@ -3,8 +3,14 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const test = require('node:test');
 const AdmZip = require('adm-zip');
+const matter = require('gray-matter');
 const jwt = require('jsonwebtoken');
-const { parseMarkdown, replaceHtmlImagePaths } = require('../server/utils/markdown');
+const {
+  MarkdownMetadataError,
+  parseMarkdown,
+  replaceHtmlImagePaths,
+  serializeMarkdownDocument
+} = require('../server/utils/markdown');
 const { createProjectFixture, runNode, startServer } = require('./helpers/project-fixture');
 
 const INITIAL_PASSWORD = 'S3cure!Node24';
@@ -25,10 +31,10 @@ async function prepareServer(t) {
   return { root, ...server };
 }
 
-async function upload(baseUrl, name, bytes) {
+async function upload(baseUrl, name, bytes, endpoint = '/api/admin/upload') {
   const form = new FormData();
   form.append('file', new Blob([bytes]), name);
-  return fetch(`${baseUrl}/api/admin/upload`, {
+  return fetch(`${baseUrl}${endpoint}`, {
     method: 'POST',
     headers: { cookie: authCookie() },
     body: form
@@ -65,6 +71,34 @@ test('raw Markdown HTML is escaped while normal Markdown images still render', (
   assert.match(parsed.html, /<img src="\.\/safe\.png" alt="safe">/);
 });
 
+test('rejects malformed article metadata as author input', () => {
+  for (const frontMatter of [
+    'title: 42',
+    'title: Valid\ntags: 42',
+    'title: Valid\ndate: not-a-date'
+  ]) {
+    assert.throws(
+      () => parseMarkdown(`---\n${frontMatter}\n---\nbody`),
+      MarkdownMetadataError
+    );
+  }
+});
+
+test('serializes YAML-sensitive article metadata without corrupting Front Matter', () => {
+  const serialized = serializeMarkdownDocument('body\n', {
+    title: 'Question: why now?',
+    slug: 'question-why-now',
+    tags: ['notes'],
+    date: '2026-07-20T00:00:00.000Z'
+  });
+  const parsed = matter(serialized);
+
+  assert.equal(parsed.data.title, 'Question: why now?');
+  assert.equal(parsed.data.slug, 'question-why-now');
+  assert.deepEqual(parsed.data.tags, ['notes']);
+  assert.equal(parsed.content, 'body\n');
+});
+
 test('replaces URI-encoded Windows image paths in rendered HTML', () => {
   const sourcePath = 'C:\\Users\\HAT\\Desktop\\快充\\image-20191126101337709.png';
   const html = parseMarkdown(`![diagram](${sourcePath})`).html;
@@ -75,6 +109,16 @@ test('replaces URI-encoded Windows image paths in rendered HTML', () => {
   assert.match(html, /C:%5CUsers%5CHAT%5CDesktop/);
   assert.match(updated, /src="\/images\/converted\.webp"/);
   assert.doesNotMatch(updated, /C:%5CUsers%5CHAT%5CDesktop/);
+});
+
+test('upload reports malformed Front Matter as a stable 400 response', async t => {
+  const { baseUrl } = await prepareServer(t);
+  const markdown = '---\ntitle: Invalid date\nslug: invalid-date\ndate: not-a-date\n---\nbody';
+  const response = await upload(baseUrl, 'invalid-date.md', markdown);
+  const body = await response.json();
+
+  assert.equal(response.status, 400, JSON.stringify(body));
+  assert.equal(body.code, 'invalid_article_metadata');
 });
 
 test('upload rejects slugs outside the fixed safe format', async t => {
@@ -124,6 +168,30 @@ test('delete refuses an unsafe stored slug without touching files or the databas
   verifyDb.close();
 });
 
+test('preview returns a stable author error for ambiguous ZIP entries', async t => {
+  const { baseUrl } = await prepareServer(t);
+  const zip = new AdmZip();
+  zip.addFile('first.md', Buffer.from('---\ntitle: First\nslug: first\n---\nbody'));
+  zip.addFile('other.md', Buffer.from('---\ntitle: Other\nslug: other\n---\nbody'));
+  const buffer = zip.toBuffer();
+  const originalName = Buffer.from('other.md');
+  const duplicateName = Buffer.from('first.md');
+  let offset = 0;
+  let replacements = 0;
+  while ((offset = buffer.indexOf(originalName, offset)) !== -1) {
+    duplicateName.copy(buffer, offset);
+    offset += duplicateName.length;
+    replacements += 1;
+  }
+  assert.ok(replacements >= 2);
+
+  const response = await upload(baseUrl, 'ambiguous.zip', buffer, '/api/admin/preview');
+  const body = await response.json();
+
+  assert.equal(response.status, 400, JSON.stringify(body));
+  assert.equal(body.code, 'audio_archive_ambiguous');
+});
+
 test('upload rejects a ZIP traversal entry before extraction', async t => {
   const { root, baseUrl } = await prepareServer(t);
   const zip = zipWithRawEntryName(
@@ -161,12 +229,26 @@ test('upload rejects an absolute ZIP entry before extraction', async t => {
   assert.equal(response.status, 400, await response.text());
 });
 
+test('image conversion failures are returned as explicit upload warnings', async t => {
+  const { baseUrl } = await prepareServer(t);
+  const zip = new AdmZip();
+  zip.addFile('article.md', Buffer.from('---\ntitle: Warning ZIP\nslug: warning-zip\n---\n\n![bad](images/bad.png)'));
+  zip.addFile('images/bad.png', Buffer.from('not a valid png'));
+
+  const response = await upload(baseUrl, 'warning.zip', zip.toBuffer());
+  const body = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.deepEqual(body.article.imageWarnings, ['images/bad.png']);
+  assert.equal(body.article.imagesConverted, 0);
+});
+
 test('normal ZIP upload preserves Markdown image conversion workflow', async t => {
   const { root, baseUrl } = await prepareServer(t);
   const zip = new AdmZip();
   const markdown = `---\ntitle: Normal ZIP\nslug: normal-zip\ntags: [smoke]\n---\n\n![pixel](images/pixel.png)`;
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
   zip.addFile('article.md', Buffer.from(markdown));
+  zip.addFile('other/pixel.png', Buffer.from('not an image'));
   zip.addFile('images/pixel.png', png);
 
   const response = await upload(baseUrl, 'normal.zip', zip.toBuffer());

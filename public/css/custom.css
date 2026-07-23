@@ -684,6 +684,63 @@ main {
   }
 }
 
+.pagination,
+.article-navigation,
+.site-search-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.pagination {
+  margin-top: 2rem;
+}
+
+.pagination [aria-current="page"] {
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.article-navigation {
+  justify-content: space-between;
+}
+
+.related-articles {
+  margin-top: 2rem;
+}
+
+.site-search-form {
+  max-width: 48rem;
+}
+
+.site-search-controls input {
+  min-width: 12rem;
+  flex: 1;
+}
+
+.about-content {
+  max-width: 700px;
+  margin: 0 auto;
+  line-height: 1.8;
+}
+
+.upload-preview iframe {
+  width: 100%;
+  min-height: 32rem;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #fff;
+}
+
+@media (max-width: 767px) {
+  .article-navigation,
+  .site-search-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
 /* 大屏幕文章优化 */
 @media (min-width: 1920px) {
   .article-detail {

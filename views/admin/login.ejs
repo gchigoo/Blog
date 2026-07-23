@@ -4,10 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>后台登录</title>
-  <!-- new.css 官方推荐的引入方式 -->
-  <link rel="stylesheet" href="https://fonts.xz.style/serve/inter.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@exampledev/new.css@1.1.2/new.min.css">
-  <link rel="stylesheet" href="/css/custom.css?v=20260716-comments-3">
+  <link rel="stylesheet" href="<%= typeof assetUrl === 'function' ? assetUrl('/vendor/inter.css') : '/vendor/inter.css' %>">
+  <link rel="stylesheet" href="<%= typeof assetUrl === 'function' ? assetUrl('/vendor/new.css/new.min.css') : '/vendor/new.css/new.min.css' %>">
+  <link rel="stylesheet" href="<%= typeof assetUrl === 'function' ? assetUrl('/css/custom.css') : '/css/custom.css' %>">
   <style>
     /* 覆盖全局 flexbox 布局 */
     body {
@@ -127,7 +126,7 @@
   </div>
   
   <footer>
-    <p>Powered by Gchigoo Minimalist Blog &copy; <%= new Date().getFullYear() %></p>
+    <p>Powered by Gchigoo Minimalist Blog &copy; <%= typeof formatYear === 'function' ? formatYear(new Date()) : new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric' }).formatToParts(new Date()).find(part => part.type === 'year').value %></p>
   </footer>
   
   <script>

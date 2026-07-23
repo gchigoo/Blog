@@ -42,6 +42,14 @@ for (const [fileName, expectedHash] of Object.entries(assets)) {
   if (actualHash !== expectedHash) {
     throw new Error(`Pinned asset ${fileName} changed: expected ${expectedHash}, got ${actualHash}`);
   }
+  if (fileName.endsWith('.woff2') || fileName === 'new.min.css') {
+    const productionPath = fileName === 'new.min.css'
+      ? path.join(root, 'public', 'vendor', 'new.css', fileName)
+      : path.join(root, 'public', 'vendor', 'fonts', fileName);
+    if (sha256(productionPath) !== expectedHash) {
+      throw new Error(`Production vendor copy differs from pinned ${fileName}.`);
+    }
+  }
 }
 
 const actualAssetPaths = fs.readdirSync(assetsDir)

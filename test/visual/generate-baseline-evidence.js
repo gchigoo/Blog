@@ -4,8 +4,8 @@ const path = require('node:path');
 const sharp = require('sharp');
 const { scenarios } = require('./scenarios');
 
-const BASELINE_EJS_VERSION = '3.1.10';
-const baselineWriteFlag = 'ALLOW_EJS3_BASELINE_WRITE';
+const BASELINE_EJS_VERSION = '6.0.1';
+const baselineWriteFlag = 'ALLOW_EJS_BASELINE_WRITE';
 
 function readInstalledEjsVersion() {
   let directory = path.dirname(require.resolve('ejs'));
@@ -120,11 +120,11 @@ function buildIndex(entries) {
   const projectLinks = projects.map(project => `<a href="#${project.id}">${escapeHtml(project.label)}</a>`).join(' · ');
   return `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>EJS 3 视觉基线证据索引</title>
+<title>EJS ${escapeHtml(installedEjsVersion)} 视觉基线证据索引</title>
 <style>
 :root{font-family:system-ui,sans-serif;color:#1f2937;background:#f8fafc}body{max-width:1800px;margin:auto;padding:24px}header{position:sticky;top:0;z-index:2;background:#fff;border:1px solid #dbe3ee;border-radius:12px;padding:16px;box-shadow:0 4px 20px #0f172a14}h1{margin:0 0 8px}h2{margin-top:40px}small{font-weight:400;color:#64748b}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px}.card{background:#fff;border:1px solid #dbe3ee;border-radius:10px;padding:12px}.card h3{font-size:1rem;margin:0 0 10px}.card img{display:block;width:100%;height:220px;object-fit:contain;object-position:top;background:#eef2f7;border:1px solid #e2e8f0}.card p,.card nav{font-size:.85rem}a{color:#0366d6}code{background:#eef2f7;padding:2px 5px;border-radius:4px}
 </style></head><body>
-<header><h1>EJS 3.1.10 基线证据</h1><p>17 份 HTML · 102 份 layout/style · 102 张 full-page PNG；6 个设备项目。所有文件由 <code>baseline-manifest.json</code> 锁定 SHA-256。</p><nav>${projectLinks}</nav></header>
+<header><h1>EJS ${escapeHtml(installedEjsVersion)} 基线证据</h1><p>${scenarios.length} 份 HTML · ${entries.length} 份 layout/style · ${entries.length} 张 full-page PNG；${projects.length} 个设备项目。所有文件由 <code>baseline-manifest.json</code> 锁定 SHA-256。</p><nav>${projectLinks}</nav></header>
 ${sections}
 </body></html>`;
 }

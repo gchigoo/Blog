@@ -173,5 +173,5 @@
 </section>
 <noscript><p class="message info">启用 JavaScript 后可在本页展开单条完整详情；筛选和分页仍可直接使用。</p></noscript>
 
-<script src="/js/admin-analytics.js?v=20260717" defer></script>
+<script src="<%= typeof assetUrl === 'function' ? assetUrl('/js/admin-analytics.js') : '/js/admin-analytics.js' %>" defer></script>
 <%- include('../partials/admin-footer') %>

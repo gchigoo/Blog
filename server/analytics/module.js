@@ -24,10 +24,10 @@ function createAnalyticsModule({
   config,
   clock = { now: () => Date.now() },
   logger = console,
-  geoResolver,
-  clientParser,
-  tokenSigner,
-  rateLimiter
+  geoResolver = null,
+  clientParser = null,
+  tokenSigner = null,
+  rateLimiter = null
 }) {
   if (!db || !config) throw new Error('analytics module requires db and config');
   initializeAnalytics(db);
@@ -105,7 +105,6 @@ function createAnalyticsModule({
       db,
       secret: config.hmacSecret,
       now: clock.now,
-      retentionDays: config.retentionDays,
       detailsEnabled: config.detailsEnabled,
       publicOrigin: config.publicOrigin,
       geoResolver: resolver,

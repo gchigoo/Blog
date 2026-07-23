@@ -2,7 +2,16 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcrypt');
 const { dbGet } = require('../db');
-const { generateToken } = require('../middleware/auth');
+const { createLoginRateLimiter } = require('../auth/login-rate-limiter');
+const { adminCookieOptions, generateToken } = require('../middleware/auth');
+
+const loginRateLimiter = createLoginRateLimiter();
+const DUMMY_PASSWORD_HASH = '$2b$10$i/He/TN.yHvkYSoJFS8NrOugV5BvbVpC6aLpgwJAsBB2NOezXx71a';
+
+router.use((req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
 
 /**
  * POST /api/auth/login
@@ -10,9 +19,16 @@ const { generateToken } = require('../middleware/auth');
  */
 router.post('/login', (req, res) => {
   try {
-    const { username, password } = req.body;
-    
-    if (!username || !password) {
+    const rateLimit = loginRateLimiter.consume(req.ip || req.socket.remoteAddress || 'unknown');
+    if (!rateLimit.allowed) {
+      res.set('Retry-After', String(rateLimit.retryAfter));
+      return res.status(429).json({ error: '登录尝试过于频繁，请稍后重试' });
+    }
+
+    const { username, password } = req.body || {};
+
+    if (typeof username !== 'string' || typeof password !== 'string'
+      || !username.trim() || !password) {
       return res.status(400).json({ error: '用户名和密码不能为空' });
     }
     
@@ -22,13 +38,9 @@ router.post('/login', (req, res) => {
       [username]
     );
     
-    if (!user) {
-      return res.status(401).json({ error: '用户名或密码错误' });
-    }
-    
-    // 验证密码（异步）
-    bcrypt.compare(password, user.password_hash, (err, isValid) => {
-      if (err || !isValid) {
+    // 即使用户名不存在也执行同等成本的 bcrypt，减少账号枚举时序差异。
+    bcrypt.compare(password, user?.password_hash || DUMMY_PASSWORD_HASH, (err, isValid) => {
+      if (err || !user || !isValid) {
         return res.status(401).json({ error: '用户名或密码错误' });
       }
       
@@ -39,11 +51,7 @@ router.post('/login', (req, res) => {
       });
       
       // 设置 Cookie
-      res.cookie('token', token, {
-        httpOnly: true,
-        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 天
-        sameSite: 'strict'
-      });
+      res.cookie('token', token, adminCookieOptions());
       
       res.json({ 
         success: true, 
@@ -62,7 +70,7 @@ router.post('/login', (req, res) => {
  * 用户登出
  */
 router.post('/logout', (req, res) => {
-  res.clearCookie('token');
+  res.clearCookie('token', adminCookieOptions(false));
   res.json({ success: true, message: '登出成功' });
 });
 
@@ -80,12 +88,12 @@ router.get('/check', (req, res) => {
   try {
     const jwt = require('jsonwebtoken');
     const config = require('../config');
-    const decoded = jwt.verify(token, config.jwtSecret);
+    const decoded = jwt.verify(token, config.jwtSecret, { algorithms: ['HS256'] });
     res.json({ 
       authenticated: true, 
       user: { id: decoded.id, username: decoded.username }
     });
-  } catch (error) {
+  } catch {
     res.json({ authenticated: false });
   }
 });

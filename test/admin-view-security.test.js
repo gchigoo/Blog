@@ -30,4 +30,7 @@ test('admin upload feedback does not inject article metadata through innerHTML',
   assert.doesNotMatch(html, /\.innerHTML\s*=/);
   assert.doesNotMatch(html, /\$\{data\.article\.title\}/);
   assert.match(html, /textContent/);
+  assert.match(html, /sandbox="allow-same-origin"/);
+  assert.doesNotMatch(html, /sandbox="[^"]*allow-scripts/);
+  assert.match(html, /previewFrame\.srcdoc/);
 });

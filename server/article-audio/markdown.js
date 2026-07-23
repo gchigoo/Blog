@@ -1,5 +1,6 @@
 const { articleAudioError } = require('./errors');
 const { AUDIO_FORMATS } = require('./formats');
+const { assetUrl } = require('../utils/presentation');
 
 const AUDIO_OPEN_MARKER = ':::audio';
 const AUDIO_CLOSE_MARKER = ':::';
@@ -117,7 +118,7 @@ function renderArticleAudio(tokens, index, _options, env, renderer) {
   const parts = [];
 
   if (!articleAudio.styleEmitted) {
-    parts.push('<link rel="stylesheet" href="/css/article-audio.css?v=1" data-article-audio-styles>');
+    parts.push(`<link rel="stylesheet" href="${assetUrl('/css/article-audio.css')}" data-article-audio-styles>`);
     articleAudio.styleEmitted = true;
   }
 

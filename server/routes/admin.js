@@ -8,8 +8,10 @@ const AdmZip = require('adm-zip');
 const { db, dbRun, dbGet, dbAll } = require('../db');
 const { authenticateToken } = require('../middleware/auth');
 const {
+  MarkdownMetadataError,
   parseMarkdownDocument,
   renderMarkdown,
+  serializeMarkdownDocument,
   extractImages,
   replaceImagePaths
 } = require('../utils/markdown');
@@ -28,6 +30,7 @@ const { articleAudioError, isArticleAudioInputError } = require('../article-audi
 const {
   deleteArticlePublication,
   publishArticle,
+  replaceArticlePublication,
   serializeArticlePublication
 } = require('../article-audio/publication');
 const config = require('../config');
@@ -45,7 +48,8 @@ const storage = multer.diskStorage({
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, uniqueSuffix + '-' + file.originalname);
+    const extension = path.extname(file.originalname).toLowerCase();
+    cb(null, `${uniqueSuffix}${extension}`);
   }
 });
 
@@ -88,6 +92,79 @@ async function cleanupTemporaryPaths(paths) {
   }
 }
 
+function findReferencedImage(imageFiles, markdownEntryName, imageReference) {
+  if (typeof imageReference !== 'string' || !imageReference) return null;
+
+  if (markdownEntryName
+    && !imageReference.includes('\\')
+    && !imageReference.includes('\0')
+    && !imageReference.includes('?')
+    && !imageReference.includes('#')
+    && !path.posix.isAbsolute(imageReference)
+    && !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(imageReference)) {
+    const resolvedName = path.posix.normalize(path.posix.join(
+      path.posix.dirname(markdownEntryName),
+      imageReference
+    ));
+    if (resolvedName !== '..' && !resolvedName.startsWith('../')) {
+      const exactMatch = imageFiles.find(image => image.originalPath === resolvedName);
+      if (exactMatch) return exactMatch;
+    }
+  }
+
+  // Preserve legacy Windows-author paths only when the basename is unambiguous.
+  if (!imageReference.includes('\\')) return null;
+  const basename = imageReference.split(/[\\/]/).pop();
+  const matches = imageFiles.filter(image => path.posix.basename(image.originalPath) === basename);
+  return matches.length === 1 ? matches[0] : null;
+}
+
+router.post('/preview', authenticateToken, receiveArticleUpload, async (req, res) => {
+  const temporaryPaths = [];
+  try {
+    if (!req.file) return res.status(400).json({ error: '请上传文件' });
+    temporaryPaths.push(req.file.path);
+    const fileExt = path.extname(req.file.originalname).toLowerCase();
+    let markdownContent;
+    if (fileExt === '.md') {
+      markdownContent = await fs.readFile(req.file.path, 'utf8');
+    } else if (fileExt === '.zip') {
+      const zip = new AdmZip(req.file.path);
+      const entries = zip.getEntries();
+      if (entries.some(entry => !isSafeZipEntryName(entry.entryName))) {
+        return res.status(400).json({ error: 'ZIP 包含不安全路径' });
+      }
+      buildArchiveEntryIndex(entries);
+      const markdownEntry = entries.find(entry => !entry.isDirectory && entry.entryName.endsWith('.md'));
+      if (!markdownEntry) return res.status(400).json({ error: 'ZIP 中未找到 Markdown 文件' });
+      markdownContent = markdownEntry.getData().toString('utf8');
+    } else {
+      return res.status(400).json({ error: '仅支持 .md 或 .zip 文件' });
+    }
+    const { data, content, audioBlocks } = parseMarkdownDocument(markdownContent);
+    const previewContent = audioBlocks.length > 0
+      ? `${content.replace(/^:::audio\s*$[\s\S]*?^:::\s*$/gm, '')}\n\n> 预览不会加载尚未发布的音频文件。`
+      : content;
+    return res.json({
+      title: data.title,
+      description: data.description,
+      status: data.status,
+      html: renderMarkdown(previewContent)
+    });
+  } catch (error) {
+    if (error instanceof MarkdownMetadataError) {
+      return res.status(400).json({ error: error.message, code: 'invalid_article_metadata' });
+    }
+    if (isArticleAudioInputError(error)) {
+      return res.status(error.status).json({ error: error.safeMessage, code: error.code });
+    }
+    console.error('[article-preview] failed');
+    return res.status(500).json({ error: '预览生成失败' });
+  } finally {
+    await cleanupTemporaryPaths(temporaryPaths);
+  }
+});
+
 function selectAvailableArticleSlug(requestedSlug) {
   if (!dbGet('SELECT id FROM articles WHERE slug = ?', [requestedSlug])) {
     return requestedSlug;
@@ -109,6 +186,7 @@ function selectAvailableArticleSlug(requestedSlug) {
 router.post('/upload', authenticateToken, receiveArticleUpload, async (req, res) => {
   const temporaryPaths = [];
   let articleSlug = null;
+  const imageWarnings = [];
   
   try {
     if (!req.file) {
@@ -163,7 +241,7 @@ router.post('/upload', authenticateToken, receiveArticleUpload, async (req, res)
         if (!entry.isDirectory && isImage(entry.entryName)) {
           const imgPath = resolveZipEntryPath(extractDir, entry.entryName);
           imageFiles.push({
-            originalPath: entry.entryName,
+            originalPath: normalizeArchiveEntryName(entry.entryName),
             fullPath: imgPath
           });
         }
@@ -201,7 +279,20 @@ router.post('/upload', authenticateToken, receiveArticleUpload, async (req, res)
       let audioAssets = emptyAudioAssets();
       let publicationStarted = false;
       try {
-        articleSlug = selectAvailableArticleSlug(data.slug);
+        let replacementArticle = null;
+        if (req.body.replaceId !== undefined && req.body.replaceId !== '') {
+          if (typeof req.body.replaceId !== 'string' || !/^\d+$/.test(req.body.replaceId)) {
+            return Promise.reject(articleAudioError(400, 'article_replace_invalid', '替换文章参数无效'));
+          }
+          replacementArticle = dbGet('SELECT id, slug FROM articles WHERE id = ?', [req.body.replaceId]);
+          if (!replacementArticle) {
+            return Promise.reject(articleAudioError(404, 'article_replace_not_found', '替换文章不存在'));
+          }
+          if (replacementArticle.slug !== data.slug) {
+            return Promise.reject(articleAudioError(400, 'article_replace_slug_mismatch', '替换文章必须保持原 slug'));
+          }
+        }
+        articleSlug = replacementArticle ? replacementArticle.slug : selectAvailableArticleSlug(data.slug);
         const publicationStage = path.join(
           config.uploadDir,
           `publish-${Date.now()}-${Math.round(Math.random() * 1E9)}`
@@ -224,11 +315,8 @@ router.post('/upload', authenticateToken, receiveArticleUpload, async (req, res)
         const extractedImages = extractImages(markdownContent);
 
         for (const imgRef of extractedImages) {
-          // 查找匹配的图片文件
-          const matchedImage = imageFiles.find(img =>
-            img.originalPath.includes(path.basename(imgRef)) ||
-            imgRef.includes(path.basename(img.originalPath))
-          );
+          // 优先按 Markdown 所在目录解析精确路径；旧 Windows 路径仅接受唯一同名文件。
+          const matchedImage = findReferencedImage(imageFiles, markdownEntryName, imgRef);
 
           if (matchedImage) {
             try {
@@ -241,6 +329,7 @@ router.post('/upload', authenticateToken, receiveArticleUpload, async (req, res)
               const webPath = `/images/${path.basename(outputPath)}`;
               imageMap[imgRef] = webPath;
             } catch {
+              imageWarnings.push(imgRef);
               console.error('[article-upload] image conversion failed');
             }
           }
@@ -254,44 +343,59 @@ router.post('/upload', authenticateToken, receiveArticleUpload, async (req, res)
         const updatedHtml = renderMarkdown(updatedContent, {
           resolvedAudioBlocks: audioAssets.resolvedBlocks
         });
-        const savedMarkdown = `---
-title: ${data.title}
-tags: ${JSON.stringify(data.tags)}
-date: ${data.date}
----
+        const savedMarkdown = serializeMarkdownDocument(updatedContent, {
+          title: data.title,
+          slug: articleSlug,
+          tags: data.tags,
+          date: data.date,
+          description: data.description,
+          status: data.status
+        });
 
-${updatedContent}`;
-
-        const insertArticle = db.transaction(() => {
-          const info = db.prepare(
-            `INSERT INTO articles (title, slug, content, html, tags, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`
-          ).run(
-            data.title,
-            articleSlug,
-            updatedContent,
-            updatedHtml,
-            JSON.stringify(data.tags),
-            data.date,
-            new Date().toISOString()
+        const commitArticle = db.transaction(() => {
+          if (replacementArticle) {
+            const info = db.prepare(`
+              UPDATE articles
+              SET title = ?, content = ?, html = ?, tags = ?, description = ?, status = ?, updated_at = ?
+              WHERE id = ?
+            `).run(
+              data.title, updatedContent, updatedHtml, JSON.stringify(data.tags),
+              data.description || null, data.status, new Date().toISOString(), replacementArticle.id
+            );
+            return { id: replacementArticle.id, changes: info.changes };
+          }
+          const info = db.prepare(`
+            INSERT INTO articles
+              (title, slug, content, html, tags, description, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            data.title, articleSlug, updatedContent, updatedHtml, JSON.stringify(data.tags),
+            data.description || null, data.status, data.date, new Date().toISOString()
           );
           return { id: info.lastInsertRowid, changes: info.changes };
         });
 
         publicationStarted = true;
-        const result = await publishArticle({
+        const publicationOptions = {
           articleSlug,
           markdown: savedMarkdown,
           stagingRoot: publicationStage,
           articlesRoot: config.articlesDir,
           audioAssets,
-          commitDatabase: insertArticle
-        });
+          commitDatabase: commitArticle
+        };
+        const result = replacementArticle
+          ? await replaceArticlePublication({
+            ...publicationOptions,
+            publicAudioRoot: config.audioDir
+          })
+          : await publishArticle(publicationOptions);
         return {
           id: result.id,
           slug: articleSlug,
           imagesConverted: Object.keys(imageMap).length,
-          audioPublished: audioAssets.publishedCount
+          audioPublished: audioAssets.publishedCount,
+          replaced: Boolean(replacementArticle)
         };
       } catch (error) {
         if (!publicationStarted) {
@@ -318,10 +422,20 @@ ${updatedContent}`;
         slug: publication.slug,
         tags: data.tags,
         imagesConverted: publication.imagesConverted,
-        audioPublished: publication.audioPublished
+        audioPublished: publication.audioPublished,
+        status: data.status,
+        replaced: publication.replaced,
+        imageWarnings
       }
     });
   } catch (error) {
+    if (error instanceof MarkdownMetadataError) {
+      return res.status(400).json({
+        error: error.message,
+        code: 'invalid_article_metadata'
+      });
+    }
+
     if (isArticleAudioInputError(error)) {
       if (error.status >= 500) {
         console.error(
@@ -348,8 +462,8 @@ ${updatedContent}`;
 router.get('/articles', authenticateToken, (req, res) => {
   try {
     const articles = dbAll(
-      `SELECT id, title, slug, tags, created_at, updated_at 
-       FROM articles 
+      `SELECT id, title, slug, description, status, tags, created_at, updated_at
+       FROM articles
        ORDER BY created_at DESC`
     );
     

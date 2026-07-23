@@ -18,7 +18,7 @@ function datasetEpochFromMetadata(metadata) {
   return Math.floor(buildDate.getTime() / 1000);
 }
 
-async function verifyGeoIpDatabase(databasePath, { openBuffer } = {}) {
+async function verifyGeoIpDatabase(databasePath, { openBuffer = null } = {}) {
   const stat = await fs.lstat(databasePath);
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size <= 0 || stat.size > MAX_DATABASE_BYTES) {
     throw new Error('invalid_database_file');

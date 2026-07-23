@@ -47,7 +47,7 @@ async function stopChild(child) {
 async function createProjectFixture(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'blog-security-'));
 
-  for (const directory of ['server', 'scripts', 'views', 'public']) {
+  for (const directory of ['server', 'scripts', 'views', 'public', 'content']) {
     await fs.cp(
       path.join(REPO_ROOT, directory),
       path.join(root, directory),

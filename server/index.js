@@ -5,40 +5,72 @@ const config = require('./config').loadRuntimeConfig(process.env);
 
 const { createAnalyticsModule } = require('./analytics/module');
 const { AUDIO_FORMATS } = require('./article-audio/formats');
-const { db, dbGet, dbAll } = require('./db');
+const { db } = require('./db');
+const { createPagesRouter } = require('./routes/pages');
+const { createArticleService } = require('./services/articles');
+const { assetUrl, formatDate, formatYear } = require('./utils/presentation');
+const { validateRuntimePaths } = require('./utils/runtime-paths');
+
+validateRuntimePaths(config);
 
 const app = express();
 app.set('trust proxy', 'loopback');
+app.disable('x-powered-by');
+app.set('view engine', 'ejs');
+app.set('views', path.join(__dirname, '..', 'views'));
 app.locals.commentsEnabled = config.comments.enabled;
 app.locals.analyticsDetailsEnabled = config.analytics.detailsEnabled;
+app.locals.assetUrl = assetUrl;
+app.locals.formatDate = formatDate;
+app.locals.formatYear = formatYear;
+app.locals.site = config.site;
+
+const articleService = createArticleService(db);
 const analyticsModule = createAnalyticsModule({ db, config: config.analytics });
 const articleAudioPath = new RegExp(
   `^/[a-z0-9]+(?:-[a-z0-9]+)*/[a-f0-9]{64}(${Object.keys(AUDIO_FORMATS)
     .map(extension => extension.replace('.', '\\.'))
     .join('|')})$`
 );
-const articleAudioStatic = express.static(
-  path.resolve(__dirname, '..', config.audioDir),
-  {
-    setHeaders(res, filePath) {
-      const format = AUDIO_FORMATS[path.extname(filePath)];
-      if (format) res.setHeader('Content-Type', format.mimeType);
-    }
+const articleAudioStatic = express.static(path.resolve(__dirname, '..', config.audioDir), {
+  setHeaders(res, filePath) {
+    const format = AUDIO_FORMATS[path.extname(filePath)];
+    if (format) res.setHeader('Content-Type', format.mimeType);
   }
-);
+});
 
-// 中间件
+app.use((req, res, next) => {
+  res.set({
+    'Content-Security-Policy': [
+      "default-src 'self'",
+      "base-uri 'self'",
+      "connect-src 'self'",
+      "font-src 'self' data:",
+      "form-action 'self'",
+      "frame-ancestors 'none'",
+      "img-src 'self' data:",
+      "media-src 'self'",
+      "object-src 'none'",
+      "script-src 'self' 'unsafe-inline'",
+      "style-src 'self' 'unsafe-inline'"
+    ].join('; '),
+    'Permissions-Policy': 'camera=(), geolocation=(), microphone=()',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY'
+  });
+  if (config.isProduction) {
+    res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+  next();
+});
 app.use(analyticsModule.publicContextRouter);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-// 视图引擎
-app.set('view engine', 'ejs');
-app.set('views', path.join(__dirname, '..', 'views'));
-
 let commentsModule = null;
-if (config.comments.enabled) {
+if (config.comments.enabled && 'googleClientId' in config.comments) {
   const { createGoogleIdentityClient } = require('./comments/google-identity');
   const { createCommentsModule } = require('./comments/module');
   const identityClient = createGoogleIdentityClient({
@@ -46,24 +78,18 @@ if (config.comments.enabled) {
     clientSecret: config.comments.googleClientSecret,
     redirectUri: config.comments.googleRedirectUri
   });
-  commentsModule = createCommentsModule({
-    db,
-    config: config.comments,
-    identityClient
-  });
+  commentsModule = createCommentsModule({ db, config: config.comments, identityClient });
   app.use(commentsModule.commenterSession);
   app.use(commentsModule.authRouter);
   app.use(commentsModule.publicRouter);
   app.use(commentsModule.adminRouter);
 }
 
-// API 路由
 app.use('/api/auth', require('./routes/auth'));
-app.use('/api/articles', require('./routes/articles'));
+app.use('/api/articles', require('./routes/articles').createArticlesRouter({ articleService }));
 app.use('/api/admin/analytics', analyticsModule.adminApiRouter);
 app.use('/api/admin', require('./routes/admin'));
 
-// 公开页面采集必须位于 API 之后、公开页面与静态资源之前。
 app.use(analyticsModule.collectorMiddleware);
 app.use('/audio', (req, res, next) => {
   const match = articleAudioPath.exec(req.path);
@@ -75,233 +101,32 @@ app.use('/audio', (req, res, next) => {
 });
 app.use(express.static(path.join(__dirname, '..', 'public')));
 app.use(analyticsModule.adminPageRouter);
+app.use(createPagesRouter({ config, articleService, commentsModule }));
 
-// 前台页面路由
-const { optionalAuth } = require('./middleware/auth');
-
-// 首页 - 文章列表
-app.get('/', optionalAuth, (req, res) => {
-  try {
-    const page = parseInt(req.query.page) || 1;
-    const pageSize = 20;
-    const offset = (page - 1) * pageSize;
-    
-    const articles = dbAll(
-      `SELECT id, title, slug, tags, created_at 
-       FROM articles 
-       ORDER BY created_at DESC 
-       LIMIT ? OFFSET ?`,
-      [pageSize, offset]
-    );
-    
-    const { total } = dbGet('SELECT COUNT(*) as total FROM articles') || { total: 0 };
-    
-    const articlesWithTags = articles.map(article => ({
-      ...article,
-      tags: article.tags ? JSON.parse(article.tags) : []
-    }));
-    
-    res.render('index', {
-      articles: articlesWithTags,
-      page,
-      totalPages: Math.ceil(total / pageSize),
-      user: req.user
-    });
-  } catch (error) {
-    console.error('渲染首页失败:', error);
-    res.status(500).send('服务器错误');
-  }
-});
-
-// 文章详情页
-app.get('/article/:slug', optionalAuth, (req, res) => {
-  try {
-    const { slug } = req.params;
-    
-    const article = dbGet(
-      'SELECT * FROM articles WHERE slug = ?',
-      [slug]
-    );
-    
-    if (!article) {
-      return res.status(404).render('404', { user: req.user });
-    }
-    
-    article.tags = article.tags ? JSON.parse(article.tags) : [];
-    
-    const comments = commentsModule
-      ? commentsModule.getArticleCommentsViewModel(article.id, {
-        commenter: req.commenter,
-        csrfToken: req.commentSession?.csrfToken || null
-      })
-      : { enabled: false };
-
-    res.render('article', { article, user: req.user, comments });
-  } catch (error) {
-    console.error('渲染文章详情失败:', error);
-    res.status(500).send('服务器错误');
-  }
-});
-
-// 归档页面
-app.get('/archive', optionalAuth, (req, res) => {
-  try {
-    const articles = dbAll(
-      `SELECT id, title, slug, created_at 
-       FROM articles 
-       ORDER BY created_at DESC`
-    );
-    
-    // 按年月分组
-    const archive = {};
-    articles.forEach(article => {
-      const date = new Date(article.created_at);
-      const year = date.getFullYear();
-      const month = date.getMonth() + 1;
-      
-      if (!archive[year]) {
-        archive[year] = {};
-      }
-      
-      if (!archive[year][month]) {
-        archive[year][month] = [];
-      }
-      
-      archive[year][month].push(article);
-    });
-    
-    res.render('archive', { archive, user: req.user });
-  } catch (error) {
-    console.error('渲染归档页面失败:', error);
-    res.status(500).send('服务器错误');
-  }
-});
-
-// 标签列表页
-app.get('/tags', optionalAuth, (req, res) => {
-  try {
-    const articles = dbAll('SELECT tags FROM articles');
-    
-    // 统计标签
-    const tagCount = {};
-    articles.forEach(article => {
-      if (article.tags) {
-        const tags = JSON.parse(article.tags);
-        tags.forEach(tag => {
-          tagCount[tag] = (tagCount[tag] || 0) + 1;
-        });
-      }
-    });
-    
-    // 转换为数组并排序
-    const tags = Object.entries(tagCount)
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count);
-    
-    res.render('tags', { tags, user: req.user });
-  } catch (error) {
-    console.error('渲染标签页面失败:', error);
-    res.status(500).send('服务器错误');
-  }
-});
-
-// 标签文章列表
-app.get('/tag/:tag', optionalAuth, (req, res) => {
-  try {
-    const { tag } = req.params;
-    
-    const allArticles = dbAll(
-      'SELECT id, title, slug, tags, created_at FROM articles ORDER BY created_at DESC'
-    );
-    
-    const articles = allArticles
-      .map(article => ({
-        ...article,
-        tags: article.tags ? JSON.parse(article.tags) : []
-      }))
-      .filter(article => article.tags.includes(tag));
-    
-    res.render('tag', { tag, articles, user: req.user });
-  } catch (error) {
-    console.error('渲染标签文章列表失败:', error);
-    res.status(500).send('服务器错误');
-  }
-});
-
-// 关于页面
-app.get('/about', optionalAuth, (req, res) => {
-  try {
-    res.render('about', { user: req.user });
-  } catch (error) {
-    console.error('渲染关于页面失败:', error);
-    res.status(500).send('服务器错误');
-  }
-});
-
-// 后台登录页
-app.get('/admin/login', (req, res) => {
-  res.render('admin/login');
-});
-
-// 后台管理页
-const { authenticateToken } = require('./middleware/auth');
-
-app.get('/admin', (req, res) => {
-  // 检查是否已登录
-  const token = req.cookies.token;
-  if (!token) {
-    return res.redirect('/admin/login');
-  }
-  
-  try {
-    const jwt = require('jsonwebtoken');
-    const config = require('./config');
-    jwt.verify(token, config.jwtSecret);
-    res.redirect('/admin/upload');
-  } catch (error) {
-    res.redirect('/admin/login');
-  }
-});
-
-app.get('/admin/upload', authenticateToken, (req, res) => {
-  res.render('admin/upload', { user: req.user });
-});
-
-app.get('/admin/articles', authenticateToken, (req, res) => {
-  try {
-    const articles = dbAll(
-      `SELECT id, title, slug, tags, created_at, updated_at 
-       FROM articles 
-       ORDER BY created_at DESC`
-    );
-    
-    const articlesWithTags = articles.map(article => ({
-      ...article,
-      tags: article.tags ? JSON.parse(article.tags) : []
-    }));
-    
-    res.render('admin/articles', { articles: articlesWithTags, user: req.user });
-  } catch (error) {
-    console.error('渲染后台文章列表失败:', error);
-    res.status(500).send('服务器错误');
-  }
-});
-
-// 404 页面
 app.use((req, res) => {
-  res.status(404).render('404', { user: req.user || null });
+  if (req.originalUrl.startsWith('/api/')) return res.status(404).json({ error: '接口不存在' });
+  return res.status(404).render('404', { user: req.user || null, seo: null });
 });
 
-// 启动服务器
+app.use((error, req, res, next) => {
+  if (res.headersSent) return next(error);
+  const status = Number.isInteger(error.status) && error.status >= 400 && error.status <= 599
+    ? error.status
+    : error.type === 'entity.parse.failed' ? 400 : 500;
+  if (status >= 500) console.error(`[request-error] ${req.method} ${req.originalUrl}:`, error);
+  if (req.originalUrl.startsWith('/api/')) {
+    return res.status(status).json({ error: status >= 500 ? '服务器错误' : '请求无效' });
+  }
+  return res.status(status).type('text/plain').send(status >= 500 ? '服务器错误' : '请求无效');
+});
+
 let server = null;
 let stopping = false;
 
 async function stop() {
   if (stopping) return;
   stopping = true;
-  if (server) {
-    await new Promise(resolve => server.close(resolve));
-  }
+  if (server) await new Promise(resolve => server.close(resolve));
   analyticsModule.lifecycle.stop();
   db.close();
 }
@@ -315,13 +140,11 @@ async function start() {
 }
 
 for (const signal of ['SIGTERM', 'SIGINT']) {
-  process.once(signal, () => {
-    stop().finally(() => process.exit(0));
-  });
+  process.once(signal, () => stop().finally(() => process.exit(0)));
 }
 
 start().catch(error => {
-  console.error(`[analytics] startup failed: ${error.message}`);
+  console.error(`[startup] ${error.message}`);
   analyticsModule.lifecycle.stop();
   db.close();
   process.exitCode = 1;

@@ -1,7 +1,7 @@
   </main>
   
   <footer>
-    <p>Powered by Gchigoo Minimalist Blog &copy; <%= new Date().getFullYear() %></p>
+    <p>Powered by Gchigoo Minimalist Blog &copy; <%= typeof formatYear === 'function' ? formatYear(new Date()) : new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric' }).formatToParts(new Date()).find(part => part.type === 'year').value %></p>
   </footer>
 </body>
 </html>

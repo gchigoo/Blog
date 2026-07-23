@@ -6,6 +6,7 @@ const test = require('node:test');
 const {
   deleteArticlePublication,
   publishArticle,
+  replaceArticlePublication,
   serializeArticlePublication
 } = require('../server/article-audio/publication');
 
@@ -57,6 +58,61 @@ test('publishes staged Markdown and audio before committing SQLite last', async 
     '# Example'
   );
   assert.equal(await fs.readFile(path.join(fixture.audioDirectory, 'track.mp3'), 'utf8'), 'audio');
+});
+
+test('explicit replacement swaps files and preserves the database identity contract', async t => {
+  const fixture = await createFixture(t);
+  const events = [];
+  await fs.mkdir(fixture.articlesRoot, { recursive: true });
+  await fs.mkdir(fixture.audioDirectory, { recursive: true });
+  await fs.writeFile(path.join(fixture.articlesRoot, 'example-song.md'), '# Old');
+  await fs.writeFile(path.join(fixture.audioDirectory, 'old.mp3'), 'old-audio');
+
+  const result = await replaceArticlePublication({
+    articleSlug: 'example-song',
+    markdown: '# New',
+    stagingRoot: fixture.stagingRoot,
+    articlesRoot: fixture.articlesRoot,
+    publicAudioRoot: path.join(fixture.root, 'public', 'audio'),
+    audioAssets: createAudioAssets(fixture.audioDirectory, events),
+    commitDatabase() {
+      events.push('database-update');
+      return { id: 7, changes: 1 };
+    },
+    replacementId: 'replacement-success'
+  });
+
+  assert.equal(result.id, 7);
+  assert.deepEqual(events, ['audio-promote', 'database-update']);
+  assert.equal(await fs.readFile(path.join(fixture.articlesRoot, 'example-song.md'), 'utf8'), '# New');
+  assert.equal(await fs.readFile(path.join(fixture.audioDirectory, 'track.mp3'), 'utf8'), 'audio');
+  assert.deepEqual((await fs.readdir(fixture.articlesRoot)).filter(name => name.startsWith('.replacing-')), []);
+});
+
+test('replacement restores old Markdown and audio when the database update fails', async t => {
+  const fixture = await createFixture(t);
+  const events = [];
+  await fs.mkdir(fixture.articlesRoot, { recursive: true });
+  await fs.mkdir(fixture.audioDirectory, { recursive: true });
+  await fs.writeFile(path.join(fixture.articlesRoot, 'example-song.md'), '# Old');
+  await fs.writeFile(path.join(fixture.audioDirectory, 'old.mp3'), 'old-audio');
+
+  await assert.rejects(replaceArticlePublication({
+    articleSlug: 'example-song',
+    markdown: '# New',
+    stagingRoot: fixture.stagingRoot,
+    articlesRoot: fixture.articlesRoot,
+    publicAudioRoot: path.join(fixture.root, 'public', 'audio'),
+    audioAssets: createAudioAssets(fixture.audioDirectory, events),
+    commitDatabase() {
+      throw new Error('injected database failure');
+    },
+    replacementId: 'replacement-rollback'
+  }), error => error.code === 'audio_publish_failed');
+
+  assert.deepEqual(events, ['audio-promote', 'audio-rollback']);
+  assert.equal(await fs.readFile(path.join(fixture.articlesRoot, 'example-song.md'), 'utf8'), '# Old');
+  assert.equal(await fs.readFile(path.join(fixture.audioDirectory, 'old.mp3'), 'utf8'), 'old-audio');
 });
 
 test('rolls back Markdown and audio when audio promotion fails', async t => {

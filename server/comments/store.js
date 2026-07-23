@@ -79,7 +79,10 @@ function createCommentStore(db, {
       ON comments(status, created_at);
   `);
 
-  const findArticle = db.prepare('SELECT id FROM articles WHERE id = ?');
+  const articleColumns = new Set(db.prepare('PRAGMA table_info(articles)').all().map(column => column.name));
+  const findArticle = db.prepare(articleColumns.has('status')
+    ? "SELECT id FROM articles WHERE id = ? AND status = 'published'"
+    : 'SELECT id FROM articles WHERE id = ?');
   const deleteExpiredOAuthContexts = db.prepare(`
     DELETE FROM comment_oauth_contexts
     WHERE expires_at <= ?

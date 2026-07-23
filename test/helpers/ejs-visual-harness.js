@@ -24,6 +24,7 @@ const { parseCommentsConfig } = require('../../server/comments/config');
 const { createCommentsModule } = require('../../server/comments/module');
 const { createTokenService, sessionCookieOptions } = require('../../server/comments/security');
 const { renderMarkdown } = require('../../server/utils/markdown');
+const { assetUrl, formatDate, formatYear } = require('../../server/utils/presentation');
 
 const PORT = Number(process.env.BROWSER_HARNESS_PORT || 4173);
 const SESSION_SECRET = 'ejs-visual-session-secret-0123456789abcdef';
@@ -201,13 +202,6 @@ function renderHome(res, user) {
   });
 }
 
-const emptyDimension = Object.freeze({
-  items: [],
-  distinctCount: 0,
-  truncated: false,
-  otherPageViews: 0
-});
-
 function dimension(items) {
   return {
     items,
@@ -305,6 +299,10 @@ const app = express();
 app.set('trust proxy', 'loopback');
 app.set('view engine', 'ejs');
 app.set('views', path.resolve(__dirname, '..', '..', 'views'));
+app.locals.assetUrl = assetUrl;
+app.locals.formatDate = formatDate;
+app.locals.formatYear = formatYear;
+app.locals.site = { title: '我的博客', description: '视觉回归测试博客' };
 app.locals.commentsEnabled = true;
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -427,7 +425,17 @@ app.get('/tag/upgrade', (req, res) => res.render('tag', {
   articles: allArticles().filter(article => article.tags.includes('upgrade')),
   user: null
 }));
-app.get('/about', (req, res) => res.render('about', { user: null }));
+app.get('/search', (req, res) => res.render('search', {
+  query: 'EJS',
+  articles: allArticles().slice(0, 2),
+  user: null,
+  seo: { title: '搜索', description: '搜索文章', canonical: 'https://example.test/search', type: 'website', noindex: true }
+}));
+app.get('/about', (req, res) => res.render('about', {
+  aboutHtml: renderMarkdown('# 关于我\n\n这是可配置的 Markdown 关于页面。'),
+  user: null,
+  seo: { title: '关于', description: '关于本站', canonical: 'https://example.test/about', type: 'website' }
+}));
 app.get('/admin/login', (req, res) => res.render('admin/login'));
 app.get('/admin/upload', (req, res) => res.render('admin/upload', {
   user: { id: 1, username: 'visual-admin' }

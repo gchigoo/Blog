@@ -47,7 +47,7 @@ function cleanupMetrics(db, now = Date.now(), retentionDays = RETENTION_DAYS) {
 }
 
 function getOverview(db, now = Date.now(), days = 7, retentionDays = RETENTION_DAYS, geoData = null) {
-  const rangeDays = Math.min(Math.max(Number.parseInt(days, 10) || 7, 1), retentionDays);
+  const rangeDays = Math.min(Math.max(Number.parseInt(String(days), 10) || 7, 1), retentionDays);
   const cacheKey = `${Math.floor(now / 15_000)}:${rangeDays}:${retentionDays}`;
   const cached = getCachedOverview(db, cacheKey);
   if (cached) return { ...cached, geoData };

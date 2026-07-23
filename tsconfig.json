@@ -4,12 +4,15 @@
     "checkJs": true,
     "noEmit": true,
     "target": "ES2022",
-    "module": "Node16",
-    "moduleResolution": "Node16",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
     "skipLibCheck": true
   },
-  "files": [
-    "server/analytics/adapters/client-parser.js",
-    "server/analytics/query/analytics-query.js"
+  "include": [
+    "server/**/*.js",
+    "scripts/**/*.js"
+  ],
+  "exclude": [
+    "node_modules"
   ]
 }

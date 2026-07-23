@@ -123,7 +123,7 @@ function createGeoResolver({
   logger = console,
   scheduler = { setInterval, clearInterval },
   fileSystem = fs,
-  openBuffer
+  openBuffer = null
 }) {
   let current = null;
   let updater = statusFallback('missing');

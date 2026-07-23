@@ -6,6 +6,7 @@
 
 const Database = require('better-sqlite3');
 const path = require('path');
+const { formatDate } = require('../server/utils/presentation');
 
 const dbPath = path.join(__dirname, '../blog.db');
 const db = new Database(dbPath, { readonly: true });
@@ -32,8 +33,8 @@ try {
   console.log(`📝 文章总数: ${stats.total || 0}`);
   console.log(`👤 用户数量: ${userCount.count || 0}`);
   if (stats.total > 0) {
-    console.log(`📅 最早发布: ${new Date(stats.first).toLocaleString('zh-CN')}`);
-    console.log(`📅 最新发布: ${new Date(stats.last).toLocaleString('zh-CN')}`);
+    console.log(`📅 最早发布: ${formatDate(stats.first, { dateStyle: 'medium', timeStyle: 'medium' })}`);
+    console.log(`📅 最新发布: ${formatDate(stats.last, { dateStyle: 'medium', timeStyle: 'medium' })}`);
   }
   
   // 2. 所有文章列表
@@ -59,11 +60,11 @@ try {
         if (tags.length > 0) {
           console.log(`   标签: ${tags.join(', ')}`);
         }
-      } catch (e) {
+      } catch {
         console.log(`   标签: ${article.tags}`);
       }
       
-      console.log(`   时间: ${new Date(article.created_at).toLocaleString('zh-CN')}`);
+      console.log(`   时间: ${formatDate(article.created_at, { dateStyle: 'medium', timeStyle: 'medium' })}`);
     });
   }
   
@@ -78,7 +79,7 @@ try {
       tags.forEach(tag => {
         allTags[tag] = (allTags[tag] || 0) + 1;
       });
-    } catch (e) {
+    } catch {
       // 忽略解析错误
     }
   });
@@ -105,7 +106,7 @@ try {
   `).all();
   
   users.forEach(user => {
-    console.log(`   ${user.id}. ${user.username} (创建于 ${new Date(user.created_at).toLocaleString('zh-CN')})`);
+    console.log(`   ${user.id}. ${user.username} (创建于 ${formatDate(user.created_at, { dateStyle: 'medium', timeStyle: 'medium' })})`);
   });
   
   console.log('\n');

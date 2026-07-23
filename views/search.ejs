@@ -1,0 +1,28 @@
+<%- include('partials/header', { title: '搜索', user, seo }) %>
+
+<h2>搜索文章</h2>
+<form class="site-search-form" method="get" action="/search" role="search">
+  <label for="site-search-query">关键词</label>
+  <div class="site-search-controls">
+    <input id="site-search-query" name="q" type="search" maxlength="100" value="<%= query %>" required>
+    <button type="submit">搜索</button>
+  </div>
+</form>
+
+<% if (query) { %>
+  <p>“<strong><%= query %></strong>”共有 <strong><%= articles.length %></strong> 条结果。</p>
+  <% if (articles.length === 0) { %>
+    <p class="analytics-empty">没有找到相关文章。</p>
+  <% } else { %>
+    <ul class="article-list">
+      <% articles.forEach(article => { %>
+        <li>
+          <a href="/article/<%= article.slug %>"><%= article.title %></a>
+          <% if (article.description) { %><p><%= article.description %></p><% } %>
+        </li>
+      <% }) %>
+    </ul>
+  <% } %>
+<% } %>
+
+<%- include('partials/footer') %>

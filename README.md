@@ -7,13 +7,15 @@
 - 📝 Markdown 写作，支持 Front Matter 元数据
 - 🖼️ 自动图片转 WebP，减少 25-35% 体积
 - 🎵 随文章发布 MP3、AAC/M4A 或 FLAC，在正文指定位置显示原生音频作品卡片
-- 🏷️ 标签分类 + 按月归档
+- 🏷️ 标签分类 + 按月归档 + SQLite FTS5 全文搜索
+- ✍️ 草稿、服务端预览与按原 slug 安全替换发布
+- 📡 RSS、sitemap、SEO/Open Graph、上下篇与相关文章
 - 🔐 JWT 认证，安全后台管理
 - 💬 Google 登录评论，管理员审核后公开
-- 🎨 极简 new.css 风格，响应式布局
+- 🎨 自托管 Inter/new.css，响应式布局与代码高亮
 - 💾 SQLite 轻量存储，单文件数据库
 - 📊 可选的逐次访问明细、原始 IP、GeoLite2 City 地区与完整浏览器/设备上下文
-- ⚡ Express 5 + 16 个生产依赖，简洁高效
+- ⚡ Express 5 + 17 个生产依赖，简洁高效
 
 ## 🚀 快速开始（3 步）
 
@@ -27,8 +29,10 @@ export INITIAL_ADMIN_PASSWORD
 npm run init-db
 unset INITIAL_ADMIN_PASSWORD
 
-# 3. 启动服务器
+# 3. 启动服务器（生产环境请把两个密钥持久化到 secret manager）
+export JWT_SECRET="$(node -p "require('node:crypto').randomBytes(32).toString('base64url')")"
 export ANALYTICS_HMAC_SECRET="$(node -p "require('node:crypto').randomBytes(32).toString('base64url')")"
+export BLOG_PUBLIC_ORIGIN='http://localhost:3000'
 npm start
 ```
 
@@ -46,13 +50,16 @@ npm start
 2. 支持两种方式：
    - **单个 .md 文件**：纯文本文章
    - **ZIP 压缩包**：包含 Markdown + 图片，也可包含文章引用的音频文件
+3. 可先点“预览”；从文章列表进入“替换”时会保持原 slug、文章 ID 和评论关系
 
 ### 文章格式
 
 ```markdown
 ---
 title: 我的第一篇文章
+description: 用于搜索结果和 SEO 的一句话摘要
 tags: [技术, 教程]
+status: published # draft 不会进入公开页面、API、搜索、RSS 或 sitemap
 date: 2026-01-16
 ---
 
@@ -112,7 +119,9 @@ caption: 最终混音版
 - 📄 首页：最新文章列表
 - 🏷️ 标签：按标签筛选
 - 📅 归档：按月份归档
-- ℹ️ 关于：个人信息
+- 🔎 搜索：SQLite FTS5 全文检索
+- 📡 RSS / sitemap / robots：订阅与搜索引擎发现
+- ℹ️ 关于：内容来自 `content/about.md`，无需修改模板
 - 💬 评论：Google 登录后提交，后台批准、拒绝或删除
 - 📊 访问统计：管理员查看聚合趋势；启用明细后可筛选每次访问并查看原始 IP、地区、浏览器版本和设备上下文
 
@@ -141,7 +150,9 @@ Google Cloud 中的 OAuth client 类型必须是 **Web application**，Authorize
 ```
 blog/
 ├── server/           # 后端代码
-│   ├── routes/       # 路由 (首页/文章/后台)
+│   ├── routes/       # API、SSR 页面与后台路由
+│   ├── services/     # 文章查询与发现服务
+│   ├── migrations.js # 版本化、可重复执行的数据库迁移
 │   ├── comments/     # Google 身份、评论会话、存储与审核
 │   ├── analytics/    # 聚合/明细采集、查询、GeoIP 与设备上下文
 │   ├── utils/        # 工具 (Markdown/图片处理)
@@ -149,7 +160,8 @@ blog/
 ├── deploy/           # Nginx 与 systemd 生产配置
 ├── scripts/          # 运维、备份与 GeoIP 校验/更新脚本
 ├── views/            # EJS 模板
-├── public/           # 静态资源 (CSS/图片)
+├── public/           # 自托管 CSS、字体、脚本与图片
+├── content/          # 可配置页面内容
 ├── articles/         # Markdown 原文
 └── blog.db           # SQLite 数据库
 ```
@@ -165,6 +177,14 @@ read -rsp 'Initial admin password: ' INITIAL_ADMIN_PASSWORD; echo
 export INITIAL_ADMIN_PASSWORD
 npm run init-db
 unset INITIAL_ADMIN_PASSWORD
+
+# 对已有数据库显式执行幂等迁移
+npm run migrate-db
+
+# 质量门禁
+npm run typecheck
+npm run lint
+npm test
 ```
 
 ## 🌐 生产部署
@@ -188,6 +208,7 @@ unset INITIAL_ADMIN_PASSWORD
 | google-auth-library 10.9 | Google OAuth code exchange 与 ID token 验证 |
 | @maxmind/geoip2-node 7.1 | 本地 GeoLite2 City 查询 |
 | bowser 2.14 | 浏览器、系统与设备解析 |
+| highlight.js 11.11 | 服务端代码高亮 |
 
 完整清单：[依赖说明](./DEPLOY.md#依赖说明)
 

@@ -4,10 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title><%= typeof title !== 'undefined' ? title + ' - ' : '' %>后台管理</title>
-  <!-- new.css 官方推荐的引入方式 -->
-  <link rel="stylesheet" href="https://fonts.xz.style/serve/inter.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@exampledev/new.css@1.1.2/new.min.css">
-  <link rel="stylesheet" href="/css/custom.css?v=20260717-analytics-1">
+  <link rel="stylesheet" href="<%= typeof assetUrl === 'function' ? assetUrl('/vendor/inter.css') : '/vendor/inter.css' %>">
+  <link rel="stylesheet" href="<%= typeof assetUrl === 'function' ? assetUrl('/vendor/new.css/new.min.css') : '/vendor/new.css/new.min.css' %>">
+  <link rel="stylesheet" href="<%= typeof assetUrl === 'function' ? assetUrl('/css/custom.css') : '/css/custom.css' %>">
 </head>
 <body>
   <header>

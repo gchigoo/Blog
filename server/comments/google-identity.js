@@ -44,7 +44,7 @@ function classifyIdentityVerificationError(error) {
     : 'identity_invalid';
 }
 
-function createGoogleIdentityClient({ clientId, clientSecret, redirectUri, oauthClient }) {
+function createGoogleIdentityClient({ clientId, clientSecret, redirectUri, oauthClient = null }) {
   const client = oauthClient || new OAuth2Client(clientId, clientSecret, redirectUri);
 
   return Object.freeze({

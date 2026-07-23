@@ -1,5 +1,5 @@
 const express = require('express');
-const { authenticateToken } = require('../middleware/auth');
+const { authenticatePage, authenticateToken } = require('../middleware/auth');
 const { GoogleIdentityError } = require('./google-identity');
 const { CommentStoreError, createCommentStore } = require('./store');
 const {
@@ -130,7 +130,7 @@ function createCommentsModule({ db, config, identityClient, clock = { now: () =>
   authRouter.get('/auth/google/callback', async (req, res) => {
     clearOAuthCookie(res);
 
-    let errorCode = null;
+    let errorCode;
     try {
       const state = typeof req.query.state === 'string' ? req.query.state : '';
       const contextToken = req.cookies?.[OAUTH_COOKIE];
@@ -250,7 +250,7 @@ function createCommentsModule({ db, config, identityClient, clock = { now: () =>
     }
   });
 
-  adminRouter.get('/admin/comments', authenticateToken, (req, res) => {
+  adminRouter.get('/admin/comments', authenticatePage, (req, res) => {
     const status = typeof req.query.status === 'string' ? req.query.status : 'pending';
     try {
       return res.render('admin/comments', {

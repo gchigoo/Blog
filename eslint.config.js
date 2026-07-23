@@ -30,5 +30,14 @@ module.exports = [
       sourceType: 'script',
       globals: globals.browser
     }
+  },
+  {
+    files: ['test/visual/**/*.js'],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+        ...globals.browser
+      }
+    }
   }
 ];
