@@ -249,8 +249,13 @@ test('admin retained-detail API and SSR are unavailable when details collection 
   const page = await fetch(`${baseUrl}/admin/analytics`, { headers: { cookie: adminCookie } });
   const html = await page.text();
   assert.equal(page.status, 200);
+  assert.match(html, /今日活跃访客/);
+  assert.match(html, /独立 IP/);
+  assert.match(html, /真人访问量/);
+  assert.match(html, /爬虫访问量/);
+  assert.match(html, /未启用访问明细/);
   assert.doesNotMatch(html, /203\.0\.113|127\.0\.0\.1|::1/);
-  assert.doesNotMatch(html, /analytics-filter-form|analytics-detail-panel|admin-analytics\.js/);
+  assert.doesNotMatch(html, /analytics-event-table|analytics-event-cards|analytics-filter-form|analytics-detail-panel|admin-analytics\.js/);
 });
 
 test('admin page hides ranges beyond retention and includes the configured retention range', async t => {
@@ -320,7 +325,16 @@ test('browser collector retries only 425 on immediate/1/2/4/8 second attempts', 
 test('admin analytics view renders readable paths and hostile detail values as text-only UI', async () => {
   const emptyDimension = { items: [], distinctCount: 0, truncated: false, otherPageViews: 0 };
   const overview = {
-    days: 7, pageViews: 1, anonymousVisitors: 1, detailCoverage: { pageViews: 1 },
+    days: 7,
+    todayActiveVisitors: 1,
+    uniqueHumanIps: 1,
+    humanPageViews: 1,
+    botPageViews: 1,
+    detailsAvailable: true,
+    detailsComplete: true,
+    pageViews: 1,
+    anonymousVisitors: 1,
+    detailCoverage: { pageViews: 1, humanPageViews: 1, complete: true },
     byHour: [], byDevice: [{ deviceKind: 'desktop', pageViews: 1 }],
     byPage: [{
       path: '/tag/%E5%B7%A5%E5%85%B7', displayPath: '/tag/工具', displayPathStatus: 'decoded',
@@ -336,20 +350,32 @@ test('admin analytics view renders readable paths and hostile detail values as t
   const events = {
     days: 7,
     nextCursor: null,
+    available: true,
     items: [{
       id: '1'.repeat(32), observedAtUtc: '2026-07-17T00:00:00.000Z',
       requestPath: '/x/%3Cscript%3E', displayPath: '/x/<script>', displayPathStatus: 'decoded',
+      trafficKind: 'human', botName: null,
+      page: { kind: 'article', title: '<svg onload=alert(2)>', displayPath: '/x/<script>' },
       fullUrl: 'https://blog.example.com/x', referrer: '"><img src=x onerror=alert(1)>',
       statusCode: 200, durationMs: 10, responseBytes: null, ipAddress: '203.0.113.10',
       location: { country: { code: 'CN', name: 'China' }, subdivision: { code: 'BJ', name: 'Beijing' }, city: 'Beijing' },
       client: { deviceType: 'desktop', vendor: null, model: null, os: { name: 'Windows', version: '11' }, browser: { name: 'Chrome', version: '126' }, engine: { name: 'Blink', version: '126' }, contextAvailable: true, sources: ['server', 'client-fetch'] }
+    }, {
+      id: '2'.repeat(32), observedAtUtc: '2026-07-16T23:00:00.000Z',
+      requestPath: '/article/deleted', displayPath: '/article/deleted', displayPathStatus: 'unchanged',
+      trafficKind: 'bot', botName: 'Googlebot',
+      page: { kind: 'article', title: '文章（已删除或未知）', displayPath: '/article/deleted' },
+      fullUrl: 'https://blog.example.com/article/deleted', referrer: null,
+      statusCode: 200, durationMs: 8, responseBytes: null, ipAddress: '2001:db8::2',
+      location: { country: { code: 'US', name: 'United States' }, subdivision: { code: null, name: null }, city: null },
+      client: { deviceType: 'other', vendor: null, model: null, os: { name: null, version: null }, browser: { name: null, version: null }, engine: { name: null, version: null }, contextAvailable: false, sources: ['server'] }
     }]
   };
   const html = await ejs.renderFile(path.resolve(__dirname, '..', 'views/admin/analytics.ejs'), {
     overview,
     events,
-    filters: { days: '7', ip: '', country: '', subdivision: '', city: '', browser: '', os: '', device: '', pathPrefix: '', referrerHost: '' },
-    eventNextUrl: null,
+    filters: { days: '7', search: '', traffic: 'all', ip: '', country: '', subdivision: '', city: '', browser: '', os: '', device: '', pathPrefix: '', referrerHost: '' },
+    eventNextUrl: '/admin/analytics?days=7&traffic=all&cursor=fixture#event-list',
     pageError: null,
     rangeOptions: [1, 7, 30],
     systemStatus: {
@@ -360,18 +386,44 @@ test('admin analytics view renders readable paths and hostile detail values as t
     formatBeijingTime: value => value,
     user: { id: 1 }
   });
+  const overviewIndex = html.indexOf('id="analytics-overview"');
+  const eventsIndex = html.indexOf('id="event-list"');
+  const moreIndex = html.indexOf('id="analytics-more"');
+  const systemIndex = html.indexOf('id="analytics-system-status"');
+  assert.ok(overviewIndex >= 0 && overviewIndex < eventsIndex);
+  assert.ok(eventsIndex < moreIndex && moreIndex < systemIndex);
+  assert.match(html, /今日活跃访客/);
+  assert.match(html, /独立 IP/);
+  assert.match(html, /真人访问量/);
+  assert.match(html, /爬虫访问量/);
+  assert.match(html, /name="search"/);
+  assert.match(html, /name="traffic"/);
+  assert.match(html, /<details[^>]*id="analytics-more"/);
+  assert.match(html, /href="[^"]*#event-list"/);
+  assert.match(html, /文章（已删除或未知）/);
+  assert.match(html, /data-traffic-kind="bot"/);
   assert.match(html, /Geo warning fixture/);
   assert.equal((html.match(/Geo warning fixture/g) || []).length, 1);
   assert.match(html, /\/tag\/工具/);
+  assert.match(html, /&lt;svg onload=alert\(2\)&gt;/);
   assert.match(html, /\/x\/&lt;script&gt;/);
   assert.doesNotMatch(html, /原始编码/);
   assert.doesNotMatch(html, /\/tag\/%E5%B7%A5%E5%85%B7/);
   assert.doesNotMatch(html, /<img src=x onerror/);
+  assert.doesNotMatch(html, /<svg onload=alert/);
   assert.doesNotMatch(html, /数据为匿名聚合，不保存原始 IP/);
   assert.match(html, /name="pathPrefix"/);
+  assert.match(html, /id="analytics-event-summary"/);
+  assert.match(html, /id="analytics-event-table-body"/);
+  assert.match(html, /id="analytics-event-cards"/);
+  assert.match(html, /data-analytics-page="previous"/);
+  assert.match(html, /data-analytics-page="next"/);
+  assert.match(html, /id="analytics-event-status"/);
   assert.match(html, /id="analytics-detail-status"/);
   assert.match(html, /\/js\/admin-analytics\.js/);
   assert.doesNotMatch(html, /data-filter-value="(?:unknown:[^"]*|[^"]*:unknown)"/);
+  const eventListHtml = html.slice(eventsIndex, moreIndex);
+  assert.doesNotMatch(eventListHtml, /&quot;&gt;&lt;img src=x onerror=alert\(1\)&gt;|直接访问\/未知/);
 
   const source = fs.readFileSync(path.resolve(__dirname, '..', 'public/js/admin-analytics.js'), 'utf8');
   assert.doesNotMatch(source, /innerHTML|insertAdjacentHTML|document\.write/);

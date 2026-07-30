@@ -90,6 +90,7 @@ function createAdminPageRouter({ db, config, clock, geoResolver, logger = consol
         overview,
         events,
         filters,
+        eventPreviousUrl: null,
         eventNextUrl: nextPageUrl(filters, events.nextCursor),
         formatBeijingTime,
         pageError,

@@ -214,9 +214,15 @@ function dimension(items) {
 function analyticsViewModel() {
   const overview = {
     days: 7,
+    todayActiveVisitors: 18,
+    uniqueHumanIps: 41,
+    humanPageViews: 128,
+    botPageViews: 37,
+    detailsAvailable: true,
+    detailsComplete: false,
     pageViews: 128,
     anonymousVisitors: 46,
-    detailCoverage: { pageViews: 116 },
+    detailCoverage: { pageViews: 116, humanPageViews: 116, complete: false },
     byHour: [],
     byDevice: [{ deviceKind: 'desktop', pageViews: 82 }, { deviceKind: 'mobile', pageViews: 46 }],
     byPage: [
@@ -238,12 +244,22 @@ function analyticsViewModel() {
     }
   };
   const events = {
+    available: true,
     days: 7,
-    nextCursor: null,
+    nextCursor: Buffer.from(JSON.stringify({
+      observedAtUtc: '2026-07-17T05:10:00.000Z', metricId: 17
+    })).toString('base64url'),
     items: [
       {
         id: '11111111111111111111111111111111',
         observedAtUtc: '2026-07-17T07:30:00.000Z',
+        trafficKind: 'human',
+        botName: null,
+        page: {
+          kind: 'article',
+          title: '从 EJS 3 升级到 EJS 6：保持页面像素级一致的实践记录',
+          displayPath: '/article/comments-browser-smoke'
+        },
         displayPath: '/article/comments-browser-smoke',
         ipAddress: '203.0.113.10',
         location: {
@@ -261,19 +277,46 @@ function analyticsViewModel() {
       {
         id: '22222222222222222222222222222222',
         observedAtUtc: '2026-07-17T06:20:00.000Z',
-        displayPath: '/',
-        ipAddress: '198.51.100.24',
+        trafficKind: 'bot',
+        botName: 'Googlebot',
+        page: { kind: 'article', title: '文章（已删除或未知）', displayPath: '/article/retired-entry' },
+        displayPath: '/article/retired-entry',
+        ipAddress: '66.249.66.1',
         location: {
           country: { code: 'US', name: '美国' },
           subdivision: { code: 'CA', name: 'California' },
-          city: 'San Francisco'
+          city: 'Mountain View'
+        },
+        client: {
+          deviceType: 'other',
+          browser: { name: 'Googlebot', version: '2.1' },
+          os: { name: '未知', version: null }
+        },
+        referrer: null
+      },
+      {
+        id: '33333333333333333333333333333333',
+        observedAtUtc: '2026-07-17T05:10:00.000Z',
+        trafficKind: 'human',
+        botName: null,
+        page: {
+          kind: 'article',
+          title: '在超长 Unicode 标题中检查移动端访问台账是否依然安静、清晰，并且不会出现横向滚动 ✨',
+          displayPath: '/article/移动端-超长-unicode-路径-用于-验证-安全换行-和-响应式-布局'
+        },
+        displayPath: '/article/移动端-超长-unicode-路径-用于-验证-安全换行-和-响应式-布局',
+        ipAddress: '2001:db8:85a3:0000:0000:8a2e:0370:7334',
+        location: {
+          country: { code: 'JP', name: '日本' },
+          subdivision: { code: '13', name: '東京都' },
+          city: '千代田区'
         },
         client: {
           deviceType: 'mobile',
           browser: { name: 'Safari', version: '19' },
           os: { name: 'iOS', version: '19' }
         },
-        referrer: null
+        referrer: 'https://例子.测试/一个很长的来源路径'
       }
     ]
   };
@@ -281,11 +324,17 @@ function analyticsViewModel() {
     overview,
     events,
     filters: {
-      days: '7', ip: '', country: '', subdivision: '', city: '', browser: '',
+      days: '7', search: '', traffic: 'all', ip: '', country: '', subdivision: '', city: '', browser: '',
       os: '', device: '', pathPrefix: '', referrerHost: ''
     },
-    eventNextUrl: null,
+    eventNextUrl: `/admin/analytics?days=7&traffic=all&cursor=${events.nextCursor}#event-list`,
     pageError: null,
+    rangeOptions: [1, 7, 30],
+    systemStatus: {
+      detailsEnabled: true,
+      geoData: overview.geoData,
+      warning: null
+    },
     formatBeijingTime: value => new Intl.DateTimeFormat('zh-CN', {
       timeZone: 'Asia/Shanghai',
       year: 'numeric', month: '2-digit', day: '2-digit',
