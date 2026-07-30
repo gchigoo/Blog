@@ -23,6 +23,14 @@ function createDb() {
   const db = new Database(':memory:');
   db.pragma('foreign_keys = ON');
   initializeAnalytics(db);
+  db.exec(`
+    CREATE TABLE articles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      slug TEXT UNIQUE NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('draft', 'published'))
+    )
+  `);
   return db;
 }
 
@@ -77,9 +85,11 @@ test('analytics paths decode every valid UTF-8 path without changing reserved or
   assert.match(formatAnalyticsPath('/bad/%E5%A‮').displayPath, /\\u\{202E\}/);
 });
 
-test('browser filter accepts the analytics form empty controls', () => {
+test('event-list filters parse traffic, literal search, and structured errors', () => {
   const options = parseEventListQuery({
     days: '7',
+    search: '  部署_%\\  ',
+    traffic: '',
     ip: '',
     country: '',
     subdivision: '',
@@ -92,7 +102,12 @@ test('browser filter accepts the analytics form empty controls', () => {
   }, 30);
 
   assert.equal(options.filters.browser, 'opera');
+  assert.equal(options.filters.search, '部署_%\\');
+  assert.equal(options.filters.traffic, 'all');
+  assert.equal(parseEventListQuery({ traffic: 'bot' }, 30).filters.traffic, 'bot');
   assert.deepEqual(options.filters, {
+    search: '部署_%\\',
+    traffic: 'all',
     ip: null,
     country: null,
     subdivision: null,
@@ -103,6 +118,25 @@ test('browser filter accepts the analytics form empty controls', () => {
     pathPrefix: null,
     referrerHost: null
   });
+  assert.throws(
+    () => parseEventListQuery({ traffic: 'robot' }, 30),
+    error => error.code === 'invalid_filter'
+      && error.field === 'traffic'
+      && error.reason === 'unsupported_value'
+  );
+  assert.throws(
+    () => parseEventListQuery({ search: 'x'.repeat(257) }, 30),
+    error => error.code === 'invalid_filter'
+      && error.field === 'search'
+      && error.reason === 'too_long'
+  );
+  assert.equal(parseEventListQuery({ search: `  ${'é'.repeat(256)}  ` }, 30).filters.search.length, 256);
+  assert.throws(
+    () => parseEventListQuery({ search: 'e\u0301'.repeat(257) }, 30),
+    error => error.code === 'invalid_filter'
+      && error.field === 'search'
+      && error.reason === 'too_long'
+  );
 });
 
 test('event list/detail use normalized filters, stable cursors, and exclude legacy-only rows', () => {
@@ -146,6 +180,94 @@ test('event list/detail use normalized filters, stable cursors, and exclude lega
   assert.equal(detail.raw.userAgent, 'Mozilla/1');
   assert.deepEqual(detail.raw.requestClientHints, { 'sec-ch-ua': 'Fixture' });
   assert.equal(getEventDetail(db, 'f'.repeat(32)), null);
+  db.close();
+});
+
+test('event list filters traffic and literal search while enriching page titles in one result set', () => {
+  const db = createDb();
+  db.prepare('INSERT INTO articles (title, slug, status) VALUES (?, ?, ?)').run(
+    'Node.js 部署指南（旧版）', 'node-deployment', 'published'
+  );
+  db.prepare('UPDATE articles SET title = ?, status = ? WHERE slug = ?').run(
+    'Node.js 部署指南（新版）', 'draft', 'node-deployment'
+  );
+  db.prepare('INSERT INTO articles (title, slug, status) VALUES (?, ?, ?)').run(
+    '效率工具', '效率工具', 'published'
+  );
+
+  const pageEvent = (id, requestPath, overrides = {}) => event(id, {
+    path: requestPath,
+    requestPath,
+    fullUrl: `https://blog.example.com${requestPath}`,
+    ...overrides
+  });
+  recordAccessEvent(db, pageEvent(1, '/article/node-deployment', {
+    trafficKind: 'bot', botName: 'Googlebot', ipAddress: '198.51.100.1'
+  }));
+  recordAccessEvent(db, pageEvent(2, '/article/node-deployment', { ipAddress: '203.0.113.10' }));
+  recordAccessEvent(db, pageEvent(3, '/'));
+  recordAccessEvent(db, pageEvent(4, '/about'));
+  recordAccessEvent(db, pageEvent(5, '/archive'));
+  recordAccessEvent(db, pageEvent(6, '/tags'));
+  recordAccessEvent(db, pageEvent(7, '/tag/%E5%B7%A5%E5%85%B7'));
+  recordAccessEvent(db, pageEvent(8, '/article/%E6%95%88%E7%8E%87%E5%B7%A5%E5%85%B7'));
+  recordAccessEvent(db, pageEvent(9, '/article/missing'));
+  recordAccessEvent(db, pageEvent(10, '/article/node-deployment', {
+    trafficKind: 'bot', botName: 'Googlebot', ipAddress: '198.51.100.2'
+  }));
+
+  const all = listEvents(db, NOW, parseEventListQuery({}, 30));
+  const byPath = new Map(all.items.map(item => [item.requestPath, item]));
+  assert.deepEqual(byPath.get('/').page, { kind: 'home', title: '首页', displayPath: '/' });
+  assert.deepEqual(byPath.get('/about').page, { kind: 'about', title: '关于', displayPath: '/about' });
+  assert.deepEqual(byPath.get('/archive').page, { kind: 'archive', title: '归档', displayPath: '/archive' });
+  assert.equal(byPath.get('/tags').page.title, '标签页');
+  assert.equal(byPath.get('/tag/%E5%B7%A5%E5%85%B7').page.title, '标签：工具');
+  assert.equal(byPath.get('/article/missing').page.title, '文章（已删除或未知）');
+  assert.equal(byPath.get('/article/%E6%95%88%E7%8E%87%E5%B7%A5%E5%85%B7').page.title, '效率工具');
+
+  const botOnly = listEvents(db, NOW, parseEventListQuery({ traffic: 'bot' }, 30));
+  assert.ok(botOnly.items.every(item => item.trafficKind === 'bot'));
+  assert.ok(botOnly.items.every(item => item.botName === 'Googlebot'));
+  assert.equal(listEvents(db, NOW, parseEventListQuery({ search: '113.10' }, 30)).items.length, 1);
+  const titleSearch = listEvents(db, NOW, parseEventListQuery({ search: '部署' }, 30));
+  assert.equal(titleSearch.items[0].page.title, 'Node.js 部署指南（新版）');
+  assert.equal(listEvents(db, NOW, parseEventListQuery({ search: '/ARTICLE/NODE' }, 30)).items.length, 3);
+  db.prepare("DELETE FROM access_metrics WHERE path IN ('/tag/%E5%B7%A5%E5%85%B7', '/article/%E6%95%88%E7%8E%87%E5%B7%A5%E5%85%B7')").run();
+  assert.equal(listEvents(db, NOW, parseEventListQuery({ search: '%' }, 30)).items.length, 0);
+  assert.equal(listEvents(db, NOW, parseEventListQuery({ search: '_' }, 30)).items.length, 0);
+  assert.equal(listEvents(db, NOW, parseEventListQuery({ search: '\\' }, 30)).items.length, 0);
+
+  const firstBot = listEvents(db, NOW, parseEventListQuery({ traffic: 'bot', limit: '1' }, 30));
+  assert.ok(firstBot.nextCursor);
+  const secondBot = listEvents(db, NOW, parseEventListQuery({
+    traffic: 'bot', limit: '1', cursor: firstBot.nextCursor
+  }, 30));
+  assert.equal(secondBot.items.length, 1);
+  assert.notEqual(secondBot.items[0].id, firstBot.items[0].id);
+  assert.equal(secondBot.items[0].trafficKind, 'bot');
+
+  const firstSearch = listEvents(db, NOW, parseEventListQuery({ search: '部署', limit: '1' }, 30));
+  assert.ok(firstSearch.nextCursor);
+  const secondSearch = listEvents(db, NOW, parseEventListQuery({
+    search: '部署', limit: '1', cursor: firstSearch.nextCursor
+  }, 30));
+  assert.equal(secondSearch.items.length, 1);
+  assert.notEqual(secondSearch.items[0].id, firstSearch.items[0].id);
+  assert.equal(secondSearch.items[0].page.title, 'Node.js 部署指南（新版）');
+
+  const detail = getEventDetail(db, byPath.get('/article/missing').id);
+  assert.equal(detail.trafficKind, 'human');
+  assert.equal(detail.botName, null);
+  assert.equal(detail.page.title, '文章（已删除或未知）');
+  db.close();
+});
+
+test('event list title search tolerates an analytics-only database without articles', () => {
+  const db = new Database(':memory:');
+  initializeAnalytics(db);
+  recordAccessEvent(db, event(1));
+  assert.equal(listEvents(db, NOW, parseEventListQuery({ search: '不存在的标题' }, 30)).items.length, 0);
   db.close();
 });
 
@@ -303,6 +425,15 @@ test('100k event fixture stays within list/overview query and response budgets',
   for (const [query, expectedIndex] of planCases) {
     const plan = explainEventList(db, NOW, parseEventListQuery(query, 30)).map(row => row.detail).join('\n');
     assert.match(plan, expectedIndex, `query plan for ${JSON.stringify(query)}:\n${plan}`);
+  }
+  for (const query of [
+    { days: '30', traffic: 'bot', country: 'CN' },
+    { days: '30', traffic: 'human', browser: 'Chrome' },
+    { days: '30', traffic: 'bot', pathPrefix: '/article/1' }
+  ]) {
+    const plan = explainEventList(db, NOW, parseEventListQuery(query, 30)).map(row => row.detail).join('\n');
+    assert.match(plan, /USING (?:COVERING )?INDEX idx_event_details_/i, `query plan for ${JSON.stringify(query)}:\n${plan}`);
+    assert.doesNotMatch(plan, /SCAN d(?:\s|$)/i, `unindexed detail scan for ${JSON.stringify(query)}:\n${plan}`);
   }
   const ipPlan = explainOverviewHumanIps(db, NOW, 30, 30).map(row => row.detail).join('\n');
   assert.match(ipPlan, /idx_event_details_traffic_ip_observed/i, `overview IP query plan:\n${ipPlan}`);

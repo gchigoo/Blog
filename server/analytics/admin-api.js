@@ -38,7 +38,13 @@ function createAdminApiRouter({ db, config, clock, geoResolver, logger = console
       const options = parseEventListQuery(req.query, config.retentionDays);
       return res.json(listEvents(db, clock.now(), options));
     } catch (error) {
-      if (error?.code === 'invalid_filter') return res.status(400).json({ error: 'invalid_filter' });
+      if (error?.code === 'invalid_filter') {
+        return res.status(400).json({
+          error: 'invalid_filter',
+          field: error.field,
+          reason: error.reason
+        });
+      }
       logger.error('[analytics] event list query failed');
       return res.status(500).json({ error: 'analytics_query_failed' });
     }

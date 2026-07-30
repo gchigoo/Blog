@@ -1,6 +1,7 @@
 const net = require('node:net');
 const { domainToASCII } = require('node:url');
 const { formatAnalyticsPath } = require('../path-display');
+const { presentEventPages } = require('../page-presentation');
 const { normalizeTrustedIp } = require('../request-security');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -12,28 +13,28 @@ const LIST_FIELDS = `
   d.latitude, d.longitude, d.accuracy_radius_km,
   d.device_type, d.device_vendor, d.device_model, d.os_name, d.os_version,
   d.browser_name, d.browser_version, d.engine_name, d.engine_version,
-  d.cpu_architecture, d.context_source, d.context_collected_at,
+  d.cpu_architecture, d.traffic_kind, d.bot_name, d.context_source, d.context_collected_at,
   d.geo_dataset_date, d.geo_status, d.client_parse_status
 `;
 
-function invalidFilter() {
-  throw Object.assign(new Error('invalid_filter'), { code: 'invalid_filter' });
+function invalidFilter(field, reason = 'invalid_value') {
+  throw Object.assign(new Error('invalid_filter'), { code: 'invalid_filter', field, reason });
 }
 
-function optionalString(value, maxLength) {
+function optionalString(value, maxLength, field) {
   if (value === undefined) return null;
-  if (typeof value !== 'string') invalidFilter();
+  if (typeof value !== 'string') invalidFilter(field, 'invalid_type');
   const trimmed = value.trim();
   if (!trimmed) return null;
-  if ([...trimmed].length > maxLength) invalidFilter();
+  if ([...trimmed].length > maxLength) invalidFilter(field, 'too_long');
   return trimmed;
 }
 
-function integer(value, defaultValue, min, max) {
+function integer(value, defaultValue, min, max, field) {
   if (value === undefined) return defaultValue;
-  if (typeof value !== 'string' || !/^\d+$/.test(value)) invalidFilter();
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) invalidFilter(field);
   const parsed = Number(value);
-  if (parsed < min || parsed > max) invalidFilter();
+  if (parsed < min || parsed > max) invalidFilter(field, 'out_of_range');
   return parsed;
 }
 
@@ -51,37 +52,37 @@ function parseAnalyticsDays(value, retentionDays = 30) {
   return parsed;
 }
 
-function normalized(value, maxLength = 128) {
-  const parsed = optionalString(value, maxLength);
+function normalized(value, field, maxLength = 128) {
+  const parsed = optionalString(value, maxLength, field);
   return parsed ? parsed.normalize('NFKC').toLowerCase() : null;
 }
 
 function decodeCursor(value) {
   if (value === undefined) return null;
-  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]+$/.test(value)) invalidFilter();
+  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]+$/.test(value)) invalidFilter('cursor');
   try {
     const decoded = Buffer.from(value, 'base64url');
-    if (decoded.toString('base64url') !== value) invalidFilter();
+    if (decoded.toString('base64url') !== value) invalidFilter('cursor');
     const cursor = JSON.parse(decoded.toString('utf8'));
     if (!cursor || Object.keys(cursor).join(',') !== 'observedAtUtc,metricId'
       || typeof cursor.observedAtUtc !== 'string'
       || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(cursor.observedAtUtc)
       || !Number.isFinite(Date.parse(cursor.observedAtUtc))
       || new Date(cursor.observedAtUtc).toISOString() !== cursor.observedAtUtc
-      || !Number.isSafeInteger(cursor.metricId) || cursor.metricId <= 0) invalidFilter();
+      || !Number.isSafeInteger(cursor.metricId) || cursor.metricId <= 0) invalidFilter('cursor');
     return cursor;
   } catch (error) {
     if (error?.code === 'invalid_filter') throw error;
-    invalidFilter();
+    invalidFilter('cursor');
   }
 }
 
 function normalizeHost(value) {
-  const host = optionalString(value, 255);
+  const host = optionalString(value, 255, 'referrerHost');
   if (!host) return null;
-  if (/[/@?#]/.test(host)) invalidFilter();
+  if (/[/@?#]/.test(host)) invalidFilter('referrerHost');
   const ascii = domainToASCII(host.toLowerCase());
-  if (!ascii || ascii.length > 255) invalidFilter();
+  if (!ascii || ascii.length > 255) invalidFilter('referrerHost');
   return ascii;
 }
 
@@ -90,50 +91,85 @@ function parseEventListQuery(query = {}, retentionDays = 30) {
   try {
     days = parseAnalyticsDays(query.days, retentionDays);
   } catch {
-    invalidFilter();
+    invalidFilter('days');
   }
-  const limit = integer(query.limit, 50, 1, 100);
+  const limit = integer(query.limit, 50, 1, 100, 'limit');
+  const traffic = normalized(query.traffic, 'traffic', 16) || 'all';
+  if (!['all', 'human', 'bot'].includes(traffic)) invalidFilter('traffic', 'unsupported_value');
+  let search = null;
+  if (query.search !== undefined) {
+    if (typeof query.search !== 'string') invalidFilter('search', 'invalid_type');
+    search = query.search.normalize('NFKC').trim() || null;
+    if (search !== null && [...search].length > 256) invalidFilter('search', 'too_long');
+  }
   let ip = null;
   if (query.ip !== undefined) {
-    const rawIp = optionalString(query.ip, 64);
+    const rawIp = optionalString(query.ip, 64, 'ip');
     if (rawIp) {
       ip = normalizeTrustedIp(rawIp);
-      if (!ip || !net.isIP(ip)) invalidFilter();
+      if (!ip || !net.isIP(ip)) invalidFilter('ip');
     }
   }
   let country = null;
   if (query.country !== undefined) {
-    const rawCountry = optionalString(query.country, 2);
+    const rawCountry = optionalString(query.country, 2, 'country');
     if (rawCountry) {
       country = rawCountry.toUpperCase();
-      if (!/^[A-Z]{2}$/.test(country)) invalidFilter();
+      if (!/^[A-Z]{2}$/.test(country)) invalidFilter('country');
     }
   }
-  const subdivision = normalized(query.subdivision);
-  const city = normalized(query.city);
-  if ((subdivision || city) && !country) invalidFilter();
-  const device = normalized(query.device);
-  if (device && !['desktop', 'mobile', 'tablet', 'other'].includes(device)) invalidFilter();
+  const subdivision = normalized(query.subdivision, 'subdivision');
+  const city = normalized(query.city, 'city');
+  if ((subdivision || city) && !country) invalidFilter(subdivision ? 'subdivision' : 'city', 'country_required');
+  const device = normalized(query.device, 'device');
+  if (device && !['desktop', 'mobile', 'tablet', 'other'].includes(device)) invalidFilter('device', 'unsupported_value');
 
   return Object.freeze({
     days,
     limit,
     cursor: decodeCursor(query.cursor),
     filters: {
+      search,
+      traffic,
       ip,
       country,
       subdivision,
       city,
-      browser: normalized(query.browser),
-      os: normalized(query.os),
+      browser: normalized(query.browser, 'browser'),
+      os: normalized(query.os, 'os'),
       device,
-      pathPrefix: optionalString(query.pathPrefix, 2048),
+      pathPrefix: optionalString(query.pathPrefix, 2048, 'pathPrefix'),
       referrerHost: query.referrerHost === undefined ? null : normalizeHost(query.referrerHost)
     }
   });
 }
 
-function buildEventListQuery(now, options, explain = false) {
+function escapeLike(value) {
+  return value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_');
+}
+
+function hasArticlesTable(db) {
+  return Boolean(db.prepare(`
+    SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'articles'
+  `).get());
+}
+
+function articlePathsForSearch(db, search) {
+  if (!search || !hasArticlesTable(db)) return [];
+  const pattern = `%${escapeLike(search)}%`;
+  const paths = new Set();
+  for (const { slug } of db.prepare(`
+    SELECT slug FROM articles
+    WHERE title LIKE ? ESCAPE '\\' COLLATE NOCASE
+    ORDER BY slug
+  `).all(pattern)) {
+    paths.add(`/article/${slug}`);
+    paths.add(`/article/${encodeURIComponent(slug)}`);
+  }
+  return [...paths];
+}
+
+function buildEventListQuery(now, options, articlePaths = [], explain = false) {
   const where = ['d.observed_at_utc >= ?'];
   const params = [new Date(now - options.days * DAY_MS).toISOString()];
   const { filters } = options;
@@ -152,6 +188,23 @@ function buildEventListQuery(now, options, explain = false) {
       where.push(sql);
       params.push(filters[name]);
     }
+  }
+  if (filters.traffic !== 'all') {
+    where.push('d.traffic_kind = ?');
+    params.push(filters.traffic);
+  }
+  if (filters.search !== null) {
+    const pattern = `%${escapeLike(filters.search)}%`;
+    const searchPredicates = [
+      "d.ip_address LIKE ? ESCAPE '\\' COLLATE NOCASE",
+      "d.request_path LIKE ? ESCAPE '\\' COLLATE NOCASE"
+    ];
+    params.push(pattern, pattern);
+    if (articlePaths.length > 0) {
+      searchPredicates.push(`d.request_path IN (${articlePaths.map(() => '?').join(', ')})`);
+      params.push(...articlePaths);
+    }
+    where.push(`(${searchPredicates.join(' OR ')})`);
   }
   if (filters.pathPrefix !== null) {
     where.push('d.request_path >= ? AND d.request_path < ?');
@@ -178,13 +231,16 @@ function sources(row) {
     : ['server'];
 }
 
-function mapListRow(row) {
+function mapListRow(row, page) {
   const display = formatAnalyticsPath(row.request_path);
   return {
     id: row.event_id,
     observedAtUtc: row.observed_at_utc,
     requestPath: row.request_path,
     ...display,
+    trafficKind: row.traffic_kind,
+    botName: row.bot_name,
+    page,
     fullUrl: row.full_url,
     referrer: row.referrer,
     statusCode: row.status_code,
@@ -224,19 +280,22 @@ function encodeCursor(row) {
 }
 
 function listEvents(db, now, options) {
-  const query = buildEventListQuery(now, options);
+  const articlePaths = articlePathsForSearch(db, options.filters.search);
+  const query = buildEventListQuery(now, options, articlePaths);
   const rows = db.prepare(query.sql).all(...query.params);
   const hasMore = rows.length > options.limit;
   const selected = rows.slice(0, options.limit);
+  const pages = presentEventPages(db, selected);
   return {
     days: options.days,
-    items: selected.map(mapListRow),
+    items: selected.map(row => mapListRow(row, pages.get(row.metric_id))),
     nextCursor: hasMore ? encodeCursor(selected.at(-1)) : null
   };
 }
 
 function explainEventList(db, now, options) {
-  const query = buildEventListQuery(now, options, true);
+  const articlePaths = articlePathsForSearch(db, options.filters.search);
+  const query = buildEventListQuery(now, options, articlePaths, true);
   return db.prepare(query.sql).all(...query.params);
 }
 
@@ -249,7 +308,8 @@ function getEventDetail(db, eventId) {
   if (!/^[0-9a-f]{32}$/.test(eventId)) return null;
   const row = db.prepare('SELECT * FROM access_event_details WHERE event_id = ?').get(eventId);
   if (!row) return null;
-  const base = mapListRow(row);
+  const page = presentEventPages(db, [row]).get(row.metric_id);
+  const base = mapListRow(row, page);
   return {
     ...base,
     raw: {

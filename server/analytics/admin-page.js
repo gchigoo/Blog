@@ -4,7 +4,7 @@ const { getOverview } = require('./store');
 const { listEvents, parseEventListQuery } = require('./query/analytics-query');
 
 const FILTER_NAMES = [
-  'ip', 'country', 'subdivision', 'city', 'browser', 'os',
+  'search', 'traffic', 'ip', 'country', 'subdivision', 'city', 'browser', 'os',
   'device', 'pathPrefix', 'referrerHost'
 ];
 
@@ -13,6 +13,7 @@ function filterViewModel(query, days) {
   for (const name of FILTER_NAMES) {
     filters[name] = typeof query[name] === 'string' ? query[name] : '';
   }
+  if (!filters.traffic) filters.traffic = 'all';
   return filters;
 }
 
@@ -23,7 +24,7 @@ function nextPageUrl(filters, cursor) {
     if (value) params.set(name, value);
   }
   params.set('cursor', cursor);
-  return `/admin/analytics?${params.toString()}`;
+  return `/admin/analytics?${params.toString()}#event-list`;
 }
 
 function formatBeijingTime(value) {

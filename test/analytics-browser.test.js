@@ -172,7 +172,36 @@ test('admin analytics API/page require authentication, are no-store, and expose 
     headers: { cookie: adminCookie }
   });
   assert.equal(detailResponse.status, 200);
-  assert.equal((await detailResponse.json()).raw.userAgent, 'Mozilla/5.0');
+  const detail = await detailResponse.json();
+  assert.equal(detail.raw.userAgent, 'Mozilla/5.0');
+  assert.equal(detail.trafficKind, 'human');
+  assert.equal(detail.botName, null);
+  assert.deepEqual(detail.page, { kind: 'about', title: '关于', displayPath: '/about' });
+
+  const botPage = await fetch(`${baseUrl}/about`, {
+    headers: {
+      'user-agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+      'x-forwarded-for': '203.0.113.40'
+    }
+  });
+  assert.equal(botPage.status, 200);
+  const botListResponse = await fetch(`${baseUrl}/api/admin/analytics/events?traffic=bot`, {
+    headers: { cookie: adminCookie }
+  });
+  assert.equal(botListResponse.status, 200);
+  const botList = await botListResponse.json();
+  assert.equal(botList.items.length, 1);
+  assert.equal(botList.items[0].trafficKind, 'bot');
+  assert.equal(botList.items[0].botName, 'Googlebot');
+  assert.equal(botList.items[0].page.title, '关于');
+
+  const invalid = await fetch(`${baseUrl}/api/admin/analytics/events?traffic=robot`, {
+    headers: { cookie: adminCookie }
+  });
+  assert.equal(invalid.status, 400);
+  assert.deepEqual(await invalid.json(), {
+    error: 'invalid_filter', field: 'traffic', reason: 'unsupported_value'
+  });
 
   const page = await fetch(`${baseUrl}/admin/analytics`, { headers: { cookie: adminCookie } });
   const html = await page.text();
@@ -182,13 +211,20 @@ test('admin analytics API/page require authentication, are no-store, and expose 
   assert.match(html, /203\.0\.113|127\.0\.0\.1|::1/);
 
   const operaSearch = await fetch(
-    `${baseUrl}/admin/analytics?days=7&ip=&country=&subdivision=&city=&browser=opera&os=&device=&pathPrefix=&referrerHost=`,
+    `${baseUrl}/admin/analytics?days=7&search=about&traffic=human&ip=&country=&subdivision=&city=&browser=opera&os=&device=&pathPrefix=&referrerHost=`,
     { headers: { cookie: adminCookie } }
   );
   const operaHtml = await operaSearch.text();
   assert.equal(operaSearch.status, 200);
   assert.doesNotMatch(operaHtml, /筛选条件无效/);
   assert.match(operaHtml, /name="browser" value="opera"/);
+
+  const paged = await fetch(`${baseUrl}/admin/analytics?days=7&search=about&traffic=all&limit=1`, {
+    headers: { cookie: adminCookie }
+  });
+  const pagedHtml = await paged.text();
+  assert.equal(paged.status, 200);
+  assert.match(pagedHtml, /href="\/admin\/analytics\?[^"#]*search=about[^"#]*traffic=all[^"#]*cursor=[^"#]+#event-list"/);
 });
 
 test('admin retained-detail API and SSR are unavailable when details collection is disabled', async t => {
