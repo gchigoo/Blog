@@ -18,10 +18,6 @@
   </div>
 </header>
 
-<% if (pageError) { %>
-  <p class="message error" role="alert"><%= pageError %></p>
-<% } %>
-
 <section id="analytics-overview" class="analytics-overview-grid" aria-labelledby="analytics-overview-title">
   <h3 id="analytics-overview-title" class="analytics-section-title">流量概览</h3>
   <article class="analytics-overview-card">
@@ -129,13 +125,18 @@
       </div>
     </form>
 
-    <p id="analytics-event-status" class="analytics-event-status" role="status" tabindex="-1" hidden></p>
+    <% if (pageError) { %>
+      <p id="analytics-event-status" class="analytics-event-status message error" role="alert" tabindex="-1"><%= pageError %></p>
+    <% } else { %>
+      <p id="analytics-event-status" class="analytics-event-status" role="status" tabindex="-1" hidden></p>
+    <% } %>
 
     <% if (events.items.length === 0) { %>
       <p class="analytics-empty">暂无符合条件的访问明细。可放宽搜索或筛选条件后重试。</p>
-    <% } else { %>
-      <div class="analytics-table-wrap">
-        <table class="analytics-event-table">
+    <% } %>
+
+    <div class="analytics-table-wrap">
+      <table class="analytics-event-table">
           <thead>
             <tr><th>时间</th><th>页面</th><th>IP / 地区</th><th>客户端</th><th>操作</th></tr>
           </thead>
@@ -206,7 +207,6 @@
           </article>
         <% }) %>
       </div>
-    <% } %>
 
     <nav class="analytics-event-pagination" aria-label="访问明细分页">
       <% if (typeof eventPreviousUrl !== 'undefined' && eventPreviousUrl) { %>

@@ -72,6 +72,39 @@ function tokenFrom(html) {
   return match[1];
 }
 
+function occurrenceCount(html, marker) {
+  return html.split(marker).length - 1;
+}
+
+function assertEnabledWorkspaceHooksOnce(html) {
+  for (const marker of [
+    'id="event-list"',
+    'id="analytics-event-summary"',
+    'id="analytics-event-table-body"',
+    'id="analytics-event-cards"',
+    'id="analytics-event-status"',
+    'id="analytics-filter-form"',
+    'data-analytics-page="previous"',
+    'data-analytics-page="next"'
+  ]) {
+    assert.equal(occurrenceCount(html, marker), 1, `${marker} must appear exactly once`);
+  }
+}
+
+function assertAnalyticsTopLevelOrder(html) {
+  const headingIndex = html.indexOf('class="analytics-heading"');
+  const overviewIndex = html.indexOf('id="analytics-overview"');
+  const eventsIndex = html.indexOf('id="event-list"');
+  const moreIndex = html.indexOf('id="analytics-more"');
+  const systemIndex = html.indexOf('id="analytics-system-status"');
+  const detailIndex = html.indexOf('id="analytics-detail-status"');
+  assert.ok(headingIndex >= 0 && headingIndex < overviewIndex);
+  assert.ok(overviewIndex < eventsIndex);
+  assert.ok(eventsIndex < moreIndex);
+  assert.ok(moreIndex < systemIndex);
+  assert.ok(systemIndex < detailIndex);
+}
+
 test('tracked public HTML is no-store and client context is idempotently attached to the same event', async t => {
   const { baseUrl, db } = await createHarness(t);
   const page = await fetch(`${baseUrl}/about`, { headers: { 'user-agent': 'Mozilla/5.0', 'x-forwarded-for': '203.0.113.10' } });
@@ -258,6 +291,34 @@ test('admin retained-detail API and SSR are unavailable when details collection 
   assert.doesNotMatch(html, /analytics-event-table|analytics-event-cards|analytics-filter-form|analytics-detail-panel|admin-analytics\.js/);
 });
 
+test('admin analytics SSR keeps enabled-empty list containers and stable hooks unique', async t => {
+  const { baseUrl, adminCookie } = await createHarness(t);
+  const page = await fetch(`${baseUrl}/admin/analytics?search=no-matching-visit`, {
+    headers: { cookie: adminCookie }
+  });
+  const html = await page.text();
+  assert.equal(page.status, 200);
+  assert.match(html, /暂无符合条件的访问明细/);
+  assertEnabledWorkspaceHooksOnce(html);
+  assertAnalyticsTopLevelOrder(html);
+});
+
+test('admin analytics invalid-query SSR preserves order and reports through the local error hook', async t => {
+  const { baseUrl, adminCookie } = await createHarness(t);
+  const page = await fetch(`${baseUrl}/admin/analytics?traffic=robot`, {
+    headers: { cookie: adminCookie }
+  });
+  const html = await page.text();
+  assert.equal(page.status, 400);
+  assertAnalyticsTopLevelOrder(html);
+  assertEnabledWorkspaceHooksOnce(html);
+  assert.equal(occurrenceCount(html, '筛选条件无效，请检查输入后重试。'), 1);
+  assert.match(html, /id="analytics-event-status"[^>]*class="[^"]*error[^"]*"[^>]*role="alert"[^>]*>筛选条件无效，请检查输入后重试。/);
+  const headingEnd = html.indexOf('</header>');
+  const overviewIndex = html.indexOf('id="analytics-overview"');
+  assert.doesNotMatch(html.slice(headingEnd, overviewIndex), /role="alert"|筛选条件无效/);
+});
+
 test('admin page hides ranges beyond retention and includes the configured retention range', async t => {
   const { baseUrl, adminCookie } = await createHarness(t, { config: { retentionDays: 10 } });
   const page = await fetch(`${baseUrl}/admin/analytics`, { headers: { cookie: adminCookie } });
@@ -322,6 +383,56 @@ test('browser collector retries only 425 on immediate/1/2/4/8 second attempts', 
   assert.doesNotThrow(() => validateClientContext(submitted));
 });
 
+test('admin analytics view pins all unique-IP output states and stable-hook uniqueness', async () => {
+  const emptyDimension = { items: [], distinctCount: 0, truncated: false, otherPageViews: 0 };
+  const baseOverview = {
+    days: 7,
+    todayActiveVisitors: 0,
+    uniqueHumanIps: 0,
+    humanPageViews: 0,
+    botPageViews: 0,
+    detailsAvailable: true,
+    detailsComplete: true,
+    pageViews: 0,
+    anonymousVisitors: 0,
+    detailCoverage: { pageViews: 0, humanPageViews: 0, complete: true },
+    byHour: [], byDevice: [], byPage: [],
+    byCountry: emptyDimension, bySubdivision: emptyDimension, byCity: emptyDimension,
+    byBrowser: emptyDimension, byOs: emptyDimension, byDeviceModel: emptyDimension,
+    byReferrerHost: emptyDimension, geoData: null
+  };
+  const render = overview => ejs.renderFile(path.resolve(__dirname, '..', 'views/admin/analytics.ejs'), {
+    overview,
+    events: { available: true, days: 7, nextCursor: null, items: [] },
+    filters: { days: '7', search: '', traffic: 'all', ip: '', country: '', subdivision: '', city: '', browser: '', os: '', device: '', pathPrefix: '', referrerHost: '' },
+    eventPreviousUrl: null,
+    eventNextUrl: null,
+    pageError: null,
+    rangeOptions: [1, 7, 30],
+    systemStatus: { detailsEnabled: true, geoData: null, warning: null },
+    formatBeijingTime: value => value,
+    user: { id: 1 }
+  });
+
+  const unavailable = await render({ ...baseOverview, uniqueHumanIps: null, detailsAvailable: false, detailsComplete: false });
+  assert.equal(occurrenceCount(unavailable, '未启用访问明细'), 1);
+
+  const incomplete = await render({
+    ...baseOverview,
+    uniqueHumanIps: 12,
+    detailsComplete: false,
+    detailCoverage: { pageViews: 0, humanPageViews: 0, complete: false }
+  });
+  assert.match(incomplete, /至少 12 个/);
+  assert.equal(occurrenceCount(incomplete, '至少 12 个'), 1);
+
+  const complete = await render({ ...baseOverview, uniqueHumanIps: 12 });
+  assert.match(complete, />\s*12 个\s*</);
+  assert.doesNotMatch(complete, /至少 12 个/);
+
+  for (const html of [incomplete, complete]) assertEnabledWorkspaceHooksOnce(html);
+});
+
 test('admin analytics view renders readable paths and hostile detail values as text-only UI', async () => {
   const emptyDimension = { items: [], distinctCount: 0, truncated: false, otherPageViews: 0 };
   const overview = {
@@ -363,7 +474,7 @@ test('admin analytics view renders readable paths and hostile detail values as t
     }, {
       id: '2'.repeat(32), observedAtUtc: '2026-07-16T23:00:00.000Z',
       requestPath: '/article/deleted', displayPath: '/article/deleted', displayPathStatus: 'unchanged',
-      trafficKind: 'bot', botName: 'Googlebot',
+      trafficKind: 'bot', botName: '"><img data-bot-injected src=x onerror=alert(3)>',
       page: { kind: 'article', title: '文章（已删除或未知）', displayPath: '/article/deleted' },
       fullUrl: 'https://blog.example.com/article/deleted', referrer: null,
       statusCode: 200, durationMs: 8, responseBytes: null, ipAddress: '2001:db8::2',
@@ -374,8 +485,13 @@ test('admin analytics view renders readable paths and hostile detail values as t
   const html = await ejs.renderFile(path.resolve(__dirname, '..', 'views/admin/analytics.ejs'), {
     overview,
     events,
-    filters: { days: '7', search: '', traffic: 'all', ip: '', country: '', subdivision: '', city: '', browser: '', os: '', device: '', pathPrefix: '', referrerHost: '' },
-    eventNextUrl: '/admin/analytics?days=7&traffic=all&cursor=fixture#event-list',
+    filters: {
+      days: '7', search: '"><input data-filter-injected value=x>', traffic: 'all',
+      ip: '"><svg data-ip-injected onload=alert(4)>', country: '', subdivision: '', city: '',
+      browser: '', os: '', device: '', pathPrefix: '"><button data-path-injected>bad</button>', referrerHost: ''
+    },
+    eventPreviousUrl: '/admin/analytics?days=7&cursor=previous%22%20data-prev-injected=%22yes#event-list',
+    eventNextUrl: '/admin/analytics?days=7&cursor=next%22%20data-next-injected=%22yes#event-list',
     pageError: null,
     rangeOptions: [1, 7, 30],
     systemStatus: {
@@ -386,12 +502,10 @@ test('admin analytics view renders readable paths and hostile detail values as t
     formatBeijingTime: value => value,
     user: { id: 1 }
   });
-  const overviewIndex = html.indexOf('id="analytics-overview"');
   const eventsIndex = html.indexOf('id="event-list"');
   const moreIndex = html.indexOf('id="analytics-more"');
-  const systemIndex = html.indexOf('id="analytics-system-status"');
-  assert.ok(overviewIndex >= 0 && overviewIndex < eventsIndex);
-  assert.ok(eventsIndex < moreIndex && moreIndex < systemIndex);
+  assertAnalyticsTopLevelOrder(html);
+  assertEnabledWorkspaceHooksOnce(html);
   assert.match(html, /今日活跃访客/);
   assert.match(html, /独立 IP/);
   assert.match(html, /真人访问量/);
@@ -402,6 +516,14 @@ test('admin analytics view renders readable paths and hostile detail values as t
   assert.match(html, /href="[^"]*#event-list"/);
   assert.match(html, /文章（已删除或未知）/);
   assert.match(html, /data-traffic-kind="bot"/);
+  assert.match(html, /&#34;&gt;&lt;img data-bot-injected src=x onerror=alert\(3\)&gt;/);
+  assert.match(html, /value="&#34;&gt;&lt;input data-filter-injected value=x&gt;"/);
+  assert.match(html, /value="&#34;&gt;&lt;svg data-ip-injected onload=alert\(4\)&gt;"/);
+  assert.match(html, /value="&#34;&gt;&lt;button data-path-injected&gt;bad&lt;\/button&gt;"/);
+  assert.match(html, /href="\/admin\/analytics\?days=7&amp;cursor=previous%22%20data-prev-injected=%22yes#event-list" data-analytics-page="previous"/);
+  assert.match(html, /href="\/admin\/analytics\?days=7&amp;cursor=next%22%20data-next-injected=%22yes#event-list" data-analytics-page="next"/);
+  assert.doesNotMatch(html, /<img data-bot-injected|<input data-filter-injected|<svg data-ip-injected|<button data-path-injected/);
+  assert.doesNotMatch(html, /\sdata-(?:prev|next)-injected="yes"/);
   assert.match(html, /Geo warning fixture/);
   assert.equal((html.match(/Geo warning fixture/g) || []).length, 1);
   assert.match(html, /\/tag\/工具/);
