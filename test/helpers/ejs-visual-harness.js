@@ -211,7 +211,91 @@ function dimension(items) {
   };
 }
 
-function analyticsViewModel() {
+function analyticsFixtureEvent(pageNumber, index, traffic, search) {
+  const forcedTraffic = traffic === 'human' || traffic === 'bot' ? traffic : null;
+  const trafficKind = forcedTraffic || (index === 1 ? 'human' : 'bot');
+  const marker = search || `Fixture page ${pageNumber}`;
+  const id = `${String(pageNumber).repeat(31)}${index}`;
+  const observedHour = 8 - pageNumber;
+  return {
+    id,
+    observedAtUtc: `2026-07-17T0${observedHour}:${index === 1 ? '30' : '10'}:00.000Z`,
+    requestPath: `/fixture/page-${pageNumber}/event-${index}`,
+    displayPath: `/fixture/page-${pageNumber}/event-${index}`,
+    displayPathStatus: 'unchanged',
+    trafficKind,
+    botName: trafficKind === 'bot' ? 'Googlebot' : null,
+    page: {
+      kind: 'article',
+      title: `${marker} · event ${index}`,
+      displayPath: `/fixture/page-${pageNumber}/event-${index}`
+    },
+    fullUrl: `https://blog.example.test/fixture/page-${pageNumber}/event-${index}`,
+    referrer: index === 1 ? 'https://private-referrer.example.test/detail-only' : null,
+    statusCode: 200,
+    durationMs: 10 + pageNumber + index,
+    responseBytes: 2048 + pageNumber + index,
+    ipAddress: `203.0.113.${pageNumber * 10 + index}`,
+    location: {
+      continent: { code: 'AS', name: '亚洲' },
+      country: { code: pageNumber === 3 ? 'JP' : 'CN', name: pageNumber === 3 ? '日本' : '中国' },
+      subdivision: { code: 'BJ', name: pageNumber === 3 ? '東京都' : '北京' },
+      city: pageNumber === 3 ? '千代田区' : '北京',
+      postalCode: null,
+      timezone: 'Asia/Shanghai',
+      coordinates: null,
+      accuracyRadiusKm: null
+    },
+    client: {
+      deviceType: index === 1 ? 'desktop' : 'mobile',
+      vendor: null,
+      model: null,
+      os: { name: index === 1 ? 'Windows' : 'iOS', version: index === 1 ? '11' : '19' },
+      browser: { name: index === 1 ? 'Chrome' : 'Safari', version: index === 1 ? '126' : '19' },
+      engine: { name: index === 1 ? 'Blink' : 'WebKit', version: index === 1 ? '126' : '619' },
+      cpuArchitecture: null,
+      contextAvailable: true,
+      sources: ['server', 'client-fetch']
+    }
+  };
+}
+
+function analyticsFixturePage(query = {}) {
+  const pageNumber = query.cursor === 'fixture-page-3' ? 3 : query.cursor === 'fixture-page-2' ? 2 : 1;
+  const traffic = typeof query.traffic === 'string' ? query.traffic : 'all';
+  const search = typeof query.search === 'string' ? query.search : '';
+  return {
+    days: Number(query.days) || 7,
+    items: [
+      analyticsFixtureEvent(pageNumber, 1, traffic, search),
+      analyticsFixtureEvent(pageNumber, 2, traffic, search)
+    ],
+    nextCursor: pageNumber < 3 ? `fixture-page-${pageNumber + 1}` : null
+  };
+}
+
+function analyticsFilters(query, days) {
+  const names = [
+    'search', 'traffic', 'ip', 'country', 'subdivision', 'city', 'browser', 'os',
+    'device', 'pathPrefix', 'referrerHost'
+  ];
+  const filters = { days: String(days) };
+  for (const name of names) filters[name] = typeof query[name] === 'string' ? query[name] : '';
+  if (!filters.traffic) filters.traffic = 'all';
+  return filters;
+}
+
+function analyticsPageUrl(filters, cursor) {
+  if (!cursor) return null;
+  const params = new URLSearchParams();
+  for (const [name, value] of Object.entries(filters)) {
+    if (value) params.set(name, value);
+  }
+  params.set('cursor', cursor);
+  return `/admin/analytics?${params.toString()}#event-list`;
+}
+
+function analyticsViewModel(query = {}) {
   const overview = {
     days: 7,
     todayActiveVisitors: 18,
@@ -243,91 +327,15 @@ function analyticsViewModel() {
       stale: false
     }
   };
-  const events = {
-    available: true,
-    days: 7,
-    nextCursor: Buffer.from(JSON.stringify({
-      observedAtUtc: '2026-07-17T05:10:00.000Z', metricId: 17
-    })).toString('base64url'),
-    items: [
-      {
-        id: '11111111111111111111111111111111',
-        observedAtUtc: '2026-07-17T07:30:00.000Z',
-        trafficKind: 'human',
-        botName: null,
-        page: {
-          kind: 'article',
-          title: '从 EJS 3 升级到 EJS 6：保持页面像素级一致的实践记录',
-          displayPath: '/article/comments-browser-smoke'
-        },
-        displayPath: '/article/comments-browser-smoke',
-        ipAddress: '203.0.113.10',
-        location: {
-          country: { code: 'CN', name: '中国' },
-          subdivision: { code: 'BJ', name: '北京' },
-          city: '北京'
-        },
-        client: {
-          deviceType: 'desktop',
-          browser: { name: 'Chrome', version: '126' },
-          os: { name: 'Windows', version: '11' }
-        },
-        referrer: 'https://www.google.com/'
-      },
-      {
-        id: '22222222222222222222222222222222',
-        observedAtUtc: '2026-07-17T06:20:00.000Z',
-        trafficKind: 'bot',
-        botName: 'Googlebot',
-        page: { kind: 'article', title: '文章（已删除或未知）', displayPath: '/article/retired-entry' },
-        displayPath: '/article/retired-entry',
-        ipAddress: '66.249.66.1',
-        location: {
-          country: { code: 'US', name: '美国' },
-          subdivision: { code: 'CA', name: 'California' },
-          city: 'Mountain View'
-        },
-        client: {
-          deviceType: 'other',
-          browser: { name: 'Googlebot', version: '2.1' },
-          os: { name: '未知', version: null }
-        },
-        referrer: null
-      },
-      {
-        id: '33333333333333333333333333333333',
-        observedAtUtc: '2026-07-17T05:10:00.000Z',
-        trafficKind: 'human',
-        botName: null,
-        page: {
-          kind: 'article',
-          title: '在超长 Unicode 标题中检查移动端访问台账是否依然安静、清晰，并且不会出现横向滚动 ✨',
-          displayPath: '/article/移动端-超长-unicode-路径-用于-验证-安全换行-和-响应式-布局'
-        },
-        displayPath: '/article/移动端-超长-unicode-路径-用于-验证-安全换行-和-响应式-布局',
-        ipAddress: '2001:db8:85a3:0000:0000:8a2e:0370:7334',
-        location: {
-          country: { code: 'JP', name: '日本' },
-          subdivision: { code: '13', name: '東京都' },
-          city: '千代田区'
-        },
-        client: {
-          deviceType: 'mobile',
-          browser: { name: 'Safari', version: '19' },
-          os: { name: 'iOS', version: '19' }
-        },
-        referrer: 'https://例子.测试/一个很长的来源路径'
-      }
-    ]
-  };
+  overview.days = Number(query.days) || 7;
+  const filters = analyticsFilters(query, overview.days);
+  const events = { available: true, ...analyticsFixturePage(query) };
   return {
     overview,
     events,
-    filters: {
-      days: '7', search: '', traffic: 'all', ip: '', country: '', subdivision: '', city: '', browser: '',
-      os: '', device: '', pathPrefix: '', referrerHost: ''
-    },
-    eventNextUrl: `/admin/analytics?days=7&traffic=all&cursor=${events.nextCursor}#event-list`,
+    filters,
+    eventPreviousUrl: null,
+    eventNextUrl: analyticsPageUrl(filters, events.nextCursor),
     pageError: null,
     rangeOptions: [1, 7, 30],
     systemStatus: {
@@ -493,7 +501,78 @@ app.get('/admin/articles', (req, res) => res.render('admin/articles', {
   articles: allArticles(),
   user: { id: 1, username: 'visual-admin' }
 }));
-app.get('/admin/analytics', (req, res) => res.render('admin/analytics', analyticsViewModel()));
+let analyticsRetryPending = true;
+let analyticsSlowCompleted = 0;
+const analyticsSlowWaiters = new Set();
+
+function finishAnalyticsSlowRequest() {
+  analyticsSlowCompleted += 1;
+  for (const waiter of analyticsSlowWaiters) {
+    if (analyticsSlowCompleted > waiter.after) {
+      clearTimeout(waiter.timeout);
+      analyticsSlowWaiters.delete(waiter);
+      waiter.resolve();
+    }
+  }
+}
+
+app.post('/__test/analytics-reset', (req, res) => {
+  analyticsRetryPending = true;
+  return res.sendStatus(204);
+});
+app.get('/__test/analytics-slow-state', (req, res) => res.json({ completed: analyticsSlowCompleted }));
+app.get('/__test/analytics-wait-slow', async (req, res) => {
+  const after = Number(req.query.after) || 0;
+  if (analyticsSlowCompleted > after) return res.json({ completed: analyticsSlowCompleted });
+  await new Promise(resolve => {
+    const waiter = {
+      after,
+      resolve,
+      timeout: setTimeout(() => {
+        analyticsSlowWaiters.delete(waiter);
+        resolve();
+      }, 5_000)
+    };
+    analyticsSlowWaiters.add(waiter);
+  });
+  return res.json({ completed: analyticsSlowCompleted });
+});
+app.get('/api/admin/analytics/events', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (req.query.search === 'invalid') {
+    return res.status(400).json({ error: 'invalid_filter', field: 'search', reason: 'too_long' });
+  }
+  if (
+    analyticsRetryPending &&
+    (req.query.search === 'retry' || (req.query.search === 'retry-next' && req.query.cursor === 'fixture-page-2'))
+  ) {
+    analyticsRetryPending = false;
+    return res.status(500).json({ error: 'analytics_query_failed' });
+  }
+  if (req.query.search === 'slow') {
+    await new Promise(resolve => setTimeout(resolve, 350));
+    finishAnalyticsSlowRequest();
+  }
+  return res.json(analyticsFixturePage(req.query));
+});
+app.get('/api/admin/analytics/events/:eventId', (req, res) => {
+  const pageNumber = Number(req.params.eventId[0]);
+  const index = Number(req.params.eventId.at(-1));
+  if (![1, 2, 3].includes(pageNumber) || ![1, 2].includes(index)) return res.sendStatus(404);
+  const detail = analyticsFixtureEvent(pageNumber, index, 'all', '');
+  return res.json({
+    ...detail,
+    raw: { userAgent: 'FixtureBrowser/1.0', requestClientHints: {}, browserClientContext: {} },
+    screen: { width: 1920, height: 1080 },
+    viewport: { width: 1440, height: 900 },
+    hardware: { concurrency: 8, deviceMemoryGb: 8, cpuArchitecture: 'x86' },
+    touch: { maxTouchPoints: 0 },
+    network: { effectiveType: '4g', downlinkMbps: 10, rttMs: 20, saveData: false },
+    browserContext: { language: 'zh-CN', languages: ['zh-CN'], timezone: 'Asia/Shanghai' },
+    collection: { sources: detail.client.sources, contextCollectedAt: detail.observedAtUtc }
+  });
+});
+app.get('/admin/analytics', (req, res) => res.render('admin/analytics', analyticsViewModel(req.query)));
 app.get('/visual-not-found', (req, res) => res.status(200).render('404', { user: null }));
 app.use((req, res) => res.status(404).render('404', { user: null }));
 

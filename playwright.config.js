@@ -109,6 +109,16 @@ module.exports = defineConfig({
     mobileProject('iphone-air', 420, 912),
     mobileProject('iphone-17-pro-max', 440, 956),
     {
+      name: 'admin-analytics-browser',
+      testMatch: /admin-analytics-browser\.spec\.js/,
+      use: {
+        ...commonUse,
+        browserName: 'chromium',
+        viewport: { width: 1440, height: 900 },
+        deviceScaleFactor: 1
+      }
+    },
+    {
       name: 'article-audio-desktop',
       testMatch: /article-audio-browser\.spec\.js/,
       use: {

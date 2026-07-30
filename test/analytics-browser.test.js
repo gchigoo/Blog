@@ -667,5 +667,12 @@ test('admin analytics view renders readable paths and hostile detail values as t
 
   const source = fs.readFileSync(path.resolve(__dirname, '..', 'public/js/admin-analytics.js'), 'utf8');
   assert.doesNotMatch(source, /innerHTML|insertAdjacentHTML|document\.write/);
+  assert.match(source, /replaceChildren/);
   assert.match(source, /textContent/);
+  assert.match(source, /AbortController/);
+  assert.match(source, /pushState/);
+  assert.match(source, /replaceState/);
+  assert.match(source, /popstate/);
+  assert.match(source, /preventScroll/);
+  assert.match(source, /data-analytics-retry/);
 });
