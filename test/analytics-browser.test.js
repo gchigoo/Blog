@@ -360,6 +360,7 @@ test('admin analytics invalid query remains a local alert when details are disab
     assert.doesNotMatch(html, new RegExp(sensitiveMarker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
   assert.doesNotMatch(html, /203\.0\.113|127\.0\.0\.1|::1/);
+  assert.equal(occurrenceCount(html, 'id="analytics-detail-status"'), 0);
   assert.doesNotMatch(html, /analytics-event-table|analytics-event-cards|analytics-filter-form|analytics-detail-panel|admin-analytics\.js|data-analytics-page=/);
   assert.doesNotMatch(html, /访问明细未启用；此处不提供已保留或历史逐次访问数据。/);
 });
