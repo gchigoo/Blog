@@ -58,7 +58,11 @@
         <h3 id="analytics-event-summary" tabindex="-1">逐次访问明细</h3>
       </div>
     </div>
-    <p id="analytics-event-status" class="message info" role="status">访问明细未启用；此处不提供已保留或历史逐次访问数据。</p>
+    <% if (pageError) { %>
+      <p id="analytics-event-status" class="message error" role="alert"><%= pageError %></p>
+    <% } else { %>
+      <p id="analytics-event-status" class="message info" role="status">访问明细未启用；此处不提供已保留或历史逐次访问数据。</p>
+    <% } %>
   <% } else { %>
     <div class="analytics-workspace-heading">
       <div>

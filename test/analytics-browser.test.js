@@ -291,6 +291,39 @@ test('admin retained-detail API and SSR are unavailable when details collection 
   assert.doesNotMatch(html, /analytics-event-table|analytics-event-cards|analytics-filter-form|analytics-detail-panel|admin-analytics\.js/);
 });
 
+test('admin analytics invalid query remains a local alert when details are disabled', async t => {
+  const { baseUrl, adminCookie, db } = await createHarness(t, {
+    config: {
+      detailsEnabled: false,
+      geoIpCityDbPath: null,
+      geoIpUpdateStatusPath: null
+    }
+  });
+  db.prepare(`
+    INSERT INTO access_metrics (bucket_utc, path, visitor_day_hmac, device_kind, traffic_kind)
+    VALUES (?, '/retained-disabled-error', 'retained-disabled-error', 'desktop', 'human')
+  `).run(new Date().toISOString());
+
+  const page = await fetch(`${baseUrl}/admin/analytics?traffic=robot`, {
+    headers: { cookie: adminCookie }
+  });
+  const html = await page.text();
+  assert.equal(page.status, 400);
+  assert.equal(occurrenceCount(html, 'id="analytics-event-status"'), 1);
+  assert.equal(occurrenceCount(html, '筛选条件无效，请检查输入后重试。'), 1);
+  assert.match(html, /id="analytics-event-status"[^>]*class="[^"]*error[^"]*"[^>]*role="alert"[^>]*>筛选条件无效，请检查输入后重试。/);
+  const headingIndex = html.indexOf('class="analytics-heading"');
+  const overviewIndex = html.indexOf('id="analytics-overview"');
+  const eventsIndex = html.indexOf('id="event-list"');
+  const moreIndex = html.indexOf('id="analytics-more"');
+  const systemIndex = html.indexOf('id="analytics-system-status"');
+  assert.ok(headingIndex >= 0 && headingIndex < overviewIndex);
+  assert.ok(overviewIndex < eventsIndex && eventsIndex < moreIndex && moreIndex < systemIndex);
+  assert.doesNotMatch(html, /203\.0\.113|127\.0\.0\.1|::1/);
+  assert.doesNotMatch(html, /analytics-event-table|analytics-event-cards|analytics-filter-form|analytics-detail-panel|admin-analytics\.js|data-analytics-page=/);
+  assert.doesNotMatch(html, /访问明细未启用；此处不提供已保留或历史逐次访问数据。/);
+});
+
 test('admin analytics SSR keeps enabled-empty list containers and stable hooks unique', async t => {
   const { baseUrl, adminCookie } = await createHarness(t);
   const page = await fetch(`${baseUrl}/admin/analytics?search=no-matching-visit`, {
@@ -490,8 +523,8 @@ test('admin analytics view renders readable paths and hostile detail values as t
       ip: '"><svg data-ip-injected onload=alert(4)>', country: '', subdivision: '', city: '',
       browser: '', os: '', device: '', pathPrefix: '"><button data-path-injected>bad</button>', referrerHost: ''
     },
-    eventPreviousUrl: '/admin/analytics?days=7&cursor=previous%22%20data-prev-injected=%22yes#event-list',
-    eventNextUrl: '/admin/analytics?days=7&cursor=next%22%20data-next-injected=%22yes#event-list',
+    eventPreviousUrl: '/admin/analytics?days=7&cursor=previous" data-prev-injected="yes"><svg data-prev-element>#event-list',
+    eventNextUrl: '/admin/analytics?days=7&cursor=next" data-next-injected="yes"><img data-next-element src=x>#event-list',
     pageError: null,
     rangeOptions: [1, 7, 30],
     systemStatus: {
@@ -520,9 +553,9 @@ test('admin analytics view renders readable paths and hostile detail values as t
   assert.match(html, /value="&#34;&gt;&lt;input data-filter-injected value=x&gt;"/);
   assert.match(html, /value="&#34;&gt;&lt;svg data-ip-injected onload=alert\(4\)&gt;"/);
   assert.match(html, /value="&#34;&gt;&lt;button data-path-injected&gt;bad&lt;\/button&gt;"/);
-  assert.match(html, /href="\/admin\/analytics\?days=7&amp;cursor=previous%22%20data-prev-injected=%22yes#event-list" data-analytics-page="previous"/);
-  assert.match(html, /href="\/admin\/analytics\?days=7&amp;cursor=next%22%20data-next-injected=%22yes#event-list" data-analytics-page="next"/);
-  assert.doesNotMatch(html, /<img data-bot-injected|<input data-filter-injected|<svg data-ip-injected|<button data-path-injected/);
+  assert.match(html, /href="\/admin\/analytics\?days=7&amp;cursor=previous&#34; data-prev-injected=&#34;yes&#34;&gt;&lt;svg data-prev-element&gt;#event-list" data-analytics-page="previous"/);
+  assert.match(html, /href="\/admin\/analytics\?days=7&amp;cursor=next&#34; data-next-injected=&#34;yes&#34;&gt;&lt;img data-next-element src=x&gt;#event-list" data-analytics-page="next"/);
+  assert.doesNotMatch(html, /<img data-bot-injected|<input data-filter-injected|<svg data-ip-injected|<button data-path-injected|<svg data-prev-element|<img data-next-element/);
   assert.doesNotMatch(html, /\sdata-(?:prev|next)-injected="yes"/);
   assert.match(html, /Geo warning fixture/);
   assert.equal((html.match(/Geo warning fixture/g) || []).length, 1);
