@@ -3,7 +3,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const test = require('node:test');
+const Database = require('better-sqlite3');
 
+const { LATEST_SCHEMA_VERSION, migrateDatabase } = require('../server/migrations');
 const { validateRuntimePaths } = require('../server/utils/runtime-paths');
 
 const root = path.resolve(__dirname, '..');
@@ -16,6 +18,64 @@ test('project declares the Node 24 runtime and built-in test runner', () => {
   assert.equal(packageJson.scripts.test, 'node --test test/*.test.js');
   assert.equal(nvmrc, '24');
   assert.equal(Number(process.versions.node.split('.')[0]), 24);
+});
+
+test('database migration applies analytics traffic schema version 2 idempotently', () => {
+  const db = new Database(':memory:');
+  db.exec(`
+    CREATE TABLE articles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      slug TEXT UNIQUE NOT NULL,
+      content TEXT NOT NULL,
+      html TEXT NOT NULL,
+      tags TEXT,
+      created_at TEXT,
+      updated_at TEXT
+    );
+    CREATE TABLE access_metrics (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      bucket_utc TEXT NOT NULL,
+      path TEXT NOT NULL,
+      visitor_day_hmac TEXT NOT NULL,
+      device_kind TEXT NOT NULL
+    );
+    CREATE TABLE access_event_details (
+      metric_id INTEGER PRIMARY KEY REFERENCES access_metrics(id) ON DELETE CASCADE,
+      event_id TEXT UNIQUE NOT NULL,
+      observed_at_utc TEXT NOT NULL,
+      ip_address TEXT NOT NULL
+    );
+    INSERT INTO access_metrics (bucket_utc, path, visitor_day_hmac, device_kind)
+    VALUES ('2026-07-01T00:00:00.000Z', '/legacy', 'legacy', 'desktop');
+  `);
+
+  assert.equal(LATEST_SCHEMA_VERSION, 2);
+  assert.equal(migrateDatabase(db), 2);
+  assert.equal(migrateDatabase(db), 2);
+  assert.deepEqual(
+    db.prepare('SELECT version FROM schema_migrations ORDER BY version').all().map(row => row.version),
+    [1, 2]
+  );
+  assert.equal(
+    db.prepare("SELECT traffic_kind FROM access_metrics WHERE path = '/legacy'").get().traffic_kind,
+    'human'
+  );
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 2').get().count, 1);
+  for (const name of [
+    'idx_access_metrics_traffic_bucket',
+    'idx_event_details_traffic_observed',
+    'idx_event_details_traffic_ip_observed'
+  ]) {
+    assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?").get(name));
+  }
+  for (const name of [
+    'analytics_detail_traffic_insert_guard',
+    'analytics_detail_traffic_update_guard'
+  ]) {
+    assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = ?").get(name));
+  }
+  db.close();
 });
 
 test('runtime path validation creates writable data directories and requires About content', t => {

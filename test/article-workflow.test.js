@@ -65,8 +65,11 @@ test('versioned migration backfills published status, tags, and FTS search', () 
   assert.equal(db.prepare('SELECT status FROM articles').get().status, 'published');
   assert.equal(service.listByTag('node').length, 1);
   assert.equal(service.search('sqlite').length, 1);
-  assert.equal(db.prepare('SELECT version FROM schema_migrations').get().version, 1);
-  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get().count, 1);
+  assert.deepEqual(
+    db.prepare('SELECT version FROM schema_migrations ORDER BY version').all().map(row => row.version),
+    [1, 2]
+  );
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM schema_migrations').get().count, 2);
   db.close();
 });
 

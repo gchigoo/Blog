@@ -59,6 +59,30 @@ test('analytics schema migrates legacy metrics and records metric/detail atomica
     VALUES ('2026-07-01T00:00:00.000Z', '/legacy', 'legacy', 'desktop');
   `);
   initializeAnalytics(db);
+  initializeAnalytics(db);
+
+  assert.equal(
+    db.prepare("SELECT traffic_kind FROM access_metrics WHERE path = '/legacy'").get().traffic_kind,
+    'human'
+  );
+  const metricColumns = new Set(db.prepare('PRAGMA table_info(access_metrics)').all().map(row => row.name));
+  const detailColumns = new Set(db.prepare('PRAGMA table_info(access_event_details)').all().map(row => row.name));
+  assert.ok(metricColumns.has('traffic_kind'));
+  assert.ok(detailColumns.has('traffic_kind'));
+  assert.ok(detailColumns.has('bot_name'));
+  for (const name of [
+    'idx_access_metrics_traffic_bucket',
+    'idx_event_details_traffic_observed',
+    'idx_event_details_traffic_ip_observed'
+  ]) {
+    assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?").get(name));
+  }
+  for (const name of [
+    'analytics_detail_traffic_insert_guard',
+    'analytics_detail_traffic_update_guard'
+  ]) {
+    assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = ?").get(name));
+  }
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM access_event_details').get().count, 0);
 
   const result = recordAccessEvent(db, event());
@@ -71,6 +95,22 @@ test('analytics schema migrates legacy metrics and records metric/detail atomica
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM access_metrics').get().count, 2);
   assert.throws(() => recordAccessEvent(db, event()), /UNIQUE/);
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM access_metrics').get().count, 2);
+
+  const parent = db.prepare(`
+    INSERT INTO access_metrics (bucket_utc, path, visitor_day_hmac, device_kind, traffic_kind)
+    VALUES ('2026-07-17T00:00:00.000Z', '/', 'visitor', 'desktop', 'human')
+  `).run();
+  assert.throws(() => db.prepare(`
+    INSERT INTO access_event_details (
+      metric_id, event_id, observed_at_utc, method, request_path, full_url,
+      url_sanitization_status, referrer_parse_status, status_code, duration_ms,
+      ip_address, ip_family, geo_status, user_agent, accept_language,
+      request_client_hints_json, client_parse_status, context_source,
+      traffic_kind, bot_name
+    ) VALUES (?, ?, ?, 'GET', '/', 'https://blog.example.com/', 'ok', 'missing',
+      200, 1, '203.0.113.10', 4, 'not_found', 'Mozilla/5.0', '', '{}',
+      'unknown', 'server', 'bot', 'Googlebot')
+  `).run(Number(parent.lastInsertRowid), 'f'.repeat(32), '2026-07-17T00:00:00.000Z'), /traffic classification/);
   db.close();
 });
 

@@ -103,6 +103,8 @@ function initializeEventDetails(db) {
       engine_version TEXT,
       cpu_architecture TEXT,
       client_parse_status TEXT NOT NULL CHECK (client_parse_status IN ('parsed', 'unknown', 'error')),
+      traffic_kind TEXT NOT NULL DEFAULT 'human' CHECK (traffic_kind IN ('human', 'bot')),
+      bot_name TEXT,
       client_context_json TEXT,
       context_hash TEXT,
       context_collected_at TEXT,
@@ -215,6 +217,7 @@ function rebuildDetailDimensionMetrics(db) {
         SELECT ?, ${keyExpression}, m.bucket_utc, MIN(${labelExpression}), COUNT(*)
         FROM access_event_details d
         JOIN access_metrics m ON m.id = d.metric_id
+        WHERE d.traffic_kind = 'human'
         GROUP BY m.bucket_utc, ${keyExpression}
       `).run(dimension);
     }

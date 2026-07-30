@@ -1,4 +1,6 @@
-const LATEST_SCHEMA_VERSION = 1;
+const { migrateAnalyticsTrafficSchema } = require('./analytics/traffic-schema');
+
+const LATEST_SCHEMA_VERSION = 2;
 
 function columnNames(db, table) {
   return new Set(db.prepare(`PRAGMA table_info(${table})`).all().map(column => column.name));
@@ -80,7 +82,10 @@ function migrateDatabase(db) {
   `);
   const applied = new Set(db.prepare('SELECT version FROM schema_migrations').all().map(row => row.version));
   const migrations = /** @type {Array<[number, (database: any) => void]>} */ (
-    [[1, applyArticleSearchMigration]]
+    [
+      [1, applyArticleSearchMigration],
+      [2, migrateAnalyticsTrafficSchema]
+    ]
   );
   const apply = db.transaction(() => {
     for (const [version, migration] of migrations) {

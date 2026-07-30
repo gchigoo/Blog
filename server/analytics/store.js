@@ -3,6 +3,7 @@ const { cleanupAnalytics, initializeEventDetails } = require('./repository');
 const { formatAnalyticsPath } = require('./path-display');
 const { getOverviewDimensions } = require('./query/analytics-query');
 const { getCachedOverview, markOverviewDirty, setCachedOverview } = require('./overview-cache');
+const { migrateAnalyticsTrafficSchema } = require('./traffic-schema');
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -26,12 +27,15 @@ function initializeAnalytics(db) {
       bucket_utc TEXT NOT NULL,
       path TEXT NOT NULL,
       visitor_day_hmac TEXT NOT NULL,
-      device_kind TEXT NOT NULL CHECK (device_kind IN ('desktop', 'mobile', 'tablet', 'other'))
+      device_kind TEXT NOT NULL CHECK (device_kind IN ('desktop', 'mobile', 'tablet', 'other')),
+      traffic_kind TEXT NOT NULL DEFAULT 'human' CHECK (traffic_kind IN ('human', 'bot'))
     );
     CREATE INDEX IF NOT EXISTS idx_access_metrics_bucket ON access_metrics(bucket_utc);
     CREATE INDEX IF NOT EXISTS idx_access_metrics_path_bucket ON access_metrics(path, bucket_utc);
   `);
+  migrateAnalyticsTrafficSchema(db);
   initializeEventDetails(db);
+  migrateAnalyticsTrafficSchema(db);
 }
 
 function recordMetric(db, metric) {
