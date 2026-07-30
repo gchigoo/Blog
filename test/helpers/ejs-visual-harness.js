@@ -211,48 +211,65 @@ function dimension(items) {
   };
 }
 
-function analyticsFixtureEvent(pageNumber, index, traffic, search) {
+const ANALYTICS_FIXTURE_SIZE = 6;
+
+function analyticsFixtureCursor(boundary) {
+  return Buffer.from(JSON.stringify({
+    observedAtUtc: `2026-07-17T${String(8 - boundary).padStart(2, '0')}:00:00.000Z`,
+    metricId: 100 - boundary
+  })).toString('base64url');
+}
+
+function analyticsFixtureBoundary(cursor) {
+  if (!cursor) return 0;
+  for (let boundary = 1; boundary <= ANALYTICS_FIXTURE_SIZE; boundary += 1) {
+    if (analyticsFixtureCursor(boundary) === cursor) return boundary;
+  }
+  return 0;
+}
+
+function analyticsFixtureEvent(position, traffic, search) {
   const forcedTraffic = traffic === 'human' || traffic === 'bot' ? traffic : null;
-  const trafficKind = forcedTraffic || (index === 1 ? 'human' : 'bot');
-  const marker = search || `Fixture page ${pageNumber}`;
-  const id = `${String(pageNumber).repeat(31)}${index}`;
-  const observedHour = 8 - pageNumber;
+  const trafficKind = forcedTraffic || (position % 2 === 1 ? 'human' : 'bot');
+  const marker = search || `Fixture event ${position}`;
+  const longValue = '长'.repeat(5000);
+  const displayPath = search === 'long-valid' ? `/fixture/${longValue}` : `/fixture/event-${position}`;
   return {
-    id,
-    observedAtUtc: `2026-07-17T0${observedHour}:${index === 1 ? '30' : '10'}:00.000Z`,
-    requestPath: `/fixture/page-${pageNumber}/event-${index}`,
-    displayPath: `/fixture/page-${pageNumber}/event-${index}`,
+    id: position.toString(16).padStart(32, '0'),
+    observedAtUtc: `2026-07-17T${String(9 - position).padStart(2, '0')}:${position % 2 ? '30' : '10'}:00.000Z`,
+    requestPath: displayPath,
+    displayPath,
     displayPathStatus: 'unchanged',
     trafficKind,
     botName: trafficKind === 'bot' ? 'Googlebot' : null,
     page: {
-      kind: 'article',
-      title: `${marker} · event ${index}`,
-      displayPath: `/fixture/page-${pageNumber}/event-${index}`
+      kind: 'other',
+      title: search === 'long-valid' ? longValue : `${marker}`,
+      displayPath
     },
-    fullUrl: `https://blog.example.test/fixture/page-${pageNumber}/event-${index}`,
-    referrer: index === 1 ? 'https://private-referrer.example.test/detail-only' : null,
+    fullUrl: `https://blog.example.test/fixture/event-${position}`,
+    referrer: position === 1 ? 'https://private-referrer.example.test/detail-only' : null,
     statusCode: 200,
-    durationMs: 10 + pageNumber + index,
-    responseBytes: 2048 + pageNumber + index,
-    ipAddress: `203.0.113.${pageNumber * 10 + index}`,
+    durationMs: 10 + position,
+    responseBytes: 2048 + position,
+    ipAddress: `203.0.113.${10 + position}`,
     location: {
-      continent: { code: 'AS', name: '亚洲' },
-      country: { code: pageNumber === 3 ? 'JP' : 'CN', name: pageNumber === 3 ? '日本' : '中国' },
-      subdivision: { code: 'BJ', name: pageNumber === 3 ? '東京都' : '北京' },
-      city: pageNumber === 3 ? '千代田区' : '北京',
+      continent: { code: 'AS', name: search === 'long-valid' ? null : '亚洲' },
+      country: { code: 'CN', name: search === 'long-valid' ? null : '中国' },
+      subdivision: { code: null, name: search === 'long-valid' ? null : '北京' },
+      city: search === 'long-valid' ? null : '北京',
       postalCode: null,
-      timezone: 'Asia/Shanghai',
+      timezone: null,
       coordinates: null,
       accuracyRadiusKm: null
     },
     client: {
-      deviceType: index === 1 ? 'desktop' : 'mobile',
+      deviceType: search === 'long-valid' ? null : (position % 2 ? 'desktop' : 'mobile'),
       vendor: null,
       model: null,
-      os: { name: index === 1 ? 'Windows' : 'iOS', version: index === 1 ? '11' : '19' },
-      browser: { name: index === 1 ? 'Chrome' : 'Safari', version: index === 1 ? '126' : '19' },
-      engine: { name: index === 1 ? 'Blink' : 'WebKit', version: index === 1 ? '126' : '619' },
+      os: { name: search === 'long-valid' ? longValue : (position % 2 ? 'Windows' : 'iOS'), version: null },
+      browser: { name: search === 'long-valid' ? null : (position % 2 ? 'Chrome' : 'Safari'), version: search === 'long-valid' ? longValue : '126' },
+      engine: { name: null, version: null },
       cpuArchitecture: null,
       contextAvailable: true,
       sources: ['server', 'client-fetch']
@@ -261,20 +278,19 @@ function analyticsFixtureEvent(pageNumber, index, traffic, search) {
 }
 
 function analyticsFixturePage(query = {}) {
-  const pageNumber = query.cursor === 'fixture-page-3' ? 3 : query.cursor === 'fixture-page-2' ? 2 : 1;
   const traffic = typeof query.traffic === 'string' ? query.traffic : 'all';
   const search = typeof query.search === 'string' ? query.search : '';
   const requestedLimit = Number(query.limit);
   const limit = Number.isInteger(requestedLimit) && requestedLimit >= 1 && requestedLimit <= 100
     ? requestedLimit
     : 2;
-  const items = search === 'empty'
-    ? []
-    : [
-        analyticsFixtureEvent(pageNumber, 1, traffic, search),
-        analyticsFixtureEvent(pageNumber, 2, traffic, search)
-      ].slice(0, limit);
-  let nextCursor = items.length === 0 || pageNumber >= 3 ? null : `fixture-page-${pageNumber + 1}`;
+  const start = analyticsFixtureBoundary(query.cursor);
+  const dataset = Array.from({ length: ANALYTICS_FIXTURE_SIZE }, (_, index) => (
+    analyticsFixtureEvent(index + 1, traffic, search)
+  ));
+  const items = search === 'empty' ? [] : dataset.slice(start, start + limit);
+  const boundary = start + items.length;
+  let nextCursor = items.length > 0 && boundary < dataset.length ? analyticsFixtureCursor(boundary) : null;
   if (search === 'same-cursor' && query.cursor) nextCursor = query.cursor;
   return {
     days: Number(query.days) || 7,
@@ -294,14 +310,27 @@ function analyticsFilters(query, days) {
   return filters;
 }
 
-function analyticsPageUrl(filters, cursor) {
+function analyticsPageUrl(filters, cursor, limit) {
   if (!cursor) return null;
   const params = new URLSearchParams();
   for (const [name, value] of Object.entries(filters)) {
     if (value) params.set(name, value);
   }
+  if (limit !== 2) params.set('limit', String(limit));
   params.set('cursor', cursor);
   return `/admin/analytics?${params.toString()}#event-list`;
+}
+
+function analyticsQueryIsValid(query) {
+  const duplicateSensitive = [
+    'days', 'search', 'traffic', 'ip', 'country', 'subdivision', 'city', 'browser', 'os',
+    'device', 'pathPrefix', 'referrerHost', 'limit', 'cursor'
+  ];
+  if (duplicateSensitive.some(name => Array.isArray(query[name]))) return false;
+  if (Object.hasOwn(query, 'cursor') && (typeof query.cursor !== 'string' || !/^[A-Za-z0-9_-]+$/.test(query.cursor))) {
+    return false;
+  }
+  return true;
 }
 
 function analyticsViewModel(query = {}) {
@@ -336,16 +365,21 @@ function analyticsViewModel(query = {}) {
       stale: false
     }
   };
-  overview.days = Number(query.days) || 7;
+  const validQuery = analyticsQueryIsValid(query);
+  overview.days = typeof query.days === 'string' && /^\d+$/.test(query.days) ? Number(query.days) : 7;
   const filters = analyticsFilters(query, overview.days);
-  const events = { available: true, ...analyticsFixturePage(query) };
+  const requestedLimit = Number(query.limit);
+  const limit = Number.isInteger(requestedLimit) && requestedLimit >= 1 && requestedLimit <= 100 ? requestedLimit : 2;
+  const events = validQuery
+    ? { available: true, ...analyticsFixturePage(query) }
+    : { available: true, days: overview.days, items: [], nextCursor: null };
   return {
     overview,
     events,
     filters,
     eventPreviousUrl: null,
-    eventNextUrl: analyticsPageUrl(filters, events.nextCursor),
-    pageError: null,
+    eventNextUrl: analyticsPageUrl(filters, events.nextCursor, limit),
+    pageError: validQuery ? null : '筛选条件无效，请检查输入后重试。',
     rangeOptions: [1, 7, 30],
     systemStatus: {
       detailsEnabled: true,
@@ -575,6 +609,9 @@ app.get('/__test/analytics-wait-detail-slow', async (req, res) => {
 });
 app.get('/api/admin/analytics/events', async (req, res) => {
   res.set('Cache-Control', 'no-store');
+  if (!analyticsQueryIsValid(req.query)) {
+    return res.status(400).json({ error: 'invalid_filter', field: 'cursor', reason: 'invalid_value' });
+  }
   if (analyticsPopFailurePending) {
     analyticsPopFailurePending = false;
     return res.status(500).json({ error: 'analytics_query_failed' });
@@ -584,7 +621,7 @@ app.get('/api/admin/analytics/events', async (req, res) => {
   }
   if (
     analyticsRetryPending &&
-    (req.query.search === 'retry' || (req.query.search === 'retry-next' && req.query.cursor === 'fixture-page-2'))
+    (req.query.search === 'retry' || (req.query.search === 'retry-next' && req.query.cursor))
   ) {
     analyticsRetryPending = false;
     return res.status(500).json({ error: 'analytics_query_failed' });
@@ -604,17 +641,20 @@ app.get('/api/admin/analytics/events', async (req, res) => {
   if (req.query.search === 'bad-next-cursor') {
     return res.json({ ...analyticsFixturePage(req.query), nextCursor: { malformed: true } });
   }
+  if (req.query.search === 'oversized-list') {
+    const item = analyticsFixtureEvent(1, 'all', 'oversized-list');
+    return res.json({ days: 7, items: Array.from({ length: 101 }, () => item), nextCursor: null });
+  }
   return res.json(analyticsFixturePage(req.query));
 });
 app.get('/api/admin/analytics/events/:eventId', async (req, res) => {
-  const pageNumber = Number(req.params.eventId[0]);
-  const index = Number(req.params.eventId.at(-1));
-  if (![1, 2, 3].includes(pageNumber) || ![1, 2].includes(index)) return res.sendStatus(404);
-  if (index === 1) {
+  const position = Number.parseInt(req.params.eventId, 16);
+  if (!Number.isInteger(position) || position < 1 || position > ANALYTICS_FIXTURE_SIZE) return res.sendStatus(404);
+  if (position === 1) {
     await new Promise(resolve => setTimeout(resolve, 350));
     finishAnalyticsDetailSlowRequest();
   }
-  const detail = analyticsFixtureEvent(pageNumber, index, 'all', '');
+  const detail = analyticsFixtureEvent(position, 'all', '');
   return res.json({
     ...detail,
     raw: { userAgent: 'FixtureBrowser/1.0', requestClientHints: {}, browserClientContext: {} },

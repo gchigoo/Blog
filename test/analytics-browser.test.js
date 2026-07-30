@@ -257,7 +257,7 @@ test('admin analytics API/page require authentication, are no-store, and expose 
   });
   const pagedHtml = await paged.text();
   assert.equal(paged.status, 200);
-  assert.match(pagedHtml, /href="\/admin\/analytics\?[^"#]*search=about[^"#]*traffic=all[^"#]*cursor=[^"#]+#event-list"/);
+  assert.match(pagedHtml, /href="\/admin\/analytics\?[^"#]*search=about[^"#]*traffic=all[^"#]*limit=1[^"#]*cursor=[^"#]+#event-list"/);
 });
 
 test('admin retained-detail API and SSR are unavailable when details collection is disabled', async t => {

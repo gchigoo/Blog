@@ -28,10 +28,13 @@
   const cursorPattern = /^[A-Za-z0-9_-]+$/;
   const maximumCursorStack = 100;
 
-  const initialParams = normalizeParams(new URL(window.location.href).searchParams);
+  const initialQuery = window.location.search.slice(1);
+  const initialQueryValue = acceptedQuery(initialQuery);
+  const initialParams = initialQueryValue?.params || new URLSearchParams(initialQuery);
   let committed = {
     params: initialParams,
-    cursor: initialParams.get('cursor'),
+    query: initialQuery,
+    cursor: initialQueryValue?.cursor ?? null,
     cursorStack: [],
     nextCursor: cursorFromPagination('next')
   };
@@ -69,12 +72,13 @@
     );
   }
 
-  function normalizeParams(source) {
-    const params = new URLSearchParams();
-    for (const [name, value] of source) {
-      if (supportedQueryNames.has(name) && value !== '') params.set(name, value);
+  function acceptedQuery(query) {
+    const params = new URLSearchParams(query);
+    for (const name of supportedQueryNames) {
+      if (params.getAll(name).length > 1) return null;
     }
-    return params;
+    if (params.has('cursor') && !validCursor(params.get('cursor'), false)) return null;
+    return { params, query, cursor: params.get('cursor') };
   }
 
   function cloneParams(params) {
@@ -249,12 +253,14 @@
   function paramsFromForm() {
     const data = new FormData(form);
     const params = new URLSearchParams();
+    const replacedNames = new Set([...formFilterNames, 'cursor']);
+    for (const [name, value] of committed.params) {
+      if (!replacedNames.has(name)) params.append(name, value);
+    }
     for (const name of formFilterNames) {
       const value = data.get(name);
       if (typeof value === 'string' && value !== '') params.set(name, value);
     }
-    const committedLimit = committed.params.get('limit');
-    if (committedLimit) params.set('limit', committedLimit);
     return params;
   }
 
@@ -265,9 +271,8 @@
     return params;
   }
 
-  function pageUrl(params) {
-    const query = params.toString();
-    return `${window.location.pathname}${query ? `?${query}` : ''}`;
+  function pageUrl(state) {
+    return `${window.location.pathname}${state.query ? `?${state.query}` : ''}`;
   }
 
   function apiUrl(params) {
@@ -280,22 +285,23 @@
       analytics: {
         cursor: state.cursor,
         cursorStack: [...state.cursorStack],
-        query: state.params.toString()
+        query: state.query
       }
     };
   }
 
-  function exactHistoryProposal(value, params) {
-    if (!isPlainObject(value) || Object.keys(value).length !== 1 || !isPlainObject(value.analytics)) return null;
+  function exactHistoryProposal(value, query) {
+    const accepted = acceptedQuery(query);
+    if (!accepted || !isPlainObject(value) || Object.keys(value).length !== 1 || !isPlainObject(value.analytics)) return null;
     const analytics = value.analytics;
     if (Object.keys(analytics).sort().join(',') !== 'cursor,cursorStack,query') return null;
-    if (typeof analytics.query !== 'string' || analytics.query !== params.toString()) return null;
-    const urlCursor = params.get('cursor');
-    if (!validCursor(analytics.cursor) || analytics.cursor !== urlCursor) return null;
+    if (typeof analytics.query !== 'string' || analytics.query !== accepted.query) return null;
+    if (!validCursor(analytics.cursor) || analytics.cursor !== accepted.cursor) return null;
     if (!Array.isArray(analytics.cursorStack) || analytics.cursorStack.length > maximumCursorStack) return null;
     if (!analytics.cursorStack.every(cursor => validCursor(cursor))) return null;
     return {
-      params: cloneParams(params),
+      params: cloneParams(accepted.params),
+      query: accepted.query,
       cursor: analytics.cursor,
       cursorStack: [...analytics.cursorStack]
     };
@@ -317,7 +323,7 @@
   function writeHistory(mode, state) {
     if (mode === 'none') return;
     const method = mode === 'push' ? 'pushState' : 'replaceState';
-    history[method](historyState(state), '', pageUrl(state.params));
+    history[method](historyState(state), '', pageUrl(state));
   }
 
   function setControlsDisabled(disabled) {
@@ -381,43 +387,45 @@
     if (window.scrollY !== scrollPosition) window.scrollTo(window.scrollX, scrollPosition);
   }
 
-  function validString(value, maxLength = 4096) {
-    return typeof value === 'string' && value.length > 0 && value.length <= maxLength;
+  function validString(value) {
+    return typeof value === 'string' && value.length > 0;
   }
 
-  function validOptionalString(value, maxLength = 4096) {
-    return value === null || value === undefined || (typeof value === 'string' && value.length <= maxLength);
+  function validOptionalString(value) {
+    return value === null || typeof value === 'string';
   }
 
   function validateItem(item) {
     if (!isPlainObject(item)) throw new Error('invalid_event_item');
     if (!/^[0-9a-f]{32}$/.test(item.id || '')) throw new Error('invalid_event_id');
-    if (!validString(item.observedAtUtc, 64) || !Number.isFinite(Date.parse(item.observedAtUtc))) {
+    if (!validString(item.observedAtUtc) || !Number.isFinite(Date.parse(item.observedAtUtc))) {
       throw new Error('invalid_event_time');
     }
     if (!['human', 'bot'].includes(item.trafficKind)) throw new Error('invalid_traffic_kind');
-    if (item.trafficKind === 'bot' && !validString(item.botName, 256)) throw new Error('invalid_bot_name');
-    if (item.trafficKind === 'human' && !validOptionalString(item.botName, 256)) throw new Error('invalid_bot_name');
+    if (item.trafficKind === 'bot' && !validString(item.botName)) throw new Error('invalid_bot_name');
+    if (item.trafficKind === 'human' && item.botName !== null) throw new Error('invalid_bot_name');
     if (!isPlainObject(item.page) || !validString(item.page.title) || !validString(item.page.displayPath)) {
       throw new Error('invalid_page');
     }
-    if (!validString(item.ipAddress, 128)) throw new Error('invalid_ip');
+    if (!validString(item.ipAddress)) throw new Error('invalid_ip');
     if (!isPlainObject(item.location) || !isPlainObject(item.location.country)
       || !isPlainObject(item.location.subdivision)) throw new Error('invalid_location');
-    if (!validOptionalString(item.location.country.name, 512)
-      || !validOptionalString(item.location.subdivision.name, 512)
-      || !validOptionalString(item.location.city, 512)) throw new Error('invalid_location');
-    if (!isPlainObject(item.client) || !validOptionalString(item.client.deviceType, 128)
+    if (!validOptionalString(item.location.country.name)
+      || !validOptionalString(item.location.subdivision.name)
+      || !validOptionalString(item.location.city)) throw new Error('invalid_location');
+    if (!isPlainObject(item.client) || !validOptionalString(item.client.deviceType)
       || !isPlainObject(item.client.browser) || !isPlainObject(item.client.os)
-      || !validOptionalString(item.client.browser.name, 512)
-      || !validOptionalString(item.client.browser.version, 512)
-      || !validOptionalString(item.client.os.name, 512)
-      || !validOptionalString(item.client.os.version, 512)) throw new Error('invalid_client');
+      || !validOptionalString(item.client.browser.name)
+      || !validOptionalString(item.client.browser.version)
+      || !validOptionalString(item.client.os.name)
+      || !validOptionalString(item.client.os.version)) throw new Error('invalid_client');
     return item;
   }
 
   function validateListPayload(payload, attempt) {
-    if (!isPlainObject(payload) || !Array.isArray(payload.items)) throw new Error('invalid_list_response');
+    if (!isPlainObject(payload) || !Array.isArray(payload.items) || payload.items.length > 100) {
+      throw new Error('invalid_list_response');
+    }
     if (!validCursor(payload.nextCursor)) throw new Error('invalid_next_cursor');
     if (payload.nextCursor !== null && payload.nextCursor === attempt.cursor) throw new Error('non_progressing_cursor');
     return {
@@ -429,6 +437,7 @@
   function stageList(validated, attempt) {
     const state = {
       params: cloneParams(attempt.params),
+      query: attempt.params.toString(),
       cursor: attempt.cursor,
       cursorStack: [...attempt.cursorStack],
       nextCursor: validated.nextCursor
@@ -685,8 +694,8 @@
   });
 
   window.addEventListener('popstate', event => {
-    const params = normalizeParams(new URL(window.location.href).searchParams);
-    const proposal = exactHistoryProposal(event.state, params);
+    const query = window.location.search.slice(1);
+    const proposal = exactHistoryProposal(event.state, query);
     if (!proposal) {
       requestId += 1;
       if (activeController) activeController.abort();
@@ -704,11 +713,13 @@
     });
   });
 
-  const initialProposal = exactHistoryProposal(history.state, initialParams);
-  if (initialProposal) {
-    committed = { ...committed, cursor: initialProposal.cursor, cursorStack: initialProposal.cursorStack };
+  if (initialQueryValue) {
+    const initialProposal = exactHistoryProposal(history.state, initialQuery);
+    if (initialProposal) {
+      committed = { ...committed, ...initialProposal, nextCursor: committed.nextCursor };
+    }
+    applyParamsToForm(committed.params);
+    pagination.replaceChildren(...paginationNodes(committed));
+    history.replaceState(historyState(committed), '', pageUrl(committed));
   }
-  applyParamsToForm(committed.params);
-  pagination.replaceChildren(...paginationNodes(committed));
-  history.replaceState(historyState(committed), '', pageUrl(committed.params));
 })();

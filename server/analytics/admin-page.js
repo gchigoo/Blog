@@ -17,12 +17,13 @@ function filterViewModel(query, days) {
   return filters;
 }
 
-function nextPageUrl(filters, cursor) {
+function nextPageUrl(filters, cursor, limit) {
   if (!cursor) return null;
   const params = new URLSearchParams();
   for (const [name, value] of Object.entries(filters)) {
     if (value) params.set(name, value);
   }
+  if (limit !== 50) params.set('limit', String(limit));
   params.set('cursor', cursor);
   return `/admin/analytics?${params.toString()}#event-list`;
 }
@@ -91,7 +92,7 @@ function createAdminPageRouter({ db, config, clock, geoResolver, logger = consol
         events,
         filters,
         eventPreviousUrl: null,
-        eventNextUrl: nextPageUrl(filters, events.nextCursor),
+        eventNextUrl: nextPageUrl(filters, events.nextCursor, options.limit),
         formatBeijingTime,
         pageError,
         rangeOptions: rangeOptions(config.retentionDays),
