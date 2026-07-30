@@ -15,3 +15,4 @@ articles/*
 .cursor/
 *.mmdb
 /test-results/
+.superpowers/
