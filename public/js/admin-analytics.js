@@ -20,17 +20,26 @@
     browser: document.getElementById('analytics-detail-browser')
   };
   const emptyState = root.querySelector('.analytics-empty') || createEmptyState();
-  const filterNames = [
+  const formFilterNames = [
     'days', 'search', 'traffic', 'ip', 'country', 'subdivision', 'city', 'browser',
-    'os', 'device', 'pathPrefix', 'referrerHost', 'limit'
+    'os', 'device', 'pathPrefix', 'referrerHost'
   ];
+  const supportedQueryNames = new Set([...formFilterNames, 'limit', 'cursor']);
+  const cursorPattern = /^[A-Za-z0-9_-]+$/;
+  const maximumCursorStack = 100;
 
-  let currentCursor = new URL(window.location.href).searchParams.get('cursor');
-  let nextCursor = cursorFromPagination('next');
-  let cursorStack = [];
+  const initialParams = normalizeParams(new URL(window.location.href).searchParams);
+  let committed = {
+    params: initialParams,
+    cursor: initialParams.get('cursor'),
+    cursorStack: [],
+    nextCursor: cursorFromPagination('next')
+  };
   let activeController = null;
   let requestId = 0;
   let pendingRequest = null;
+  let detailController = null;
+  let detailRequestId = 0;
 
   function element(tagName, className, text) {
     const node = document.createElement(tagName);
@@ -50,6 +59,28 @@
     return value === null || value === undefined || value === '' ? fallback : String(value);
   }
 
+  function isPlainObject(value) {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+  }
+
+  function validCursor(value, nullable = true) {
+    return (nullable && value === null) || (
+      typeof value === 'string' && value.length > 0 && value.length <= 4096 && cursorPattern.test(value)
+    );
+  }
+
+  function normalizeParams(source) {
+    const params = new URLSearchParams();
+    for (const [name, value] of source) {
+      if (supportedQueryNames.has(name) && value !== '') params.set(name, value);
+    }
+    return params;
+  }
+
+  function cloneParams(params) {
+    return new URLSearchParams(params.toString());
+  }
+
   function joinedName(value) {
     if (!value) return '未知';
     return `${safeValue(value.name)} ${value.version || ''}`.trim();
@@ -57,46 +88,38 @@
 
   function locationText(item) {
     return [
-      item.location?.country?.name,
-      item.location?.subdivision?.name,
-      item.location?.city
+      item.location.country.name,
+      item.location.subdivision.name,
+      item.location.city
     ].map(value => safeValue(value)).join(' / ');
   }
 
-  function eventPage(item) {
-    return item.page || {
-      title: safeValue(item.displayPath),
-      displayPath: safeValue(item.displayPath)
-    };
-  }
-
   function trafficNodes(item) {
-    const trafficKind = item.trafficKind === 'bot' ? 'bot' : 'human';
     const label = element(
       'span',
-      `analytics-traffic-label ${trafficKind === 'bot' ? 'is-bot' : 'is-human'}`,
-      trafficKind === 'bot' ? '爬虫' : '真人'
+      `analytics-traffic-label ${item.trafficKind === 'bot' ? 'is-bot' : 'is-human'}`,
+      item.trafficKind === 'bot' ? '爬虫' : '真人'
     );
-    if (trafficKind !== 'bot') return [label];
+    if (item.trafficKind !== 'bot') return [label];
     return [label, element('span', 'analytics-bot-name', safeValue(item.botName))];
   }
 
   function eventTime(item) {
     const node = element('time', '', formatBeijingTime(item.observedAtUtc));
-    node.dateTime = safeValue(item.observedAtUtc, '');
+    node.dateTime = item.observedAtUtc;
     return node;
   }
 
   function detailButton(item) {
     const node = element('button', 'analytics-detail-button', '查看详情');
     node.type = 'button';
-    node.dataset.eventId = safeValue(item.id, '');
+    node.dataset.eventId = item.id;
     return node;
   }
 
   function eventRow(item) {
     const row = element('tr');
-    row.dataset.trafficKind = item.trafficKind === 'bot' ? 'bot' : 'human';
+    row.dataset.trafficKind = item.trafficKind;
 
     const timeCell = element('td');
     timeCell.append(eventTime(item));
@@ -104,26 +127,25 @@
     const pageCell = element('td');
     const pageContent = element('div', 'analytics-page-cell');
     pageContent.append(...trafficNodes(item));
-    const page = eventPage(item);
     pageContent.append(
-      element('strong', '', safeValue(page.title)),
-      element('code', 'analytics-break', safeValue(page.displayPath))
+      element('strong', '', item.page.title),
+      element('code', 'analytics-break', item.page.displayPath)
     );
     pageCell.append(pageContent);
 
     const locationCell = element('td');
     locationCell.append(
-      element('code', 'analytics-break', safeValue(item.ipAddress)),
+      element('code', 'analytics-break', item.ipAddress),
       element('span', 'analytics-secondary-line', locationText(item))
     );
 
     const clientCell = element('td');
     clientCell.append(
-      element('span', '', safeValue(item.client?.deviceType)),
+      element('span', '', safeValue(item.client.deviceType)),
       element(
         'span',
         'analytics-secondary-line',
-        `${joinedName(item.client?.browser)} · ${joinedName(item.client?.os)}`
+        `${joinedName(item.client.browser)} · ${joinedName(item.client.os)}`
       )
     );
 
@@ -135,30 +157,29 @@
 
   function eventCard(item) {
     const card = element('article', 'analytics-event-card');
-    card.dataset.trafficKind = item.trafficKind === 'bot' ? 'bot' : 'human';
+    card.dataset.trafficKind = item.trafficKind;
 
     const header = element('header', 'analytics-event-card-header');
     const traffic = element('div');
     traffic.append(...trafficNodes(item));
     header.append(traffic, eventTime(item));
 
-    const page = eventPage(item);
     const pageContent = element('div', 'analytics-event-card-page');
     pageContent.append(
-      element('strong', '', safeValue(page.title)),
-      element('code', 'analytics-break', safeValue(page.displayPath))
+      element('strong', '', item.page.title),
+      element('code', 'analytics-break', item.page.displayPath)
     );
 
     const details = element('dl', 'analytics-event-card-details');
     const location = element('dd');
     location.append(
-      element('code', 'analytics-break', safeValue(item.ipAddress)),
+      element('code', 'analytics-break', item.ipAddress),
       element('span', '', locationText(item))
     );
     const client = element('dd');
     client.append(
-      element('span', '', safeValue(item.client?.deviceType)),
-      element('span', '', `${joinedName(item.client?.browser)} · ${joinedName(item.client?.os)}`)
+      element('span', '', safeValue(item.client.deviceType)),
+      element('span', '', `${joinedName(item.client.browser)} · ${joinedName(item.client.os)}`)
     );
     details.append(
       element('dt', '', 'IP / 地区'),
@@ -172,69 +193,54 @@
   }
 
   function formatBeijingTime(value) {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return safeValue(value);
     return new Intl.DateTimeFormat('zh-CN', {
       timeZone: 'Asia/Shanghai',
       year: 'numeric', month: '2-digit', day: '2-digit',
       hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
-    }).format(date);
-  }
-
-  function pageNumber() {
-    return cursorStack.length + 1;
+    }).format(new Date(value));
   }
 
   function pagingButton(direction, enabled) {
-    const text = direction === 'previous' ? '← 上一页' : '下一页 →';
-    const node = element('button', '', text);
+    const node = element('button', '', direction === 'previous' ? '← 上一页' : '下一页 →');
     node.type = 'button';
     node.dataset.analyticsPage = direction;
     node.disabled = !enabled;
     return node;
   }
 
-  function renderPagination() {
-    pagination.replaceChildren(
-      pagingButton('previous', cursorStack.length > 0),
-      pagingButton('next', Boolean(nextCursor))
-    );
+  function paginationNodes(state) {
+    return [
+      pagingButton('previous', state.cursorStack.length > 0),
+      pagingButton('next', Boolean(state.nextCursor))
+    ];
   }
 
-  function filterSummaryText() {
-    const search = form.elements.search?.value || '';
-    const traffic = form.elements.traffic?.value || 'all';
+  function filterSummaryText(params) {
+    const search = params.get('search') || '';
+    const traffic = params.get('traffic') || 'all';
     const advanced = ['ip', 'country', 'subdivision', 'city', 'browser', 'os', 'device', 'pathPrefix', 'referrerHost']
-      .some(name => form.elements[name]?.value);
+      .some(name => params.has(name));
     return [
-      `近 ${form.elements.days?.value || '7'} 天`,
+      `近 ${params.get('days') || '7'} 天`,
       traffic === 'human' ? '仅真人' : traffic === 'bot' ? '仅爬虫' : '全部访问',
       search ? `搜索“${search}”` : '',
       advanced ? '已应用高级筛选' : ''
     ].filter(Boolean).join(' · ');
   }
 
-  function updateAppliedFilters() {
-    const target = form.querySelector('.analytics-applied-filters');
-    if (!target) return;
-    const label = element('strong', '', '当前条件：');
-    target.replaceChildren(label, document.createTextNode(` ${filterSummaryText()}`));
-  }
-
-  function renderEvents(items) {
-    tableBody.replaceChildren(...items.map(eventRow));
-    cards.replaceChildren(...items.map(eventCard));
-    emptyState.hidden = items.length !== 0;
-    summary.textContent = `逐次访问明细 · 第 ${pageNumber()} 页 · 本页 ${items.length} 条`;
-    updateAppliedFilters();
-    renderPagination();
+  function appliedFilterNodes(params) {
+    return [
+      element('strong', '', '当前条件：'),
+      document.createTextNode(` ${filterSummaryText(params)}`)
+    ];
   }
 
   function cursorFromPagination(direction) {
     const control = root.querySelector(`[data-analytics-page="${direction}"]`);
     if (!control || control.tagName !== 'A') return null;
     try {
-      return new URL(control.href).searchParams.get('cursor');
+      const cursor = new URL(control.href).searchParams.get('cursor');
+      return validCursor(cursor) ? cursor : null;
     } catch {
       return null;
     }
@@ -243,15 +249,17 @@
   function paramsFromForm() {
     const data = new FormData(form);
     const params = new URLSearchParams();
-    for (const name of filterNames) {
+    for (const name of formFilterNames) {
       const value = data.get(name);
       if (typeof value === 'string' && value !== '') params.set(name, value);
     }
+    const committedLimit = committed.params.get('limit');
+    if (committedLimit) params.set('limit', committedLimit);
     return params;
   }
 
   function paramsForCursor(cursor) {
-    const params = paramsFromForm();
+    const params = cloneParams(committed.params);
     params.delete('cursor');
     if (cursor) params.set('cursor', cursor);
     return params;
@@ -267,18 +275,34 @@
     return `/api/admin/analytics/events${query ? `?${query}` : ''}`;
   }
 
-  function historyState(params) {
+  function historyState(state) {
     return {
       analytics: {
-        cursor: currentCursor,
-        cursorStack: [...cursorStack],
-        query: params.toString()
+        cursor: state.cursor,
+        cursorStack: [...state.cursorStack],
+        query: state.params.toString()
       }
     };
   }
 
+  function exactHistoryProposal(value, params) {
+    if (!isPlainObject(value) || Object.keys(value).length !== 1 || !isPlainObject(value.analytics)) return null;
+    const analytics = value.analytics;
+    if (Object.keys(analytics).sort().join(',') !== 'cursor,cursorStack,query') return null;
+    if (typeof analytics.query !== 'string' || analytics.query !== params.toString()) return null;
+    const urlCursor = params.get('cursor');
+    if (!validCursor(analytics.cursor) || analytics.cursor !== urlCursor) return null;
+    if (!Array.isArray(analytics.cursorStack) || analytics.cursorStack.length > maximumCursorStack) return null;
+    if (!analytics.cursorStack.every(cursor => validCursor(cursor))) return null;
+    return {
+      params: cloneParams(params),
+      cursor: analytics.cursor,
+      cursorStack: [...analytics.cursorStack]
+    };
+  }
+
   function applyParamsToForm(params) {
-    for (const name of filterNames) {
+    for (const name of formFilterNames) {
       const control = form.elements[name];
       if (!control) continue;
       const value = params.get(name) || '';
@@ -290,32 +314,22 @@
     }
   }
 
-  function setHistory(mode, params) {
+  function writeHistory(mode, state) {
     if (mode === 'none') return;
     const method = mode === 'push' ? 'pushState' : 'replaceState';
-    history[method](historyState(params), '', pageUrl(params));
-  }
-
-  function restoreHistoryState(state, params) {
-    const analytics = state?.analytics;
-    currentCursor = analytics && typeof analytics.cursor === 'string'
-      ? analytics.cursor
-      : params.get('cursor');
-    cursorStack = Array.isArray(analytics?.cursorStack)
-      ? analytics.cursorStack.filter(value => value === null || typeof value === 'string')
-      : [];
+    history[method](historyState(state), '', pageUrl(state.params));
   }
 
   function setControlsDisabled(disabled) {
-    for (const control of form.querySelectorAll('button')) control.disabled = disabled;
+    for (const control of form.querySelectorAll('button, input, select')) control.disabled = disabled;
+    for (const shortcut of document.querySelectorAll('.analytics-filter-shortcut')) shortcut.disabled = disabled;
     for (const control of pagination.querySelectorAll('button, a')) {
-      if (control.tagName === 'BUTTON') {
-        if (disabled) control.disabled = true;
-        else control.disabled = control.dataset.analyticsPage === 'previous'
-          ? cursorStack.length === 0
-          : !nextCursor;
-      }
-      control.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+      if (control.tagName === 'BUTTON') control.disabled = disabled || (
+        control.dataset.analyticsPage === 'previous'
+          ? committed.cursorStack.length === 0
+          : !committed.nextCursor
+      );
+      control.setAttribute('aria-disabled', disabled || control.disabled ? 'true' : 'false');
     }
   }
 
@@ -341,9 +355,20 @@
     listStatus.replaceChildren();
   }
 
-  function closeDetail() {
-    if (detailPanel) detailPanel.hidden = true;
-    if (detailStatus) detailStatus.hidden = true;
+  function invalidateDetail({ clear = false } = {}) {
+    const wasPending = Boolean(detailController);
+    detailRequestId += 1;
+    if (detailController) detailController.abort();
+    detailController = null;
+    if (wasPending && detailStatus) detailStatus.hidden = true;
+    if (clear) {
+      if (detailPanel) detailPanel.hidden = true;
+      if (detailStatus) detailStatus.hidden = true;
+      if (detailJson) detailJson.textContent = '';
+      for (const field of Object.values(detailFields)) {
+        if (field) field.textContent = '';
+      }
+    }
   }
 
   function focusSummary(scrollPosition) {
@@ -356,17 +381,131 @@
     if (window.scrollY !== scrollPosition) window.scrollTo(window.scrollX, scrollPosition);
   }
 
+  function validString(value, maxLength = 4096) {
+    return typeof value === 'string' && value.length > 0 && value.length <= maxLength;
+  }
+
+  function validOptionalString(value, maxLength = 4096) {
+    return value === null || value === undefined || (typeof value === 'string' && value.length <= maxLength);
+  }
+
+  function validateItem(item) {
+    if (!isPlainObject(item)) throw new Error('invalid_event_item');
+    if (!/^[0-9a-f]{32}$/.test(item.id || '')) throw new Error('invalid_event_id');
+    if (!validString(item.observedAtUtc, 64) || !Number.isFinite(Date.parse(item.observedAtUtc))) {
+      throw new Error('invalid_event_time');
+    }
+    if (!['human', 'bot'].includes(item.trafficKind)) throw new Error('invalid_traffic_kind');
+    if (item.trafficKind === 'bot' && !validString(item.botName, 256)) throw new Error('invalid_bot_name');
+    if (item.trafficKind === 'human' && !validOptionalString(item.botName, 256)) throw new Error('invalid_bot_name');
+    if (!isPlainObject(item.page) || !validString(item.page.title) || !validString(item.page.displayPath)) {
+      throw new Error('invalid_page');
+    }
+    if (!validString(item.ipAddress, 128)) throw new Error('invalid_ip');
+    if (!isPlainObject(item.location) || !isPlainObject(item.location.country)
+      || !isPlainObject(item.location.subdivision)) throw new Error('invalid_location');
+    if (!validOptionalString(item.location.country.name, 512)
+      || !validOptionalString(item.location.subdivision.name, 512)
+      || !validOptionalString(item.location.city, 512)) throw new Error('invalid_location');
+    if (!isPlainObject(item.client) || !validOptionalString(item.client.deviceType, 128)
+      || !isPlainObject(item.client.browser) || !isPlainObject(item.client.os)
+      || !validOptionalString(item.client.browser.name, 512)
+      || !validOptionalString(item.client.browser.version, 512)
+      || !validOptionalString(item.client.os.name, 512)
+      || !validOptionalString(item.client.os.version, 512)) throw new Error('invalid_client');
+    return item;
+  }
+
+  function validateListPayload(payload, attempt) {
+    if (!isPlainObject(payload) || !Array.isArray(payload.items)) throw new Error('invalid_list_response');
+    if (!validCursor(payload.nextCursor)) throw new Error('invalid_next_cursor');
+    if (payload.nextCursor !== null && payload.nextCursor === attempt.cursor) throw new Error('non_progressing_cursor');
+    return {
+      items: payload.items.map(validateItem),
+      nextCursor: payload.nextCursor
+    };
+  }
+
+  function stageList(validated, attempt) {
+    const state = {
+      params: cloneParams(attempt.params),
+      cursor: attempt.cursor,
+      cursorStack: [...attempt.cursorStack],
+      nextCursor: validated.nextCursor
+    };
+    const tableRows = validated.items.map(eventRow);
+    const cardNodes = validated.items.map(eventCard);
+    const pagingNodes = paginationNodes(state);
+    const appliedNodes = appliedFilterNodes(state.params);
+    const summaryText = `逐次访问明细 · 第 ${state.cursorStack.length + 1} 页 · 本页 ${validated.items.length} 条`;
+    return { state, tableRows, cardNodes, pagingNodes, appliedNodes, summaryText, empty: validated.items.length === 0 };
+  }
+
+  function restoreList(previous, applied) {
+    tableBody.replaceChildren(...previous.tableRows);
+    cards.replaceChildren(...previous.cardNodes);
+    pagination.replaceChildren(...previous.pagingNodes);
+    if (applied) applied.replaceChildren(...previous.appliedNodes);
+    summary.textContent = previous.summaryText;
+    emptyState.hidden = previous.emptyHidden;
+  }
+
+  function commitList(staged, attempt) {
+    const applied = form.querySelector('.analytics-applied-filters');
+    const previous = {
+      tableRows: [...tableBody.childNodes],
+      cardNodes: [...cards.childNodes],
+      pagingNodes: [...pagination.childNodes],
+      appliedNodes: applied ? [...applied.childNodes] : [],
+      summaryText: summary.textContent,
+      emptyHidden: emptyState.hidden
+    };
+    try {
+      tableBody.replaceChildren(...staged.tableRows);
+      cards.replaceChildren(...staged.cardNodes);
+      pagination.replaceChildren(...staged.pagingNodes);
+      if (applied) applied.replaceChildren(...staged.appliedNodes);
+      summary.textContent = staged.summaryText;
+      emptyState.hidden = !staged.empty;
+      writeHistory(attempt.historyMode, staged.state);
+    } catch (error) {
+      restoreList(previous, applied);
+      throw error;
+    }
+    committed = staged.state;
+    applyParamsToForm(committed.params);
+    invalidateDetail({ clear: true });
+    clearListStatus();
+  }
+
+  function requestError(error, id, scrollPosition) {
+    if (error.name === 'AbortError' || id !== requestId) return;
+    const invalid = error.payload?.error === 'invalid_filter';
+    setListStatus(
+      invalid ? '筛选条件无效，请检查输入后重试。' : '访问明细加载失败，现有结果仍可继续使用。',
+      true,
+      true
+    );
+    try {
+      listStatus.focus({ preventScroll: true });
+    } catch {
+      listStatus.focus();
+    }
+    if (window.scrollY !== scrollPosition) window.scrollTo(window.scrollX, scrollPosition);
+  }
+
   async function requestEvents(params, options = {}) {
     const id = ++requestId;
     if (activeController) activeController.abort();
+    invalidateDetail();
     const controller = new AbortController();
     activeController = controller;
     const scrollPosition = window.scrollY;
     const attempt = {
-      params: new URLSearchParams(params),
+      params: cloneParams(params),
       historyMode: options.historyMode || 'push',
       cursor: options.cursor === undefined ? params.get('cursor') : options.cursor,
-      cursorStack: options.cursorStack === undefined ? [...cursorStack] : [...options.cursorStack]
+      cursorStack: options.cursorStack === undefined ? [...committed.cursorStack] : [...options.cursorStack]
     };
     pendingRequest = attempt;
     root.setAttribute('aria-busy', 'true');
@@ -374,15 +513,22 @@
     setListStatus('正在加载访问明细……');
 
     try {
-      const response = await fetch(apiUrl(params), {
+      const response = await fetch(apiUrl(attempt.params), {
         credentials: 'same-origin',
         headers: { Accept: 'application/json' },
         signal: controller.signal
       });
-      let payload = null;
+      const contentType = (response.headers.get('content-type') || '').split(';', 1)[0].trim().toLowerCase();
+      const jsonContentType = contentType === 'application/json'
+        || (contentType.startsWith('application/') && contentType.endsWith('+json'));
+      if (response.ok && !jsonContentType) {
+        throw new Error('invalid_json_content_type');
+      }
+      let payload;
       try {
         payload = await response.json();
-      } catch {
+      } catch (error) {
+        if (response.ok) throw new Error('invalid_json_response', { cause: error });
         payload = null;
       }
       if (!response.ok) {
@@ -391,53 +537,40 @@
         throw error;
       }
       if (id !== requestId) return;
-
-      currentCursor = attempt.cursor;
-      cursorStack = [...attempt.cursorStack];
-      nextCursor = payload.nextCursor || null;
-      renderEvents(Array.isArray(payload.items) ? payload.items : []);
-      closeDetail();
-      clearListStatus();
-      setHistory(attempt.historyMode, params);
+      const validated = validateListPayload(payload, attempt);
+      const staged = stageList(validated, attempt);
+      if (id !== requestId) return;
+      commitList(staged, attempt);
       pendingRequest = null;
       focusSummary(scrollPosition);
     } catch (error) {
-      if (error.name === 'AbortError' || id !== requestId) return;
-      const invalid = error.payload?.error === 'invalid_filter';
-      setListStatus(
-        invalid ? '筛选条件无效，请检查输入后重试。' : '访问明细加载失败，现有结果仍可继续使用。',
-        true,
-        true
-      );
-      listStatus.focus({ preventScroll: true });
-      if (window.scrollY !== scrollPosition) window.scrollTo(window.scrollX, scrollPosition);
+      requestError(error, id, scrollPosition);
     } finally {
       if (id === requestId) {
         activeController = null;
         root.setAttribute('aria-busy', 'false');
         setControlsDisabled(false);
-        renderPagination();
       }
     }
   }
 
   function submitFilters() {
-    const params = paramsForCursor(null);
+    const params = paramsFromForm();
     requestEvents(params, { historyMode: 'push', cursor: null, cursorStack: [] });
   }
 
   function nextPage() {
-    if (!nextCursor) return;
-    requestEvents(paramsForCursor(nextCursor), {
+    if (!committed.nextCursor) return;
+    requestEvents(paramsForCursor(committed.nextCursor), {
       historyMode: 'push',
-      cursor: nextCursor,
-      cursorStack: [...cursorStack, currentCursor]
+      cursor: committed.nextCursor,
+      cursorStack: [...committed.cursorStack, committed.cursor]
     });
   }
 
   function previousPage() {
-    if (cursorStack.length === 0) return;
-    const stack = [...cursorStack];
+    if (committed.cursorStack.length === 0) return;
+    const stack = [...committed.cursorStack];
     const previousCursor = stack.pop();
     requestEvents(paramsForCursor(previousCursor), {
       historyMode: 'push',
@@ -447,6 +580,7 @@
   }
 
   function applyShortcut(shortcut) {
+    if (shortcut.disabled) return;
     const input = form.elements[shortcut.dataset.filterName];
     if (!input) return;
     let value = shortcut.dataset.filterValue || '';
@@ -473,16 +607,23 @@
   }
 
   async function showDetail(eventId) {
-    if (!detailPanel || !detailStatus || !detailJson) return;
+    if (!detailPanel || !detailStatus || !detailJson || !/^[0-9a-f]{32}$/.test(eventId || '')) return;
+    const id = ++detailRequestId;
+    if (detailController) detailController.abort();
+    const controller = new AbortController();
+    detailController = controller;
     detailPanel.hidden = true;
     setDetailStatus('正在加载访问详情……');
     try {
       const response = await fetch(`/api/admin/analytics/events/${encodeURIComponent(eventId)}`, {
         credentials: 'same-origin',
-        headers: { Accept: 'application/json' }
+        headers: { Accept: 'application/json' },
+        signal: controller.signal
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const detail = await response.json();
+      if (id !== detailRequestId || controller.signal.aborted) return;
+      if (!isPlainObject(detail) || detail.id !== eventId) throw new Error('invalid_detail_response');
       setDetailText(detailFields.id, detail.id);
       setDetailText(detailFields.time, detail.observedAtUtc);
       setDetailText(detailFields.displayPath, detail.displayPath);
@@ -493,9 +634,12 @@
       detailStatus.hidden = true;
       detailPanel.hidden = false;
       detailPanel.focus();
-    } catch {
+    } catch (error) {
+      if (error.name === 'AbortError' || id !== detailRequestId) return;
       setDetailStatus('访问详情加载失败，请稍后重试。', true);
       detailStatus.focus();
+    } finally {
+      if (id === detailRequestId) detailController = null;
     }
   }
 
@@ -541,21 +685,30 @@
   });
 
   window.addEventListener('popstate', event => {
-    const params = new URL(window.location.href).searchParams;
-    applyParamsToForm(params);
-    restoreHistoryState(event.state, params);
-    requestEvents(params, {
+    const params = normalizeParams(new URL(window.location.href).searchParams);
+    const proposal = exactHistoryProposal(event.state, params);
+    if (!proposal) {
+      requestId += 1;
+      if (activeController) activeController.abort();
+      activeController = null;
+      pendingRequest = null;
+      root.setAttribute('aria-busy', 'false');
+      setControlsDisabled(false);
+      setListStatus('历史状态无效，现有结果仍可继续使用。', true, false);
+      return;
+    }
+    requestEvents(proposal.params, {
       historyMode: 'none',
-      cursor: currentCursor,
-      cursorStack
+      cursor: proposal.cursor,
+      cursorStack: proposal.cursorStack
     });
   });
 
-  const initialParams = new URL(window.location.href).searchParams;
-  const initialState = history.state?.analytics;
-  if (initialState && initialState.query === initialParams.toString()) {
-    restoreHistoryState(history.state, initialParams);
+  const initialProposal = exactHistoryProposal(history.state, initialParams);
+  if (initialProposal) {
+    committed = { ...committed, cursor: initialProposal.cursor, cursorStack: initialProposal.cursorStack };
   }
-  renderPagination();
-  history.replaceState(historyState(initialParams), '', pageUrl(initialParams));
+  applyParamsToForm(committed.params);
+  pagination.replaceChildren(...paginationNodes(committed));
+  history.replaceState(historyState(committed), '', pageUrl(committed.params));
 })();

@@ -264,13 +264,22 @@ function analyticsFixturePage(query = {}) {
   const pageNumber = query.cursor === 'fixture-page-3' ? 3 : query.cursor === 'fixture-page-2' ? 2 : 1;
   const traffic = typeof query.traffic === 'string' ? query.traffic : 'all';
   const search = typeof query.search === 'string' ? query.search : '';
+  const requestedLimit = Number(query.limit);
+  const limit = Number.isInteger(requestedLimit) && requestedLimit >= 1 && requestedLimit <= 100
+    ? requestedLimit
+    : 2;
+  const items = search === 'empty'
+    ? []
+    : [
+        analyticsFixtureEvent(pageNumber, 1, traffic, search),
+        analyticsFixtureEvent(pageNumber, 2, traffic, search)
+      ].slice(0, limit);
+  let nextCursor = items.length === 0 || pageNumber >= 3 ? null : `fixture-page-${pageNumber + 1}`;
+  if (search === 'same-cursor' && query.cursor) nextCursor = query.cursor;
   return {
     days: Number(query.days) || 7,
-    items: [
-      analyticsFixtureEvent(pageNumber, 1, traffic, search),
-      analyticsFixtureEvent(pageNumber, 2, traffic, search)
-    ],
-    nextCursor: pageNumber < 3 ? `fixture-page-${pageNumber + 1}` : null
+    items,
+    nextCursor
   };
 }
 
@@ -502,43 +511,74 @@ app.get('/admin/articles', (req, res) => res.render('admin/articles', {
   user: { id: 1, username: 'visual-admin' }
 }));
 let analyticsRetryPending = true;
+let analyticsPopFailurePending = false;
 let analyticsSlowCompleted = 0;
+let analyticsDetailSlowCompleted = 0;
 const analyticsSlowWaiters = new Set();
+const analyticsDetailSlowWaiters = new Set();
 
-function finishAnalyticsSlowRequest() {
-  analyticsSlowCompleted += 1;
-  for (const waiter of analyticsSlowWaiters) {
-    if (analyticsSlowCompleted > waiter.after) {
+function finishWaiters(waiters, completed) {
+  for (const waiter of waiters) {
+    if (completed > waiter.after) {
       clearTimeout(waiter.timeout);
-      analyticsSlowWaiters.delete(waiter);
+      waiters.delete(waiter);
       waiter.resolve();
     }
   }
 }
 
+function finishAnalyticsSlowRequest() {
+  analyticsSlowCompleted += 1;
+  finishWaiters(analyticsSlowWaiters, analyticsSlowCompleted);
+}
+
+function finishAnalyticsDetailSlowRequest() {
+  analyticsDetailSlowCompleted += 1;
+  finishWaiters(analyticsDetailSlowWaiters, analyticsDetailSlowCompleted);
+}
+
+function waitForCompletion(waiters, completed, after) {
+  if (completed > after) return Promise.resolve();
+  return new Promise(resolve => {
+    const waiter = {
+      after,
+      resolve,
+      timeout: setTimeout(() => {
+        waiters.delete(waiter);
+        resolve();
+      }, 5_000)
+    };
+    waiters.add(waiter);
+  });
+}
+
 app.post('/__test/analytics-reset', (req, res) => {
   analyticsRetryPending = true;
+  analyticsPopFailurePending = false;
+  return res.sendStatus(204);
+});
+app.post('/__test/analytics-fail-next-pop', (req, res) => {
+  analyticsPopFailurePending = true;
   return res.sendStatus(204);
 });
 app.get('/__test/analytics-slow-state', (req, res) => res.json({ completed: analyticsSlowCompleted }));
 app.get('/__test/analytics-wait-slow', async (req, res) => {
   const after = Number(req.query.after) || 0;
-  if (analyticsSlowCompleted > after) return res.json({ completed: analyticsSlowCompleted });
-  await new Promise(resolve => {
-    const waiter = {
-      after,
-      resolve,
-      timeout: setTimeout(() => {
-        analyticsSlowWaiters.delete(waiter);
-        resolve();
-      }, 5_000)
-    };
-    analyticsSlowWaiters.add(waiter);
-  });
+  await waitForCompletion(analyticsSlowWaiters, analyticsSlowCompleted, after);
   return res.json({ completed: analyticsSlowCompleted });
+});
+app.get('/__test/analytics-detail-slow-state', (req, res) => res.json({ completed: analyticsDetailSlowCompleted }));
+app.get('/__test/analytics-wait-detail-slow', async (req, res) => {
+  const after = Number(req.query.after) || 0;
+  await waitForCompletion(analyticsDetailSlowWaiters, analyticsDetailSlowCompleted, after);
+  return res.json({ completed: analyticsDetailSlowCompleted });
 });
 app.get('/api/admin/analytics/events', async (req, res) => {
   res.set('Cache-Control', 'no-store');
+  if (analyticsPopFailurePending) {
+    analyticsPopFailurePending = false;
+    return res.status(500).json({ error: 'analytics_query_failed' });
+  }
   if (req.query.search === 'invalid') {
     return res.status(400).json({ error: 'invalid_filter', field: 'search', reason: 'too_long' });
   }
@@ -553,12 +593,27 @@ app.get('/api/admin/analytics/events', async (req, res) => {
     await new Promise(resolve => setTimeout(resolve, 350));
     finishAnalyticsSlowRequest();
   }
+  if (req.query.search === 'non-json') return res.type('text').send('not json');
+  if (req.query.search === 'json-text') {
+    return res.type('text').send(JSON.stringify(analyticsFixturePage(req.query)));
+  }
+  if (req.query.search === 'bad-shape') return res.json({ days: 7, items: 'invalid', nextCursor: null });
+  if (req.query.search === 'bad-item') {
+    return res.json({ days: 7, items: [{ id: 'bad' }], nextCursor: null });
+  }
+  if (req.query.search === 'bad-next-cursor') {
+    return res.json({ ...analyticsFixturePage(req.query), nextCursor: { malformed: true } });
+  }
   return res.json(analyticsFixturePage(req.query));
 });
-app.get('/api/admin/analytics/events/:eventId', (req, res) => {
+app.get('/api/admin/analytics/events/:eventId', async (req, res) => {
   const pageNumber = Number(req.params.eventId[0]);
   const index = Number(req.params.eventId.at(-1));
   if (![1, 2, 3].includes(pageNumber) || ![1, 2].includes(index)) return res.sendStatus(404);
+  if (index === 1) {
+    await new Promise(resolve => setTimeout(resolve, 350));
+    finishAnalyticsDetailSlowRequest();
+  }
   const detail = analyticsFixtureEvent(pageNumber, index, 'all', '');
   return res.json({
     ...detail,

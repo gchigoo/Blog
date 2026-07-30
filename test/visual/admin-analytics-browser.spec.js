@@ -41,6 +41,27 @@ test('next page updates only the event workspace and preserves scroll', async ({
   await expect(page.locator('#analytics-event-table-body')).not.toContainText('google.com');
 });
 
+test('paging uses the committed query instead of unsubmitted draft edits', async ({ page }) => {
+  await openAnalytics(page);
+  await page.locator('#analytics-search').fill('committed');
+  const filterResponse = eventApiResponse(page, url => url.searchParams.get('search') === 'committed');
+  await page.locator('#analytics-filter-form button[type="submit"]').first().click();
+  await filterResponse;
+
+  await page.locator('#analytics-search').fill('draft-only');
+  const nextResponse = eventApiResponse(page, url => (
+    url.searchParams.get('search') === 'committed' &&
+    url.searchParams.get('cursor') === 'fixture-page-2'
+  ));
+  await page.locator('[data-analytics-page="next"]').click();
+  await nextResponse;
+
+  await expect(page.locator('#analytics-search')).toHaveValue('committed');
+  await expect(page.locator('.analytics-applied-filters')).toContainText('committed');
+  await expect(page.locator('#analytics-event-table-body')).toContainText('committed');
+  expect(new URL(page.url()).searchParams.get('search')).toBe('committed');
+});
+
 test('a direct cursor URL refreshes the current page without a durable Previous stack', async ({ page }) => {
   await page.goto('/admin/analytics?days=7&traffic=all&cursor=fixture-page-2');
   await expect(page.locator('#analytics-event-table-body')).toContainText('Fixture page 2');
@@ -48,6 +69,16 @@ test('a direct cursor URL refreshes the current page without a durable Previous 
   await expect(page.locator('#analytics-event-table-body')).toContainText('Fixture page 2');
   await expect(page).toHaveURL(/cursor=fixture-page-2/);
   await expect(page.locator('[data-analytics-page="previous"]')).toBeDisabled();
+});
+
+test('same-tab refresh after enhanced navigation restores its history stack', async ({ page }) => {
+  await openAnalytics(page);
+  await goToNextPage(page);
+  await page.reload();
+
+  await expect(page.locator('#analytics-event-table-body')).toContainText('Fixture page 2');
+  await expect(page).toHaveURL(/cursor=fixture-page-2/);
+  await expect(page.locator('[data-analytics-page="previous"]')).toBeEnabled();
 });
 
 test('enhanced Previous returns to page 1 without a reload', async ({ page }) => {
@@ -117,6 +148,26 @@ test('filter submit clears the cursor stack and safely preserves encoded filters
   expect(current.searchParams.has('cursor')).toBe(false);
 });
 
+test('pending list request exposes loading state and disables all filter entry points', async ({ page }) => {
+  await openAnalytics(page);
+  await page.locator('#analytics-search').fill('slow');
+  const requestPromise = page.waitForRequest(requestEvent => (
+    new URL(requestEvent.url()).searchParams.get('search') === 'slow'
+  ));
+  await page.locator('#analytics-filter-form button[type="submit"]').first().click();
+  await requestPromise;
+
+  await expect(page.locator('#event-list')).toHaveAttribute('aria-busy', 'true');
+  await expect(page.locator('#analytics-event-status')).toHaveAttribute('role', 'status');
+  await expect(page.locator('#analytics-event-status')).toContainText('正在加载');
+  await expect(page.locator('#analytics-search')).toBeDisabled();
+  await expect(page.getByRole('radio', { name: '爬虫' })).toBeDisabled();
+  await expect(page.locator('#analytics-filter-form select[name="device"]')).toBeDisabled();
+  await expect(page.locator('.analytics-filter-shortcut').first()).toBeDisabled();
+  await expect(page.locator('[data-analytics-page="next"]')).toBeDisabled();
+  await expect(page.locator('#event-list')).toHaveAttribute('aria-busy', 'false');
+});
+
 test('a delayed old request cannot overwrite a newer request', async ({ page, request }) => {
   await openAnalytics(page);
   const stateResponse = await request.get('/__test/analytics-slow-state');
@@ -132,7 +183,9 @@ test('a delayed old request cannot overwrite a newer request', async ({ page, re
 
   const latestResponse = eventApiResponse(page, url => url.searchParams.get('search') === 'latest');
   await page.evaluate(() => {
-    document.querySelector('#analytics-search').value = 'latest';
+    const input = document.querySelector('#analytics-search');
+    input.disabled = false;
+    input.value = 'latest';
     document.querySelector('#analytics-filter-form').requestSubmit();
   });
   expect((await latestResponse).status()).toBe(200);
@@ -183,11 +236,14 @@ test('one-time server failure keeps old rows and local retry succeeds', async ({
   await expect(page.locator('[data-analytics-retry]')).toBeVisible();
   expect(new URL(page.url()).searchParams.has('search')).toBe(false);
 
+  await page.locator('#analytics-search').fill('edited-after-failure');
   const successResponse = eventApiResponse(page, (url, response) => (
     url.searchParams.get('search') === 'retry' && response.status() === 200
   ));
   await page.locator('[data-analytics-retry]').click();
   await successResponse;
+  await expect(page.locator('#analytics-search')).toHaveValue('retry');
+  await expect(page.locator('.analytics-applied-filters')).toContainText('retry');
   await expect(page.locator('#analytics-event-table-body')).toContainText('retry');
   expect(new URL(page.url()).searchParams.get('search')).toBe('retry');
 });
@@ -212,6 +268,84 @@ test('invalid filter keeps user input and old rows usable', async ({ page }) => 
   expect(new URL(page.url()).searchParams.has('search')).toBe(false);
 });
 
+for (const search of ['non-json', 'json-text', 'bad-shape', 'bad-item', 'bad-next-cursor']) {
+  test(`malformed successful list response ${search} preserves committed results`, async ({ page }) => {
+    await openAnalytics(page);
+    const originalText = await page.locator('#analytics-event-table-body').innerText();
+    const originalCardsText = await page.locator('#analytics-event-cards').innerText();
+    await page.locator('#analytics-search').fill(search);
+    const responsePromise = eventApiResponse(page, url => url.searchParams.get('search') === search);
+    await page.locator('#analytics-filter-form button[type="submit"]').first().click();
+    await responsePromise;
+
+    await expect(page.locator('#analytics-event-table-body')).toHaveText(originalText);
+    await expect(page.locator('#analytics-event-cards')).toHaveText(originalCardsText);
+    await expect(page.locator('[data-analytics-retry]')).toBeVisible();
+    expect(new URL(page.url()).searchParams.has('search')).toBe(false);
+  });
+}
+
+test('empty result and terminal page disable paging safely', async ({ page }) => {
+  await openAnalytics(page);
+  await page.locator('#analytics-search').fill('empty');
+  const emptyResponse = eventApiResponse(page, url => url.searchParams.get('search') === 'empty');
+  await page.locator('#analytics-filter-form button[type="submit"]').first().click();
+  await emptyResponse;
+  await expect(page.locator('.analytics-empty')).toBeVisible();
+  await expect(page.locator('#analytics-event-table-body tr')).toHaveCount(0);
+  await expect(page.locator('[data-analytics-page="next"]')).toBeDisabled();
+
+  await page.locator('#analytics-search').fill('terminal');
+  const resetResponse = eventApiResponse(page, url => url.searchParams.get('search') === 'terminal');
+  await page.locator('#analytics-filter-form button[type="submit"]').first().click();
+  await resetResponse;
+  await goToNextPage(page);
+  const terminalResponse = eventApiResponse(page, url => url.searchParams.get('cursor') === 'fixture-page-3');
+  await page.locator('[data-analytics-page="next"]').click();
+  await terminalResponse;
+  await expect(page.locator('#analytics-event-summary')).toContainText('第 3 页');
+  await expect(page.locator('[data-analytics-page="next"]')).toBeDisabled();
+});
+
+test('non-progressing next cursor is rejected without growing the stack', async ({ page }) => {
+  await openAnalytics(page);
+  await page.locator('#analytics-search').fill('same-cursor');
+  const filterResponse = eventApiResponse(page, url => url.searchParams.get('search') === 'same-cursor');
+  await page.locator('#analytics-filter-form button[type="submit"]').first().click();
+  await filterResponse;
+  const originalText = await page.locator('#analytics-event-table-body').innerText();
+  const responsePromise = eventApiResponse(page, url => url.searchParams.get('cursor') === 'fixture-page-2');
+  await page.locator('[data-analytics-page="next"]').click();
+  await responsePromise;
+  await expect(page.locator('#analytics-event-table-body')).toContainText('same-cursor');
+  expect(await page.locator('#analytics-event-table-body').innerText()).toBe(originalText);
+  await expect(page.locator('[data-analytics-retry]')).toBeVisible();
+  await expect(page.locator('[data-analytics-page="previous"]')).toBeDisabled();
+});
+
+test('limit=1 survives direct refresh, filter submit, and enhanced paging', async ({ page }) => {
+  await page.goto('/admin/analytics?days=7&traffic=all&limit=1');
+  await expect(page.locator('#analytics-event-table-body tr')).toHaveCount(1);
+  await page.reload();
+  await expect(page.locator('#analytics-event-table-body tr')).toHaveCount(1);
+
+  await page.locator('#analytics-search').fill('limited');
+  const filterResponse = eventApiResponse(page, url => (
+    url.searchParams.get('search') === 'limited' && url.searchParams.get('limit') === '1'
+  ));
+  await page.locator('#analytics-filter-form button[type="submit"]').first().click();
+  await filterResponse;
+  await expect(page.locator('#analytics-event-table-body tr')).toHaveCount(1);
+
+  const nextResponse = eventApiResponse(page, url => (
+    url.searchParams.get('cursor') === 'fixture-page-2' && url.searchParams.get('limit') === '1'
+  ));
+  await page.locator('[data-analytics-page="next"]').click();
+  await nextResponse;
+  await expect(page.locator('#analytics-event-table-body tr')).toHaveCount(1);
+  expect(new URL(page.url()).searchParams.get('limit')).toBe('1');
+});
+
 test('updated detail buttons work through event delegation', async ({ page }) => {
   await openAnalytics(page);
   await goToNextPage(page);
@@ -226,6 +360,93 @@ test('updated detail buttons work through event delegation', async ({ page }) =>
   await expect(page.locator('#analytics-detail-panel')).toBeVisible();
   await expect(page.locator('#analytics-detail-id')).toHaveText(eventId);
   await expect(page.locator('#analytics-detail-json')).toContainText(eventId);
+});
+
+test('latest detail wins when detail requests complete out of order', async ({ page, request }) => {
+  await openAnalytics(page);
+  const state = await (await request.get('/__test/analytics-detail-slow-state')).json();
+  const buttons = page.locator('#analytics-event-table-body .analytics-detail-button');
+  const slowId = await buttons.nth(0).getAttribute('data-event-id');
+  const fastId = await buttons.nth(1).getAttribute('data-event-id');
+  const slowRequest = page.waitForRequest(requestEvent => new URL(requestEvent.url()).pathname.endsWith(`/${slowId}`));
+  await buttons.nth(0).click();
+  await slowRequest;
+  const fastResponse = page.waitForResponse(response => new URL(response.url()).pathname.endsWith(`/${fastId}`));
+  await buttons.nth(1).click();
+  await fastResponse;
+  await expect(page.locator('#analytics-detail-id')).toHaveText(fastId);
+  await request.get(`/__test/analytics-wait-detail-slow?after=${state.completed}`);
+  await expect(page.locator('#analytics-detail-id')).toHaveText(fastId);
+});
+
+test('list request invalidates a pending detail request', async ({ page, request }) => {
+  await openAnalytics(page);
+  const state = await (await request.get('/__test/analytics-detail-slow-state')).json();
+  const detail = page.locator('#analytics-event-table-body .analytics-detail-button').first();
+  const detailId = await detail.getAttribute('data-event-id');
+  const detailRequest = page.waitForRequest(requestEvent => new URL(requestEvent.url()).pathname.endsWith(`/${detailId}`));
+  await detail.click();
+  await detailRequest;
+  await goToNextPage(page);
+  await request.get(`/__test/analytics-wait-detail-slow?after=${state.completed}`);
+  await expect(page.locator('#analytics-detail-panel')).toBeHidden();
+  await expect(page.locator('#analytics-detail-id')).not.toHaveText(detailId);
+});
+
+test('failed popstate preserves committed rows and retry targets exact history intent', async ({ page, request }) => {
+  await openAnalytics(page);
+  await goToNextPage(page);
+  const pageTwoText = await page.locator('#analytics-event-table-body').innerText();
+  await request.post('/__test/analytics-fail-next-pop');
+  const failure = eventApiResponse(page, (url, response) => !url.searchParams.has('cursor') && response.status() === 500);
+  await page.goBack();
+  await failure;
+  expect(await page.locator('#analytics-event-table-body').innerText()).toBe(pageTwoText);
+  await expect(page.locator('[data-analytics-page="previous"]')).toBeEnabled();
+  await expect(page.locator('[data-analytics-page="next"]')).toBeEnabled();
+  await expect(page.locator('[data-analytics-retry]')).toBeVisible();
+
+  const retry = eventApiResponse(page, url => !url.searchParams.has('cursor'));
+  await page.locator('[data-analytics-retry]').click();
+  await retry;
+  await expect(page.locator('#analytics-event-table-body')).toContainText('Fixture page 1');
+  await expect(page.locator('[data-analytics-page="previous"]')).toBeDisabled();
+});
+
+test('malformed or mismatched popstate metadata retains committed rows and cursors', async ({ page }) => {
+  await openAnalytics(page);
+  const originalText = await page.locator('#analytics-event-table-body').innerText();
+  const listRequests = [];
+  page.on('request', request => {
+    if (new URL(request.url()).pathname === '/api/admin/analytics/events') listRequests.push(request.url());
+  });
+  await page.evaluate(() => {
+    history.pushState({ analytics: { cursor: 'wrong', cursorStack: ['bad cursor'], query: 'cursor=wrong' } }, '', '/admin/analytics?cursor=fixture-page-2');
+  });
+  await page.evaluate(() => dispatchEvent(new PopStateEvent('popstate', { state: history.state })));
+
+  await expect(page.locator('#analytics-event-status')).toContainText('历史状态无效');
+  expect(await page.locator('#analytics-event-table-body').innerText()).toBe(originalText);
+  await expect(page.locator('[data-analytics-page="previous"]')).toBeDisabled();
+  await expect(page.locator('[data-analytics-page="next"]')).toBeEnabled();
+  expect(listRequests).toEqual([]);
+});
+
+test('rapid popstate target is not overwritten by an older pending list request', async ({ page, request }) => {
+  await openAnalytics(page);
+  const state = await (await request.get('/__test/analytics-slow-state')).json();
+  await page.locator('#analytics-search').fill('slow');
+  const slowRequest = page.waitForRequest(requestEvent => new URL(requestEvent.url()).searchParams.get('search') === 'slow');
+  await page.locator('#analytics-filter-form button[type="submit"]').first().click();
+  await slowRequest;
+
+  await page.evaluate(() => history.pushState({ analytics: { cursor: null, cursorStack: [], query: '' } }, '', '/admin/analytics'));
+  const popResponse = eventApiResponse(page, url => !url.searchParams.has('search'));
+  await page.evaluate(() => dispatchEvent(new PopStateEvent('popstate', { state: history.state })));
+  await popResponse;
+  await request.get(`/__test/analytics-wait-slow?after=${state.completed}`);
+  await expect(page.locator('#analytics-event-table-body')).toContainText('Fixture page 1');
+  await expect(page.locator('#analytics-event-table-body')).not.toContainText('slow');
 });
 
 test('result summary receives focus with preventScroll behavior', async ({ page }) => {
