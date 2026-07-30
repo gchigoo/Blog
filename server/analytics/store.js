@@ -8,6 +8,13 @@ const { migrateAnalyticsTrafficSchema } = require('./traffic-schema');
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 const RETENTION_DAYS = 30;
+const beijingDateFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit'
+});
+
+function beijingDateKey(now) {
+  return beijingDateFormatter.format(new Date(now));
+}
 
 function hourBucket(now = Date.now()) {
   return new Date(Math.floor(now / HOUR_MS) * HOUR_MS).toISOString();
@@ -16,7 +23,7 @@ function hourBucket(now = Date.now()) {
 function visitorDayHmac(clientIp, secret, now = Date.now()) {
   if (!secret) throw new Error('ANALYTICS_HMAC_SECRET is required');
 
-  const day = new Date(now).toISOString().slice(0, 10);
+  const day = beijingDateKey(now);
   return crypto.createHmac('sha256', secret).update(`${day}:${clientIp}`).digest('hex');
 }
 
@@ -40,9 +47,9 @@ function initializeAnalytics(db) {
 
 function recordMetric(db, metric) {
   db.prepare(`
-    INSERT INTO access_metrics (bucket_utc, path, visitor_day_hmac, device_kind)
-    VALUES (?, ?, ?, ?)
-  `).run(metric.bucketUtc, metric.path, metric.visitorDayHmac, metric.deviceKind);
+    INSERT INTO access_metrics (bucket_utc, path, visitor_day_hmac, device_kind, traffic_kind)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(metric.bucketUtc, metric.path, metric.visitorDayHmac, metric.deviceKind, metric.trafficKind);
   markOverviewDirty(db);
 }
 

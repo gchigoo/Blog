@@ -39,7 +39,7 @@ test('analytics records only successful public requests without raw request fiel
   assert.notEqual(row.visitor_day_hmac, '203.0.113.10');
 });
 
-test('analytics excludes admin, API, assets, bots, and failed responses', () => {
+test('analytics stores bots while excluding admin, API, assets, and failed responses', () => {
   const db = new Database(':memory:');
   initializeAnalytics(db);
   const middleware = createAnalyticsMiddleware({ db, secret: 'test-secret' });
@@ -47,17 +47,22 @@ test('analytics excludes admin, API, assets, bots, and failed responses', () => 
     makeRequest({ path: '/admin/analytics' }), makeRequest({ path: '/api/admin/analytics' }),
     makeRequest({ path: '/auth/google/callback?code=SECRET&state=STATE' }),
     makeRequest({ path: '/css/custom.css' }),
-    makeRequest({ path: '/audio/example-song/track.mp3' }),
-    makeRequest({ path: '/', userAgent: 'Googlebot/2.1' })
+    makeRequest({ path: '/audio/example-song/track.mp3' })
   ]) {
     const response = makeResponse(); middleware(request, response, () => {}); response.finish();
   }
+  const botResponse = makeResponse();
+  middleware(makeRequest({ path: '/', userAgent: 'Googlebot/2.1' }), botResponse, () => {});
+  botResponse.finish();
   const failed = makeResponse(404); middleware(makeRequest({ path: '/missing' }), failed, () => {}); failed.finish();
   const nonHtml = makeResponse();
   nonHtml.getHeader = () => 'application/json';
   middleware(makeRequest({ path: '/feed' }), nonHtml, () => {});
   nonHtml.finish();
-  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM access_metrics').get().count, 0);
+  assert.deepEqual(
+    db.prepare('SELECT path, traffic_kind FROM access_metrics').all(),
+    [{ path: '/', traffic_kind: 'bot' }]
+  );
   assert.equal(isTrackableRequest(makeRequest({ method: 'POST' })), false);
 });
 
@@ -97,6 +102,16 @@ test('analytics aggregates visitor HMACs and removes entries older than 30 days'
   assert.notEqual(
     visitorDayHmac('203.0.113.10', 'test-secret', now),
     visitorDayHmac('203.0.113.10', 'test-secret', now + 24 * 60 * 60 * 1000)
+  );
+  const beforeMidnight = Date.parse('2026-07-17T15:59:59.999Z');
+  const atMidnight = Date.parse('2026-07-17T16:00:00.000Z');
+  assert.notEqual(
+    visitorDayHmac('203.0.113.10', 'test-secret', beforeMidnight),
+    visitorDayHmac('203.0.113.10', 'test-secret', atMidnight)
+  );
+  assert.equal(
+    visitorDayHmac('203.0.113.10', 'test-secret', atMidnight),
+    visitorDayHmac('203.0.113.10', 'test-secret', atMidnight + 60_000)
   );
   assert.equal(deviceKind('Mozilla/5.0 (iPad)'), 'tablet');
 });

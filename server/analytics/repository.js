@@ -13,7 +13,7 @@ const DETAIL_COLUMNS = [
   'request_client_hints_json', 'device_type', 'device_vendor', 'device_model', 'device_model_normalized',
   'device_type_normalized', 'os_name', 'os_version', 'os_name_normalized',
   'browser_name', 'browser_version', 'browser_name_normalized', 'engine_name', 'engine_version',
-  'cpu_architecture', 'client_parse_status', 'context_source'
+  'cpu_architecture', 'client_parse_status', 'traffic_kind', 'bot_name', 'context_source'
 ];
 
 function normalize(value) {
@@ -245,16 +245,17 @@ function detailValues(metricId, event) {
     client.osName || null, client.osVersion || null, client.osNameNormalized || normalize(client.osName),
     client.browserName || null, client.browserVersion || null,
     client.browserNameNormalized || normalize(client.browserName), client.engineName || null,
-    client.engineVersion || null, client.cpuArchitecture || null, event.client?.status || 'error', 'server'
+    client.engineVersion || null, client.cpuArchitecture || null, event.client?.status || 'error',
+    event.trafficKind, event.botName, 'server'
   ];
 }
 
 function recordAccessEvent(db, event) {
   const transaction = db.transaction(() => {
     const metric = db.prepare(`
-      INSERT INTO access_metrics (bucket_utc, path, visitor_day_hmac, device_kind)
-      VALUES (?, ?, ?, ?)
-    `).run(event.bucketUtc, event.path, event.visitorDayHmac, event.deviceKind);
+      INSERT INTO access_metrics (bucket_utc, path, visitor_day_hmac, device_kind, traffic_kind)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(event.bucketUtc, event.path, event.visitorDayHmac, event.deviceKind, event.trafficKind);
     const metricId = Number(metric.lastInsertRowid);
     db.prepare(`
       INSERT INTO access_event_details (${DETAIL_COLUMNS.join(', ')})
@@ -268,8 +269,10 @@ function recordAccessEvent(db, event) {
         dimension_label = MIN(dimension_label, excluded.dimension_label),
         page_views = page_views + 1
     `);
-    for (const [dimension, key, label] of dimensionRows(event)) {
-      upsertDimension.run(dimension, key, event.bucketUtc, label);
+    if (event.trafficKind === 'human') {
+      for (const [dimension, key, label] of dimensionRows(event)) {
+        upsertDimension.run(dimension, key, event.bucketUtc, label);
+      }
     }
     return { metricId, eventId: event.eventId };
   });

@@ -29,6 +29,8 @@ function event(id, overrides = {}) {
     path: '/tag/%E5%B7%A5%E5%85%B7',
     visitorDayHmac: `visitor-${id}`,
     deviceKind: 'desktop',
+    trafficKind: 'human',
+    botName: null,
     method: 'GET', requestPath: '/tag/%E5%B7%A5%E5%85%B7', queryString: null,
     fullUrl: 'https://blog.example.com/tag/%E5%B7%A5%E5%85%B7',
     referrer: 'https://example.com/from', referrerHost: 'example.com',

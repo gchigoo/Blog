@@ -24,6 +24,8 @@ function event(overrides = {}) {
     path: '/tag/%E5%B7%A5%E5%85%B7',
     visitorDayHmac: 'a'.repeat(64),
     deviceKind: 'desktop',
+    trafficKind: 'human',
+    botName: null,
     method: 'GET',
     requestPath: '/tag/%E5%B7%A5%E5%85%B7',
     queryString: null,
@@ -107,6 +109,8 @@ test('analytics schema migrates legacy metrics and records metric/detail atomica
   assert.equal(detail.ip_address, '203.0.113.10');
   assert.equal(detail.geo_status, 'not_found');
   assert.equal(detail.user_agent, 'Mozilla/5.0');
+  assert.equal(detail.traffic_kind, 'human');
+  assert.equal(detail.bot_name, null);
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM access_metrics').get().count, 2);
   assert.throws(() => recordAccessEvent(db, event()), /UNIQUE/);
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM access_metrics').get().count, 2);
@@ -202,6 +206,23 @@ test('retention deletes exact detail rows and only complete expired legacy hours
     observedAtUtc: exactCutoff,
     bucketUtc: '2026-06-17T12:00:00.000Z'
   }));
+  recordAccessEvent(db, event({
+    eventId: '3'.repeat(32),
+    observedAtUtc: new Date(Date.parse(exactCutoff) - 2).toISOString(),
+    bucketUtc: '2026-06-17T12:00:00.000Z',
+    trafficKind: 'bot',
+    botName: 'Googlebot',
+    requestClient: { userAgent: 'Googlebot/2.1', acceptLanguage: '', clientHints: {} }
+  }));
+  assert.deepEqual(
+    db.prepare(`
+      SELECT m.traffic_kind AS metric_kind, d.traffic_kind AS detail_kind, d.bot_name
+      FROM access_metrics m JOIN access_event_details d ON d.metric_id = m.id
+      WHERE d.event_id = ?
+    `).get('3'.repeat(32)),
+    { metric_kind: 'bot', detail_kind: 'bot', bot_name: 'Googlebot' }
+  );
+  assert.equal(db.prepare('SELECT SUM(page_views) AS count FROM access_detail_dimension_metrics').get().count, 14);
   const insertLegacy = db.prepare(`
     INSERT INTO access_metrics (bucket_utc, path, visitor_day_hmac, device_kind)
     VALUES (?, ?, ?, 'desktop')
@@ -209,9 +230,10 @@ test('retention deletes exact detail rows and only complete expired legacy hours
   insertLegacy.run('2026-06-17T11:00:00.000Z', '/legacy-expired', 'legacy-1');
   insertLegacy.run('2026-06-17T12:00:00.000Z', '/legacy-boundary', 'legacy-2');
 
-  assert.equal(cleanupAnalytics(db, now, 30), 2);
+  assert.equal(cleanupAnalytics(db, now, 30), 3);
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM access_event_details WHERE event_id = ?").get('1'.repeat(32)).count, 0);
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM access_event_details WHERE event_id = ?").get('2'.repeat(32)).count, 1);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM access_event_details WHERE event_id = ?").get('3'.repeat(32)).count, 0);
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM access_metrics').get().count, 2);
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM access_detail_dimension_metrics').get().count, 0);
   db.close();

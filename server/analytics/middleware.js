@@ -1,11 +1,11 @@
 const net = require('node:net');
+const { classifyClient } = require('./client-classifier');
 const { recordAccessEvent } = require('./repository');
 const { captureRequestClient, normalizeTrustedIp, sanitizePublicRequestUrl, sanitizeReferrer } = require('./request-security');
 const { hourBucket, recordMetric, visitorDayHmac } = require('./store');
 
 const EXCLUDED_PREFIXES = ['/auth', '/admin', '/api', '/images', '/audio'];
 const EXCLUDED_EXTENSIONS = /\.(?:css|js|webp|ico|png|jpe?g|gif|svg|xml|txt)$/i;
-const BOT_PATTERN = /bot|crawler|spider|slurp|bingpreview|facebookexternalhit|telegrambot/i;
 
 function deviceKind(userAgent = '') {
   if (/ipad|tablet|kindle|silk\//i.test(userAgent)) return 'tablet';
@@ -18,7 +18,7 @@ function isTrackableRequest(req) {
   if (!['GET', 'HEAD'].includes(req.method)) return false;
   if (EXCLUDED_PREFIXES.some(prefix => req.path === prefix || req.path.startsWith(`${prefix}/`))) return false;
   if (EXCLUDED_EXTENSIONS.test(req.path)) return false;
-  return !BOT_PATTERN.test(req.get('user-agent') || '');
+  return true;
 }
 
 function isInternalAnalyticsIp(value, internalIps) {
@@ -49,6 +49,7 @@ function createAnalyticsMiddleware({
     const capturedIp = normalizeTrustedIp(req);
     if (isInternalAnalyticsIp(capturedIp, internalIpSet)) return next();
     const capturedClient = captureRequestClient(req);
+    const classification = classifyClient(capturedClient.userAgent);
     const capturedDevice = deviceKind(capturedClient.userAgent);
     const capturedOriginalUrl = req.originalUrl || req.path;
     const capturedReferrer = req.get('referer') || req.get('referrer') || null;
@@ -58,7 +59,9 @@ function createAnalyticsMiddleware({
       eventId = tokenSigner.createEventId();
       res.locals = res.locals || {};
       res.locals.analyticsEventId = eventId;
-      res.locals.analyticsEventToken = tokenSigner.sign(eventId, startedAt);
+      if (classification.trafficKind === 'human') {
+        res.locals.analyticsEventToken = tokenSigner.sign(eventId, startedAt);
+      }
       if (typeof res.render === 'function') {
         const render = res.render;
         res.render = function renderTrackedPage(...args) {
@@ -84,7 +87,8 @@ function createAnalyticsMiddleware({
           bucketUtc: hourBucket(startedAt),
           path: capturedPath,
           visitorDayHmac: visitorDayHmac(capturedIp || 'invalid', secret, startedAt),
-          deviceKind: capturedDevice
+          deviceKind: capturedDevice,
+          trafficKind: classification.trafficKind
         };
         if (!detailsEnabled) {
           recordMetric(db, base);
@@ -105,6 +109,7 @@ function createAnalyticsMiddleware({
         recordAccessEvent(db, {
           ...base,
           eventId,
+          botName: classification.botName,
           observedAtUtc: new Date(startedAt).toISOString(),
           method: req.method,
           requestPath: url.requestPath,

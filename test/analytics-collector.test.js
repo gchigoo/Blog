@@ -176,6 +176,59 @@ test('detailed collector records exact event data after a successful HTML respon
   db.close();
 });
 
+test('detailed collector records bots without exposing a browser context token', () => {
+  const db = new Database(':memory:');
+  db.pragma('foreign_keys = ON');
+  initializeAnalytics(db);
+  let finish;
+  const response = {
+    statusCode: 200,
+    locals: {},
+    on(event, listener) { if (event === 'finish') finish = listener; },
+    getHeader: () => 'text/html; charset=utf-8'
+  };
+  const eventId = 'fedcba9876543210fedcba9876543210';
+  const middleware = createAnalyticsMiddleware({
+    db,
+    secret: VALID_SECRET,
+    detailsEnabled: true,
+    publicOrigin: 'https://blog.example.com',
+    geoResolver: {
+      resolve: () => ({ status: 'not_found', data: null }),
+      getStatus: () => ({ reader: null })
+    },
+    clientParser: { parse: () => ({ status: 'unknown', data: null }) },
+    tokenSigner: {
+      createEventId: () => eventId,
+      sign: () => 'v1.must-not-be-exposed'
+    }
+  });
+  const headers = {
+    'user-agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+    'accept-language': 'en-US',
+    referer: 'https://www.google.com/'
+  };
+
+  middleware({
+    method: 'GET', path: '/about', originalUrl: '/about', ip: '203.0.113.30',
+    get: name => headers[name.toLowerCase()]
+  }, response, () => {});
+  assert.equal(response.locals.analyticsEventId, eventId);
+  assert.equal(response.locals.analyticsEventToken, undefined);
+  finish();
+
+  const bot = db.prepare(`
+    SELECT m.traffic_kind AS metric_kind, d.traffic_kind AS detail_kind, d.bot_name,
+           d.context_collected_at
+    FROM access_metrics m JOIN access_event_details d ON d.metric_id = m.id
+    WHERE d.event_id = ?
+  `).get(eventId);
+  assert.deepEqual(bot, {
+    metric_kind: 'bot', detail_kind: 'bot', bot_name: 'Googlebot', context_collected_at: null
+  });
+  db.close();
+});
+
 test('detailed collector treats configured server-IP referrers as internal', () => {
   const db = new Database(':memory:');
   db.pragma('foreign_keys = ON');

@@ -111,6 +111,25 @@ test('tracked public HTML is no-store and client context is idempotently attache
   assert.equal(stored.viewport_width, 1280);
 });
 
+test('bot public HTML is stored without a browser context token or script', async t => {
+  const { baseUrl, db } = await createHarness(t);
+  const page = await fetch(`${baseUrl}/about`, {
+    headers: {
+      'user-agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+      'x-forwarded-for': '203.0.113.40'
+    }
+  });
+  const html = await page.text();
+
+  assert.equal(page.status, 200);
+  assert.doesNotMatch(html, /analytics-event-token/);
+  assert.doesNotMatch(html, /\/js\/analytics-context\.js/);
+  assert.deepEqual(
+    db.prepare('SELECT traffic_kind, bot_name, context_collected_at FROM access_event_details').all(),
+    [{ traffic_kind: 'bot', bot_name: 'Googlebot', context_collected_at: null }]
+  );
+});
+
 test('context endpoint enforces media type, origin, token, JSON size, and event readiness', async t => {
   const { baseUrl } = await createHarness(t);
   const signer = createEventTokenSigner({ secret: SECRET });
