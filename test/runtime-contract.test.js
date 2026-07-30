@@ -71,7 +71,8 @@ test('database migration applies analytics traffic schema version 2 idempotently
   }
   for (const name of [
     'analytics_detail_traffic_insert_guard',
-    'analytics_detail_traffic_update_guard'
+    'analytics_detail_traffic_update_guard',
+    'analytics_metric_traffic_update_guard'
   ]) {
     assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = ?").get(name));
   }

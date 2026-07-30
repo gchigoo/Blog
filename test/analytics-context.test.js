@@ -44,6 +44,20 @@ function event(overrides = {}) {
   };
 }
 
+function directDetailInsert(db) {
+  return db.prepare(`
+    INSERT INTO access_event_details (
+      metric_id, event_id, observed_at_utc, method, request_path, full_url,
+      url_sanitization_status, referrer_parse_status, status_code, duration_ms,
+      ip_address, ip_family, geo_status, user_agent, accept_language,
+      request_client_hints_json, client_parse_status, context_source,
+      traffic_kind, bot_name
+    ) VALUES (?, ?, '2026-07-17T00:00:00.000Z', 'GET', '/',
+      'https://blog.example.com/', 'ok', 'missing', 200, 1, '203.0.113.10', 4,
+      'not_found', 'Mozilla/5.0', '', '{}', 'unknown', 'server', ?, ?)
+  `);
+}
+
 test('analytics schema migrates legacy metrics and records metric/detail atomically', () => {
   const db = new Database(':memory:');
   db.pragma('foreign_keys = ON');
@@ -79,7 +93,8 @@ test('analytics schema migrates legacy metrics and records metric/detail atomica
   }
   for (const name of [
     'analytics_detail_traffic_insert_guard',
-    'analytics_detail_traffic_update_guard'
+    'analytics_detail_traffic_update_guard',
+    'analytics_metric_traffic_update_guard'
   ]) {
     assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = ?").get(name));
   }
@@ -96,21 +111,50 @@ test('analytics schema migrates legacy metrics and records metric/detail atomica
   assert.throws(() => recordAccessEvent(db, event()), /UNIQUE/);
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM access_metrics').get().count, 2);
 
-  const parent = db.prepare(`
+  const insertMetric = db.prepare(`
     INSERT INTO access_metrics (bucket_utc, path, visitor_day_hmac, device_kind, traffic_kind)
-    VALUES ('2026-07-17T00:00:00.000Z', '/', 'visitor', 'desktop', 'human')
-  `).run();
-  assert.throws(() => db.prepare(`
-    INSERT INTO access_event_details (
-      metric_id, event_id, observed_at_utc, method, request_path, full_url,
-      url_sanitization_status, referrer_parse_status, status_code, duration_ms,
-      ip_address, ip_family, geo_status, user_agent, accept_language,
-      request_client_hints_json, client_parse_status, context_source,
-      traffic_kind, bot_name
-    ) VALUES (?, ?, ?, 'GET', '/', 'https://blog.example.com/', 'ok', 'missing',
-      200, 1, '203.0.113.10', 4, 'not_found', 'Mozilla/5.0', '', '{}',
-      'unknown', 'server', 'bot', 'Googlebot')
-  `).run(Number(parent.lastInsertRowid), 'f'.repeat(32), '2026-07-17T00:00:00.000Z'), /traffic classification/);
+    VALUES ('2026-07-17T00:00:00.000Z', '/', ?, 'desktop', ?)
+  `);
+  const insertDetail = directDetailInsert(db);
+  const humanParentId = Number(insertMetric.run('human-parent', 'human').lastInsertRowid);
+
+  assert.throws(
+    () => insertDetail.run(humanParentId, '3'.repeat(32), 'bot', 'Googlebot'),
+    /traffic classification/
+  );
+  assert.throws(
+    () => insertDetail.run(humanParentId, '4'.repeat(32), 'human', 'Unexpected bot'),
+    /traffic classification/
+  );
+
+  const botParentId = Number(insertMetric.run('bot-parent', 'bot').lastInsertRowid);
+  for (const [index, botName] of [null, '', '   '].entries()) {
+    assert.throws(
+      () => insertDetail.run(botParentId, String(index + 5).repeat(32), 'bot', botName),
+      /traffic classification/
+    );
+  }
+  insertDetail.run(botParentId, '8'.repeat(32), 'bot', 'Googlebot');
+
+  for (const botName of [null, '', '   ']) {
+    assert.throws(
+      () => db.prepare('UPDATE access_event_details SET bot_name = ? WHERE metric_id = ?').run(botName, botParentId),
+      /traffic classification/
+    );
+  }
+  assert.throws(
+    () => db.prepare("UPDATE access_event_details SET traffic_kind = 'human' WHERE metric_id = ?").run(botParentId),
+    /traffic classification/
+  );
+  assert.throws(
+    () => db.prepare("UPDATE access_metrics SET traffic_kind = 'human' WHERE id = ?").run(botParentId),
+    /traffic classification/
+  );
+  assert.equal(db.prepare('SELECT traffic_kind FROM access_metrics WHERE id = ?').get(botParentId).traffic_kind, 'bot');
+  assert.deepEqual(
+    db.prepare('SELECT traffic_kind, bot_name FROM access_event_details WHERE metric_id = ?').get(botParentId),
+    { traffic_kind: 'bot', bot_name: 'Googlebot' }
+  );
   db.close();
 });
 

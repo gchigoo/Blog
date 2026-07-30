@@ -162,3 +162,81 @@ Additional validation:
 - Existing dimension upserts still run for every runtime event. This is also intentionally deferred to Task 2; only rebuilds are human-filtered in this task.
 - SQLite cannot retrofit table-level constraints without rebuilding tables; the migration uses checked added columns plus triggers for parent/detail and bot-name consistency, matching the brief.
 - The repository was already two commits ahead of `origin/master` before this task; this task does not alter or squash those prior commits.
+
+## Review fix: parent-update invariant and expanded direct-SQL coverage
+
+A Task 1 review identified that detail insert/update guards alone did not prevent a direct update of `access_metrics.traffic_kind` from making an existing metric/detail pair inconsistent. This follow-up remains limited to Task 1 database invariants and regression tests.
+
+### Implementation
+
+Updated `/Users/steven/Blog/server/analytics/traffic-schema.js` to create a third idempotent trigger:
+
+- `analytics_metric_traffic_update_guard`
+
+The trigger runs `BEFORE UPDATE OF traffic_kind ON access_metrics` and aborts with `traffic classification mismatch` when an existing detail row for the metric has a different `traffic_kind` from the proposed parent value. Parent rows without detail rows remain updateable, while any existing parent/detail pair cannot be made inconsistent through direct SQL.
+
+Updated `/Users/steven/Blog/test/analytics-context.test.js` with direct-SQL coverage for:
+
+- Detail/parent traffic-kind mismatch on insert.
+- Human detail insertion with a non-null `bot_name`.
+- Bot detail insertion with `NULL`, empty, and whitespace-only `bot_name`.
+- Valid matching bot parent/detail insertion with non-empty `bot_name`.
+- Detail update attempts setting bot names to `NULL`, empty, and whitespace-only values.
+- Detail update attempt changing a bot detail to `human` while its parent remains `bot`.
+- Parent update attempt changing the bot parent to `human` while its detail remains `bot`.
+- Persistence of the valid bot classification after rejected direct updates.
+
+Updated `/Users/steven/Blog/test/runtime-contract.test.js` to verify the versioned migration creates the new parent-update trigger idempotently.
+
+### TDD RED evidence
+
+Command before implementing the parent trigger:
+
+```text
+node --test test/analytics-context.test.js test/runtime-contract.test.js
+```
+
+Result:
+
+- Exit code: `1`
+- Tests: `6`
+- Passed: `5`
+- Failed: `1`
+- Failure: `analytics schema migrates legacy metrics and records metric/detail atomically` could not find `analytics_metric_traffic_update_guard` in `sqlite_master`.
+
+This demonstrated the reviewed parent-side database invariant was absent before the production change.
+
+### GREEN evidence
+
+Focused command after implementation:
+
+```text
+node --test test/analytics-context.test.js test/runtime-contract.test.js
+```
+
+Result:
+
+- Exit code: `0`
+- Tests: `6`
+- Passed: `6`
+- Failed: `0`
+- Duration: approximately `56 ms`
+
+Required production-code validation:
+
+```text
+npm run lint
+npm run typecheck
+git diff --check
+```
+
+All commands exited successfully with no lint, type, or whitespace errors.
+
+### Review-fix self-review and concerns
+
+- Confirmed all three trigger names are asserted after repeated startup initialization and versioned migration.
+- Confirmed the new trigger is idempotent through `CREATE TRIGGER IF NOT EXISTS`.
+- Confirmed the guard only blocks parent classification changes that would disagree with an existing detail; it does not prohibit classification changes for parent rows with no detail.
+- Confirmed direct insert and update tests now cover both valid bot data and every requested invalid bot-name form.
+- No later classifier, collection, query, API, or UI task was implemented.
+- Existing runtime bot writes and dimension-upsert suppression remain intentionally deferred to Task 2.

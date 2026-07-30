@@ -27,6 +27,16 @@ function createTrafficGuardTriggers(db) {
     BEGIN
       SELECT RAISE(ABORT, 'traffic classification mismatch');
     END;
+
+    CREATE TRIGGER IF NOT EXISTS analytics_metric_traffic_update_guard
+    BEFORE UPDATE OF traffic_kind ON access_metrics
+    WHEN EXISTS (
+      SELECT 1 FROM access_event_details
+      WHERE metric_id = OLD.id AND traffic_kind <> NEW.traffic_kind
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'traffic classification mismatch');
+    END;
   `);
 }
 
