@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const { cleanupAnalytics, initializeEventDetails } = require('./repository');
 const { formatAnalyticsPath } = require('./path-display');
-const { getOverviewDimensions } = require('./query/analytics-query');
+const { getOverviewDimensions, parseAnalyticsDays } = require('./query/analytics-query');
 const { getCachedOverview, markOverviewDirty, setCachedOverview } = require('./overview-cache');
 const { migrateAnalyticsTrafficSchema } = require('./traffic-schema');
 
@@ -57,38 +57,107 @@ function cleanupMetrics(db, now = Date.now(), retentionDays = RETENTION_DAYS) {
   return cleanupAnalytics(db, now, retentionDays);
 }
 
-function getOverview(db, now = Date.now(), days = 7, retentionDays = RETENTION_DAYS, geoData = null) {
-  const rangeDays = Math.min(Math.max(Number.parseInt(String(days), 10) || 7, 1), retentionDays);
-  const cacheKey = `${Math.floor(now / 15_000)}:${rangeDays}:${retentionDays}`;
+function selectedRange(now, days, retentionDays) {
+  const rangeDays = parseAnalyticsDays(days, retentionDays);
+  const exactSinceTime = now - rangeDays * DAY_MS;
+  const metricSinceTime = Math.ceil(exactSinceTime / HOUR_MS) * HOUR_MS;
+  return {
+    rangeDays,
+    since: new Date(metricSinceTime).toISOString()
+  };
+}
+
+function beijingTodayStart(now) {
+  return new Date(Math.floor((now + 8 * HOUR_MS) / DAY_MS) * DAY_MS - 8 * HOUR_MS).toISOString();
+}
+
+function buildOverviewHumanIpsQuery(since, explain = false) {
+  return {
+    sql: `${explain ? 'EXPLAIN QUERY PLAN ' : ''}SELECT COUNT(DISTINCT d.ip_address) AS uniqueHumanIps
+      FROM access_event_details d INDEXED BY idx_event_details_traffic_ip_observed
+      JOIN access_metrics m ON m.id = d.metric_id
+      WHERE d.traffic_kind = 'human' AND d.observed_at_utc >= ?
+        AND m.traffic_kind = 'human' AND m.bucket_utc >= ?`,
+    params: [since, since]
+  };
+}
+
+function explainOverviewHumanIps(db, now = Date.now(), days = 7, retentionDays = RETENTION_DAYS) {
+  const { since } = selectedRange(now, days, retentionDays);
+  const query = buildOverviewHumanIpsQuery(since, true);
+  return db.prepare(query.sql).all(...query.params);
+}
+
+function getOverview(db, now = Date.now(), days = 7, retentionDays = RETENTION_DAYS, geoData = null, detailsEnabled = true) {
+  const { rangeDays, since } = selectedRange(now, days, retentionDays);
+  const cacheKey = `${Math.floor(now / 15_000)}:${rangeDays}:${retentionDays}:${Boolean(detailsEnabled)}`;
   const cached = getCachedOverview(db, cacheKey);
   if (cached) return { ...cached, geoData };
-  const since = new Date(now - rangeDays * DAY_MS).toISOString();
   const total = db.prepare(`
-    SELECT COUNT(*) AS page_views,
-      COUNT(DISTINCT visitor_day_hmac) AS anonymous_visitors
-    FROM access_metrics WHERE bucket_utc >= ?
+    SELECT COUNT(*) AS humanPageViews,
+      COUNT(DISTINCT visitor_day_hmac) AS anonymousVisitors
+    FROM access_metrics
+    WHERE traffic_kind = 'human' AND bucket_utc >= ?
   `).get(since);
+  const bots = db.prepare(`
+    SELECT COUNT(*) AS botPageViews
+    FROM access_metrics
+    WHERE traffic_kind = 'bot' AND bucket_utc >= ?
+  `).get(since);
+  const today = db.prepare(`
+    SELECT COUNT(DISTINCT visitor_day_hmac) AS anonymousVisitors
+    FROM access_metrics
+    WHERE traffic_kind = 'human' AND bucket_utc >= ?
+  `).get(beijingTodayStart(now));
+  const detail = detailsEnabled
+    ? db.prepare(`
+      SELECT COUNT(*) AS humanDetailPageViews
+      FROM access_event_details d
+      JOIN access_metrics m ON m.id = d.metric_id
+      WHERE d.traffic_kind = 'human' AND m.bucket_utc >= ?
+    `).get(since)
+    : { humanDetailPageViews: 0 };
+  if (detailsEnabled) {
+    const ipQuery = buildOverviewHumanIpsQuery(since);
+    detail.uniqueHumanIps = db.prepare(ipQuery.sql).get(...ipQuery.params).uniqueHumanIps;
+  }
 
   const byPage = db.prepare(`
     SELECT path, COUNT(*) AS pageViews,
       COUNT(DISTINCT visitor_day_hmac) AS anonymousVisitors
-    FROM access_metrics WHERE bucket_utc >= ?
+    FROM access_metrics
+    WHERE traffic_kind = 'human' AND bucket_utc >= ?
     GROUP BY path ORDER BY pageViews DESC, path ASC
   `).all(since).map(row => ({ ...row, ...formatAnalyticsPath(row.path) }));
+  const detailsComplete = Boolean(detailsEnabled)
+    && detail.humanDetailPageViews === total.humanPageViews;
   const overview = {
     days: rangeDays,
-    pageViews: total.page_views,
-    anonymousVisitors: total.anonymous_visitors,
+    todayActiveVisitors: today.anonymousVisitors,
+    uniqueHumanIps: detailsEnabled ? detail.uniqueHumanIps : null,
+    humanPageViews: total.humanPageViews,
+    botPageViews: bots.botPageViews,
+    detailsAvailable: Boolean(detailsEnabled),
+    detailsComplete,
+    pageViews: total.humanPageViews,
+    anonymousVisitors: total.anonymousVisitors,
+    detailCoverage: {
+      pageViews: detail.humanDetailPageViews,
+      humanPageViews: detail.humanDetailPageViews,
+      complete: detailsComplete
+    },
     byHour: db.prepare(`
       SELECT bucket_utc AS bucketUtc, COUNT(*) AS pageViews,
         COUNT(DISTINCT visitor_day_hmac) AS anonymousVisitors
-      FROM access_metrics WHERE bucket_utc >= ?
+      FROM access_metrics
+      WHERE traffic_kind = 'human' AND bucket_utc >= ?
       GROUP BY bucket_utc ORDER BY bucket_utc ASC
     `).all(since),
     byPage,
     byDevice: db.prepare(`
       SELECT device_kind AS deviceKind, COUNT(*) AS pageViews
-      FROM access_metrics WHERE bucket_utc >= ?
+      FROM access_metrics
+      WHERE traffic_kind = 'human' AND bucket_utc >= ?
       GROUP BY device_kind ORDER BY pageViews DESC, device_kind ASC
     `).all(since),
     ...getOverviewDimensions(db, since)
@@ -100,9 +169,11 @@ function getOverview(db, now = Date.now(), days = 7, retentionDays = RETENTION_D
 module.exports = {
   RETENTION_DAYS,
   cleanupMetrics,
+  explainOverviewHumanIps,
   getOverview,
   hourBucket,
   initializeAnalytics,
+  parseAnalyticsDays,
   recordMetric,
   visitorDayHmac
 };

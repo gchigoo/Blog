@@ -18,15 +18,22 @@ function createAdminApiRouter({ db, config, clock, geoResolver, logger = console
         clock.now(),
         req.query.days,
         config.retentionDays,
-        config.detailsEnabled ? geoResolver.getStatus() : null
+        config.detailsEnabled ? geoResolver.getStatus() : null,
+        config.detailsEnabled
       ));
-    } catch {
+    } catch (error) {
+      if (error?.code === 'invalid_analytics_days') {
+        return res.status(400).json({ error: 'invalid_filter' });
+      }
       logger.error('[analytics] overview query failed');
       return res.status(500).json({ error: 'analytics_query_failed' });
     }
   });
 
   router.get('/events', (req, res) => {
+    if (!config.detailsEnabled) {
+      return res.status(409).json({ error: 'analytics_details_disabled' });
+    }
     try {
       const options = parseEventListQuery(req.query, config.retentionDays);
       return res.json(listEvents(db, clock.now(), options));
@@ -38,6 +45,9 @@ function createAdminApiRouter({ db, config, clock, geoResolver, logger = console
   });
 
   router.get('/events/:eventId', (req, res) => {
+    if (!config.detailsEnabled) {
+      return res.status(409).json({ error: 'analytics_details_disabled' });
+    }
     try {
       const detail = getEventDetail(db, req.params.eventId);
       if (!detail) return res.status(404).json({ error: 'event_not_found' });

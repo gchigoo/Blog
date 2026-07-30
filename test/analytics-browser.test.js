@@ -15,7 +15,7 @@ const { generateToken } = require('../server/middleware/auth');
 
 const SECRET = Buffer.alloc(32, 7);
 
-async function createHarness(t) {
+async function createHarness(t, overrides = {}) {
   const db = new Database(':memory:');
   db.pragma('foreign_keys = ON');
   const config = {
@@ -24,7 +24,8 @@ async function createHarness(t) {
     retentionDays: 30,
     geoIpCityDbPath: '/fixture/GeoLite2-City.mmdb',
     geoIpUpdateStatusPath: '/fixture/update-status.json',
-    publicOrigin: null
+    publicOrigin: null,
+    ...overrides.config
   };
   const geoResolver = {
     async start() {}, stop() {},
@@ -190,6 +191,43 @@ test('admin analytics API/page require authentication, are no-store, and expose 
   assert.match(operaHtml, /name="browser" value="opera"/);
 });
 
+test('admin retained-detail API and SSR are unavailable when details collection is disabled', async t => {
+  const { baseUrl, adminCookie, db } = await createHarness(t, {
+    config: {
+      detailsEnabled: false,
+      geoIpCityDbPath: null,
+      geoIpUpdateStatusPath: null
+    }
+  });
+  db.prepare(`
+    INSERT INTO access_metrics (bucket_utc, path, visitor_day_hmac, device_kind, traffic_kind)
+    VALUES (?, '/retained', 'retained', 'desktop', 'human')
+  `).run(new Date().toISOString());
+
+  for (const pathname of ['/api/admin/analytics/events', `/api/admin/analytics/events/${'f'.repeat(32)}`]) {
+    const response = await fetch(`${baseUrl}${pathname}`, { headers: { cookie: adminCookie } });
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { error: 'analytics_details_disabled' });
+  }
+
+  const page = await fetch(`${baseUrl}/admin/analytics`, { headers: { cookie: adminCookie } });
+  const html = await page.text();
+  assert.equal(page.status, 200);
+  assert.doesNotMatch(html, /203\.0\.113|127\.0\.0\.1|::1/);
+  assert.doesNotMatch(html, /analytics-filter-form|analytics-detail-panel|admin-analytics\.js/);
+});
+
+test('admin page hides ranges beyond retention and includes the configured retention range', async t => {
+  const { baseUrl, adminCookie } = await createHarness(t, { config: { retentionDays: 10 } });
+  const page = await fetch(`${baseUrl}/admin/analytics`, { headers: { cookie: adminCookie } });
+  const html = await page.text();
+  assert.equal(page.status, 200);
+  assert.match(html, /days=1/);
+  assert.match(html, /days=7/);
+  assert.match(html, /days=10/);
+  assert.doesNotMatch(html, /days=30/);
+});
+
 test('browser collector retries only 425 on immediate/1/2/4/8 second attempts', async () => {
   const source = fs.readFileSync(path.resolve(__dirname, '..', 'public/js/analytics-context.js'), 'utf8');
   const delays = [];
@@ -277,9 +315,17 @@ test('admin analytics view renders readable paths and hostile detail values as t
     filters: { days: '7', ip: '', country: '', subdivision: '', city: '', browser: '', os: '', device: '', pathPrefix: '', referrerHost: '' },
     eventNextUrl: null,
     pageError: null,
+    rangeOptions: [1, 7, 30],
+    systemStatus: {
+      detailsEnabled: true,
+      geoData: overview.geoData,
+      warning: { severity: 'error', message: 'Geo warning fixture' }
+    },
     formatBeijingTime: value => value,
     user: { id: 1 }
   });
+  assert.match(html, /Geo warning fixture/);
+  assert.equal((html.match(/Geo warning fixture/g) || []).length, 1);
   assert.match(html, /\/tag\/工具/);
   assert.match(html, /\/x\/&lt;script&gt;/);
   assert.doesNotMatch(html, /原始编码/);

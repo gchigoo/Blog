@@ -10,7 +10,12 @@ const {
   listEvents,
   parseEventListQuery
 } = require('../server/analytics/query/analytics-query');
-const { getOverview, initializeAnalytics } = require('../server/analytics/store');
+const {
+  explainOverviewHumanIps,
+  getOverview,
+  initializeAnalytics,
+  parseAnalyticsDays
+} = require('../server/analytics/store');
 
 const NOW = Date.parse('2026-07-17T12:00:00.000Z');
 
@@ -158,16 +163,60 @@ test('overview detail coverage follows the legacy hourly bucket boundary', () =>
   db.close();
 });
 
-test('overview keeps legacy fields and adds bounded dimensions, Geo status, and readable paths', () => {
+test('overview reports human metrics, bots, Beijing today, and partial detail coverage', () => {
   const db = createDb();
-  recordAccessEvent(db, event(1));
-  recordAccessEvent(db, event(2));
-  db.prepare(`INSERT INTO access_metrics (bucket_utc, path, visitor_day_hmac, device_kind) VALUES (?, '/legacy', 'legacy', 'mobile')`)
-    .run(new Date(NOW - 1000).toISOString());
+  recordAccessEvent(db, event(1, {
+    observedAtUtc: '2026-07-17T11:59:59.000Z',
+    bucketUtc: '2026-07-17T11:00:00.000Z',
+    visitorDayHmac: 'today-human-1',
+    ipAddress: '203.0.113.10'
+  }));
+  recordAccessEvent(db, event(2, {
+    observedAtUtc: '2026-07-16T16:00:01.000Z',
+    bucketUtc: '2026-07-16T16:00:00.000Z',
+    visitorDayHmac: 'today-human-2',
+    ipAddress: '203.0.113.11'
+  }));
+  recordAccessEvent(db, event(5, {
+    observedAtUtc: '2026-07-09T12:00:00.000Z',
+    bucketUtc: '2026-07-09T12:00:00.000Z',
+    visitorDayHmac: 'old-human',
+    ipAddress: '203.0.113.10'
+  }));
+  recordAccessEvent(db, event(3, {
+    observedAtUtc: '2026-07-17T10:00:00.000Z',
+    bucketUtc: '2026-07-17T10:00:00.000Z',
+    path: '/bot-only', requestPath: '/bot-only', fullUrl: 'https://blog.example.com/bot-only',
+    visitorDayHmac: 'bot-1', deviceKind: 'other', trafficKind: 'bot', botName: 'Googlebot',
+    ipAddress: '198.51.100.10'
+  }));
+  recordAccessEvent(db, event(4, {
+    observedAtUtc: '2026-07-16T20:00:00.000Z',
+    bucketUtc: '2026-07-16T20:00:00.000Z',
+    path: '/bot-only', requestPath: '/bot-only', fullUrl: 'https://blog.example.com/bot-only',
+    visitorDayHmac: 'bot-2', deviceKind: 'other', trafficKind: 'bot', botName: 'Bingbot',
+    ipAddress: '198.51.100.11'
+  }));
+  db.prepare(`
+    INSERT INTO access_metrics (bucket_utc, path, visitor_day_hmac, device_kind, traffic_kind)
+    VALUES ('2026-07-16T15:00:00.000Z', '/legacy', 'legacy-human', 'mobile', 'human')
+  `).run();
+
   const geoStatus = { reader: { datasetDate: '2026-07-01T00:00:00.000Z' }, updater: { state: 'ok', result: 'no-op' }, stale: false };
-  const overview = getOverview(db, NOW, 7, 30, geoStatus);
-  assert.equal(overview.pageViews, 3);
+  const overview = getOverview(db, NOW, 7, 30, geoStatus, true);
+  assert.equal(overview.humanPageViews, 3);
+  assert.equal(overview.pageViews, overview.humanPageViews);
+  assert.equal(overview.botPageViews, 2);
+  assert.equal(overview.todayActiveVisitors, 2);
+  assert.equal(overview.uniqueHumanIps, 2);
+  assert.equal(overview.detailsAvailable, true);
+  assert.equal(overview.detailsComplete, false);
+  assert.equal(overview.anonymousVisitors, 3);
   assert.equal(overview.detailCoverage.pageViews, 2);
+  assert.equal(overview.detailCoverage.humanPageViews, 2);
+  assert.equal(overview.detailCoverage.complete, false);
+  assert.ok(overview.byPage.every(row => row.path !== '/bot-only'));
+  assert.ok(overview.byDevice.every(row => row.deviceKind !== 'other'));
   assert.equal(overview.byPage.find(row => row.path.includes('%E5')).displayPath, '/tag/工具');
   assert.equal(overview.byCountry.items[0].key, 'CN');
   assert.equal(overview.byCountry.items[0].pageViews, 2);
@@ -177,12 +226,30 @@ test('overview keeps legacy fields and adds bounded dimensions, Geo status, and 
     assert.ok(overview[name].items.length <= 50);
     assert.equal(overview[name].otherPageViews + overview[name].items.reduce((sum, row) => sum + row.pageViews, 0), 2);
   }
+
+  const disabled = getOverview(db, NOW, 7, 30, null, false);
+  assert.equal(disabled.uniqueHumanIps, null);
+  assert.equal(disabled.detailsAvailable, false);
+  assert.equal(disabled.detailsComplete, false);
+  assert.equal(disabled.detailCoverage.complete, false);
   db.close();
+});
+
+test('analytics day ranges accept only decimal integers within retention', () => {
+  assert.equal(parseAnalyticsDays(undefined, 30), 7);
+  assert.equal(parseAnalyticsDays('30', 30), 30);
+  assert.equal(parseAnalyticsDays(1, 30), 1);
+  for (const value of ['7days', '1.5', '', 0, 31, 1.5, NaN, null]) {
+    assert.throws(() => parseAnalyticsDays(value, 30), /invalid_analytics_days/);
+  }
 });
 
 test('100k event fixture stays within list/overview query and response budgets', { timeout: 30_000 }, t => {
   const db = createDb();
-  const metric = db.prepare(`INSERT INTO access_metrics (bucket_utc, path, visitor_day_hmac, device_kind) VALUES (?, ?, ?, ?)`);
+  const metric = db.prepare(`
+    INSERT INTO access_metrics (bucket_utc, path, visitor_day_hmac, device_kind, traffic_kind)
+    VALUES (?, ?, ?, ?, ?)
+  `);
   const detail = db.prepare(`
     INSERT INTO access_event_details (
       metric_id,event_id,observed_at_utc,method,request_path,full_url,url_sanitization_status,
@@ -190,8 +257,8 @@ test('100k event fixture stays within list/overview query and response budgets',
       subdivision_name,subdivision_name_normalized,city_name,city_name_normalized,geo_status,
       user_agent,accept_language,request_client_hints_json,device_type,device_model,device_model_normalized,device_type_normalized,
       os_name,os_name_normalized,browser_name,browser_version,browser_name_normalized,
-      client_parse_status,context_source,referrer_host
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      client_parse_status,traffic_kind,bot_name,context_source,referrer_host
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `);
   db.transaction(() => {
     for (let i = 0; i < 100_000; i += 1) {
@@ -200,15 +267,23 @@ test('100k event fixture stays within list/overview query and response budgets',
       const city = country === 'CN' ? `city-${i % 200}` : `city-${i % 100}`;
       const browser = i % 3 === 0 ? 'firefox' : 'chrome';
       const requestPath = `/article/${i % 500}`;
+      const trafficKind = i % 10 === 0 ? 'bot' : 'human';
       const bucket = new Date(Math.floor(Date.parse(observed) / 3_600_000) * 3_600_000).toISOString();
-      const parent = metric.run(bucket, requestPath, `visitor-${i % 20000}`, i % 5 === 0 ? 'mobile' : 'desktop');
+      const parent = metric.run(
+        bucket,
+        requestPath,
+        `visitor-${i % 20000}`,
+        i % 5 === 0 ? 'mobile' : 'desktop',
+        trafficKind
+      );
       detail.run(
         Number(parent.lastInsertRowid), i.toString(16).padStart(32, '0'), observed, 'GET', requestPath,
         `https://blog.example.com${requestPath}`, 'ok', 'ok', 200, i % 1000,
         `203.0.${Math.floor(i / 256) % 256}.${i % 256}`, 4, country, country === 'CN' ? 'China' : 'United States',
         'Subdivision', 'subdivision', city, city, 'resolved', 'Mozilla', 'zh-CN', '{}',
         i % 5 === 0 ? 'mobile' : 'desktop', `model-${i}`, `model-${i}`, i % 5 === 0 ? 'mobile' : 'desktop',
-        'Windows', 'windows', browser, '1', browser, 'parsed', 'server', `ref-${i}.example.com`
+        'Windows', 'windows', browser, '1', browser, 'parsed', trafficKind,
+        trafficKind === 'bot' ? 'FixtureBot' : null, 'server', `ref-${i}.example.com`
       );
     }
   })();
@@ -229,6 +304,8 @@ test('100k event fixture stays within list/overview query and response budgets',
     const plan = explainEventList(db, NOW, parseEventListQuery(query, 30)).map(row => row.detail).join('\n');
     assert.match(plan, expectedIndex, `query plan for ${JSON.stringify(query)}:\n${plan}`);
   }
+  const ipPlan = explainOverviewHumanIps(db, NOW, 30, 30).map(row => row.detail).join('\n');
+  assert.match(ipPlan, /idx_event_details_traffic_ip_observed/i, `overview IP query plan:\n${ipPlan}`);
   const listDurations = [];
   const overviewDurations = [];
   let overview;
@@ -263,7 +340,7 @@ test('100k event fixture stays within list/overview query and response budgets',
       overview.detailCoverage.pageViews
     );
   }
-  assert.equal(overview.byDeviceModel.distinctCount, 100_020);
-  assert.equal(overview.byReferrerHost.distinctCount, 100_001);
+  assert.equal(overview.byDeviceModel.distinctCount, 90_020);
+  assert.equal(overview.byReferrerHost.distinctCount, 90_001);
   db.close();
 });

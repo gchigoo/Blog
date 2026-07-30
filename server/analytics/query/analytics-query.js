@@ -37,6 +37,20 @@ function integer(value, defaultValue, min, max) {
   return parsed;
 }
 
+function parseAnalyticsDays(value, retentionDays = 30) {
+  const parsed = value === undefined
+    ? Math.min(7, retentionDays)
+    : typeof value === 'number'
+      ? value
+      : typeof value === 'string' && /^\d+$/.test(value)
+        ? Number(value)
+        : NaN;
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > retentionDays) {
+    throw Object.assign(new Error('invalid_analytics_days'), { code: 'invalid_analytics_days' });
+  }
+  return parsed;
+}
+
 function normalized(value, maxLength = 128) {
   const parsed = optionalString(value, maxLength);
   return parsed ? parsed.normalize('NFKC').toLowerCase() : null;
@@ -72,7 +86,12 @@ function normalizeHost(value) {
 }
 
 function parseEventListQuery(query = {}, retentionDays = 30) {
-  const days = integer(query.days, 7, 1, retentionDays);
+  let days;
+  try {
+    days = parseAnalyticsDays(query.days, retentionDays);
+  } catch {
+    invalidFilter();
+  }
   const limit = integer(query.limit, 50, 1, 100);
   let ip = null;
   if (query.ip !== undefined) {
@@ -299,27 +318,19 @@ function queryAggregatedDimension(db, since, totalPageViews, dimension) {
 }
 
 function getOverviewDimensions(db, since) {
-  // access_metrics uses hour buckets. When the requested lower bound is inside
-  // an hour, the first eligible detail bucket starts at the next hour.
-  const sinceTime = Date.parse(since);
-  const detailSince = new Date(Math.ceil(sinceTime / (60 * 60 * 1000)) * 60 * 60 * 1000).toISOString();
   const totalPageViews = db.prepare(`
     SELECT COALESCE(SUM(page_views), 0) AS count
     FROM access_detail_dimension_metrics
     WHERE dimension = 'byCountry' AND bucket_utc >= ?
-  `).get(detailSince).count;
+  `).get(since).count;
   const dimensionNames = [
     'byCountry', 'bySubdivision', 'byCity', 'byBrowser',
     'byOs', 'byDeviceModel', 'byReferrerHost'
   ];
-  const dimensions = Object.fromEntries(dimensionNames.map(name => [
+  return Object.fromEntries(dimensionNames.map(name => [
     name,
-    queryAggregatedDimension(db, detailSince, totalPageViews, name)
+    queryAggregatedDimension(db, since, totalPageViews, name)
   ]));
-  return {
-    detailCoverage: { pageViews: totalPageViews },
-    ...dimensions
-  };
 }
 
 module.exports = {
@@ -327,5 +338,6 @@ module.exports = {
   getEventDetail,
   getOverviewDimensions,
   listEvents,
+  parseAnalyticsDays,
   parseEventListQuery
 };
