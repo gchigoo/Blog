@@ -299,10 +299,39 @@ test('admin analytics invalid query remains a local alert when details are disab
       geoIpUpdateStatusPath: null
     }
   });
+  const observedAt = new Date().toISOString();
   db.prepare(`
     INSERT INTO access_metrics (bucket_utc, path, visitor_day_hmac, device_kind, traffic_kind)
-    VALUES (?, '/retained-disabled-error', 'retained-disabled-error', 'desktop', 'human')
-  `).run(new Date().toISOString());
+    VALUES (?, '/aggregate-ranking-visible', 'aggregate-ranking-visible', 'desktop', 'human')
+  `).run(observedAt);
+  const retainedMetric = db.prepare(`
+    INSERT INTO access_metrics (bucket_utc, path, visitor_day_hmac, device_kind, traffic_kind)
+    VALUES (?, '/retained-detail-parent', 'retained-detail-parent', 'mobile', 'human')
+  `).run(observedAt);
+  db.prepare(`
+    INSERT INTO access_event_details (
+      metric_id, event_id, observed_at_utc, method, request_path, full_url,
+      referrer, referrer_host, url_sanitization_status, referrer_parse_status,
+      status_code, duration_ms, response_bytes, ip_address, ip_family, geo_status,
+      user_agent, accept_language, request_client_hints_json, device_type,
+      device_model, device_model_normalized, device_type_normalized, browser_name,
+      browser_version, browser_name_normalized, client_parse_status, traffic_kind,
+      bot_name, context_source
+    ) VALUES (?, ?, ?, 'GET', '/retained-detail-parent',
+      'https://blog.example.com/retained-detail-parent', ?, 'sensitive-referrer.example',
+      'ok', 'ok', 200, 17, 2048, ?, 4, 'not_found', ?, 'zh-CN', '{}', 'mobile',
+      'SensitiveDeviceMarker', 'sensitivedevicemarker', 'mobile',
+      'SensitiveBrowserMarker', '9.9', 'sensitivebrowsermarker',
+      'parsed', 'human', NULL, 'server')
+  `).run(
+    Number(retainedMetric.lastInsertRowid),
+    'deadbeefdeadbeefdeadbeefdeadbeef',
+    observedAt,
+    'https://sensitive-referrer.example/private-marker',
+    '198.51.100.244',
+    'SensitiveRetainedAgent/9.9'
+  );
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM access_event_details').get().count, 1);
 
   const page = await fetch(`${baseUrl}/admin/analytics?traffic=robot`, {
     headers: { cookie: adminCookie }
@@ -319,9 +348,64 @@ test('admin analytics invalid query remains a local alert when details are disab
   const systemIndex = html.indexOf('id="analytics-system-status"');
   assert.ok(headingIndex >= 0 && headingIndex < overviewIndex);
   assert.ok(overviewIndex < eventsIndex && eventsIndex < moreIndex && moreIndex < systemIndex);
+  assert.match(html, /\/aggregate-ranking-visible/);
+  for (const sensitiveMarker of [
+    '198.51.100.244',
+    'deadbeefdeadbeefdeadbeefdeadbeef',
+    'https://sensitive-referrer.example/private-marker',
+    'SensitiveRetainedAgent/9.9',
+    'SensitiveBrowserMarker',
+    'SensitiveDeviceMarker'
+  ]) {
+    assert.doesNotMatch(html, new RegExp(sensitiveMarker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
   assert.doesNotMatch(html, /203\.0\.113|127\.0\.0\.1|::1/);
   assert.doesNotMatch(html, /analytics-event-table|analytics-event-cards|analytics-filter-form|analytics-detail-panel|admin-analytics\.js|data-analytics-page=/);
   assert.doesNotMatch(html, /访问明细未启用；此处不提供已保留或历史逐次访问数据。/);
+});
+
+test('details-disabled hostile pageError is escaped through one local alert', async () => {
+  const emptyDimension = { items: [], distinctCount: 0, truncated: false, otherPageViews: 0 };
+  const hostileError = '"><img data-page-error-injected src=x onerror=alert(8)>';
+  const html = await ejs.renderFile(path.resolve(__dirname, '..', 'views/admin/analytics.ejs'), {
+    overview: {
+      days: 7,
+      todayActiveVisitors: 0,
+      uniqueHumanIps: null,
+      humanPageViews: 0,
+      botPageViews: 0,
+      detailsAvailable: false,
+      detailsComplete: false,
+      pageViews: 0,
+      anonymousVisitors: 0,
+      detailCoverage: { pageViews: 0, humanPageViews: 0, complete: false },
+      byHour: [], byDevice: [], byPage: [],
+      byCountry: emptyDimension, bySubdivision: emptyDimension, byCity: emptyDimension,
+      byBrowser: emptyDimension, byOs: emptyDimension, byDeviceModel: emptyDimension,
+      byReferrerHost: emptyDimension, geoData: null
+    },
+    events: { available: false, days: 7, items: [], nextCursor: null },
+    filters: { days: '7', search: '', traffic: 'all', ip: '', country: '', subdivision: '', city: '', browser: '', os: '', device: '', pathPrefix: '', referrerHost: '' },
+    eventPreviousUrl: null,
+    eventNextUrl: null,
+    pageError: hostileError,
+    rangeOptions: [1, 7, 30],
+    systemStatus: { detailsEnabled: false, geoData: null, warning: null },
+    formatBeijingTime: value => value,
+    user: { id: 1 }
+  });
+
+  assert.equal(occurrenceCount(html, 'id="analytics-event-status"'), 1);
+  assert.match(html, /id="analytics-event-status"[^>]*role="alert"[^>]*>&#34;&gt;&lt;img data-page-error-injected src=x onerror=alert\(8\)&gt;<\/p>/);
+  assert.equal(occurrenceCount(html, '&#34;&gt;&lt;img data-page-error-injected src=x onerror=alert(8)&gt;'), 1);
+  assert.doesNotMatch(html, /<img data-page-error-injected|\sdata-page-error-injected=/);
+  const headingIndex = html.indexOf('class="analytics-heading"');
+  const overviewIndex = html.indexOf('id="analytics-overview"');
+  const eventsIndex = html.indexOf('id="event-list"');
+  const moreIndex = html.indexOf('id="analytics-more"');
+  const systemIndex = html.indexOf('id="analytics-system-status"');
+  assert.ok(headingIndex >= 0 && headingIndex < overviewIndex);
+  assert.ok(overviewIndex < eventsIndex && eventsIndex < moreIndex && moreIndex < systemIndex);
 });
 
 test('admin analytics SSR keeps enabled-empty list containers and stable hooks unique', async t => {
