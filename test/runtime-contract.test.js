@@ -6,6 +6,7 @@ const test = require('node:test');
 const Database = require('better-sqlite3');
 
 const { LATEST_SCHEMA_VERSION, migrateDatabase } = require('../server/migrations');
+const config = require('../server/config');
 const { validateRuntimePaths } = require('../server/utils/runtime-paths');
 
 const root = path.resolve(__dirname, '..');
@@ -18,6 +19,20 @@ test('project declares the Node 24 runtime and built-in test runner', () => {
   assert.equal(packageJson.scripts.test, 'node --test test/*.test.js');
   assert.equal(nvmrc, '24');
   assert.equal(Number(process.versions.node.split('.')[0]), 24);
+});
+
+test('runtime config defaults to loopback and validates the listen host', () => {
+  const baseEnv = {
+    JWT_SECRET: 'test-only-jwt-secret-with-at-least-32-characters',
+    ANALYTICS_HMAC_SECRET: Buffer.alloc(32, 7).toString('base64url')
+  };
+
+  assert.equal(config.loadRuntimeConfig(baseEnv).host, '127.0.0.1');
+  assert.equal(config.loadRuntimeConfig({ ...baseEnv, BLOG_LISTEN_HOST: '::1' }).host, '::1');
+  assert.throws(
+    () => config.loadRuntimeConfig({ ...baseEnv, BLOG_LISTEN_HOST: '0.0.0.0' }),
+    /BLOG_LISTEN_HOST/
+  );
 });
 
 test('database migration applies analytics traffic schema version 2 idempotently', () => {

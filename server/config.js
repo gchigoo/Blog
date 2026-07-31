@@ -12,6 +12,15 @@ function parsePort(value) {
   return port;
 }
 
+function parseListenHost(value) {
+  const host = typeof value === 'string' ? value.trim() : '';
+  if (!host) return '127.0.0.1';
+  if (!['127.0.0.1', '::1'].includes(host)) {
+    throw new Error('BLOG_LISTEN_HOST must be a loopback address (127.0.0.1 or ::1)');
+  }
+  return host;
+}
+
 function parseJwtSecret(env) {
   const configuredSecret = typeof env.JWT_SECRET === 'string' ? env.JWT_SECRET.trim() : '';
   const isProduction = env.NODE_ENV === 'production';
@@ -51,6 +60,7 @@ function createBaseConfig(env) {
   }
   return {
     port: parsePort(env.PORT),
+    host: parseListenHost(env.BLOG_LISTEN_HOST),
     jwtSecret,
     jwtExpire: '7d',
     secureCookies: isProduction,

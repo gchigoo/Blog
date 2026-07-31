@@ -133,9 +133,10 @@ async function stop() {
 
 async function start() {
   await analyticsModule.lifecycle.start();
-  server = app.listen(config.port, () => {
-    console.log(`博客服务器运行在 http://localhost:${config.port}`);
-    console.log(`后台管理: http://localhost:${config.port}/admin`);
+  server = app.listen(config.port, config.host, () => {
+    const address = config.host === '::1' ? `[${config.host}]` : config.host;
+    console.log(`博客服务器运行在 http://${address}:${config.port}`);
+    console.log(`后台管理: http://${address}:${config.port}/admin`);
   });
 }
 

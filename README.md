@@ -33,6 +33,7 @@ unset INITIAL_ADMIN_PASSWORD
 export JWT_SECRET="$(node -p "require('node:crypto').randomBytes(32).toString('base64url')")"
 export ANALYTICS_HMAC_SECRET="$(node -p "require('node:crypto').randomBytes(32).toString('base64url')")"
 export BLOG_PUBLIC_ORIGIN='http://localhost:3000'
+# 默认仅监听 127.0.0.1；也可显式设置 BLOG_LISTEN_HOST=127.0.0.1
 npm start
 ```
 

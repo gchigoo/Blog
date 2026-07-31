@@ -74,6 +74,8 @@ node -p "require('node:crypto').randomBytes(32).toString('base64url')"
 
 SEO、RSS、sitemap 使用 `BLOG_PUBLIC_ORIGIN` 生成绝对 URL。生产环境应设置为不带路径的 HTTPS origin，例如 `https://blog.cokedaily.space`。可用 `BLOG_TITLE` 和 `BLOG_DESCRIPTION` 覆盖站点名称与默认摘要。
 
+应用默认仅监听 `127.0.0.1`，适合由同机 Nginx 反向代理。`BLOG_LISTEN_HOST` 只接受 `127.0.0.1` 或 `::1`；不要把应用直接绑定到 `0.0.0.0`。
+
 ### 数据库迁移
 
 升级已有实例时，必须先备份并执行幂等迁移，再重启应用；不要依赖重启隐式完成迁移：
