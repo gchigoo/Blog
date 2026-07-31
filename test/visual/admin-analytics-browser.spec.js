@@ -195,6 +195,66 @@ test('filter submit clears the cursor stack and safely preserves encoded filters
   expect(current.searchParams.has('cursor')).toBe(false);
 });
 
+test('filters activated after load render removable chips with dynamic country cascade metadata', async ({ page }) => {
+  await page.goto('/admin/analytics?limit=1&opaque=kept');
+  await expect(page.locator('[data-analytics-remove-filter]')).toHaveCount(0);
+  await page.locator('.analytics-advanced-filters summary').click();
+
+  await page.locator('#analytics-filter-form input[name="country"]').fill('CN');
+  await page.locator('#analytics-filter-form input[name="subdivision"]').fill('beijing');
+  await page.locator('#analytics-filter-form input[name="city"]').fill('beijing');
+  await page.locator('#analytics-filter-form input[name="browser"]').fill('chrome');
+  const submitResponse = eventApiResponse(page, url => (
+    url.searchParams.get('country') === 'CN' &&
+    url.searchParams.get('subdivision') === 'beijing' &&
+    url.searchParams.get('city') === 'beijing' &&
+    url.searchParams.get('browser') === 'chrome' &&
+    url.searchParams.get('limit') === '1' &&
+    url.searchParams.get('opaque') === 'kept'
+  ));
+  await page.locator('#analytics-filter-form button[type="submit"]').first().click();
+  expect((await submitResponse).status()).toBe(200);
+
+  await expect(page.locator('.analytics-advanced-filters summary')).toHaveText('高级筛选（4）');
+  await expect(page.locator('[data-analytics-remove-filter]')).toHaveCount(4);
+  await expect(page.locator('[data-analytics-remove-filter="country"]')).toHaveAttribute(
+    'data-analytics-remove-names',
+    'country,subdivision,city'
+  );
+  await page.locator('[data-analytics-remove-filter="country"]').evaluate(chip => {
+    chip.dataset.analyticsRemoveNames = 'country,untrusted';
+  });
+
+  const countryResponse = page.waitForResponse(response => {
+    const url = new URL(response.url());
+    return url.pathname === '/api/admin/analytics/events' &&
+      !url.searchParams.has('country') &&
+      !url.searchParams.has('subdivision') &&
+      !url.searchParams.has('city') &&
+      url.searchParams.get('browser') === 'chrome' &&
+      url.searchParams.get('limit') === '1' &&
+      url.searchParams.get('opaque') === 'kept' &&
+      !url.searchParams.has('cursor');
+  }, { timeout: 2_000 });
+  await page.locator('[data-analytics-remove-filter="country"]').click();
+  expect((await countryResponse).status()).toBe(200);
+
+  await expect(page.locator('.analytics-advanced-filters summary')).toHaveText('高级筛选（1）');
+  await expect(page.locator('[data-analytics-remove-filter]')).toHaveCount(1);
+  await expect(page.locator('[data-analytics-remove-filter="browser"]')).toBeVisible();
+
+  const browserResponse = page.waitForResponse(response => {
+    const url = new URL(response.url());
+    return url.pathname === '/api/admin/analytics/events' &&
+      !url.searchParams.has('browser') &&
+      url.searchParams.get('limit') === '1' &&
+      url.searchParams.get('opaque') === 'kept';
+  }, { timeout: 2_000 });
+  await page.locator('[data-analytics-remove-filter="browser"]').click();
+  expect((await browserResponse).status()).toBe(200);
+  await expect(page.locator('[data-analytics-remove-filter]')).toHaveCount(0);
+});
+
 test('committed filter chips show advanced count and remove one filter at a time', async ({ page }) => {
   await page.goto('/admin/analytics?days=7&traffic=bot&search=needle&ip=203.0.113.10&country=CN&city=beijing&limit=1');
   await expect(page.locator('.analytics-advanced-filters summary')).toHaveText('高级筛选（3）');

@@ -245,3 +245,40 @@ Fresh final verification completed successfully:
 - `git diff --check`: pass
 
 Only deterministic analytics evidence changed: the analytics HTML snapshot, its baseline-manifest hash, and the analytics template hash. Layout and PNG baselines remained byte-identical and unchanged. No schema, query, persistence, authentication, privacy, retention, or dependency changes were introduced.
+
+## Dynamic chip metadata fix
+
+The final residual confirmation exposed that enhanced removal dependencies were frozen from the chips present in initial SSR markup. A successful post-load filter submission rendered new chip buttons, but the previous client map had no entries for filters that were inactive at page load, so those newly activated chips could not initiate removal.
+
+The client now defines a fixed allowlist of removable filter names and a fixed dependency map (`country` removes `country+subdivision+city`). Both initial and dynamically rendered chips use those known semantics. Dynamic chip rendering emits the corresponding metadata for consistency and inspection, while click handling derives removal names only from the fixed map and committed params; it does not trust mutable or arbitrary DOM metadata. The existing request state machine remains unchanged, preserving atomic failure/retry behavior, opaque parameters, `limit`, cursor removal, cursor-stack reset, and text-only DOM construction.
+
+### Dynamic metadata TDD evidence
+
+RED started from an unfiltered enhanced page. After submitting `country=CN`, `subdivision=beijing`, `city=beijing`, and `browser=chrome`, the chips rendered, but the new country chip had no `data-analytics-remove-names` value and could not perform removal. The direct browser assertion received `null` instead of `country,subdivision,city`.
+
+GREEN browser coverage now proves:
+
+- a page with no initial chips can enhanced-submit all three geography filters plus a non-geographic browser filter;
+- every newly rendered chip is removable;
+- the dynamically created country chip emits dependency metadata and, even after that DOM metadata is deliberately tampered, issues exactly one valid fixed-map cascade request from committed params;
+- country, subdivision, and city chips disappear together while browser, opaque params, and `limit=1` remain;
+- the newly activated browser chip then removes independently;
+- existing SSR-initialized country cascade, city one-at-a-time removal, failed cascade/retry atomicity, and JavaScript-disabled behavior remain green.
+
+### Dynamic metadata verification
+
+Fresh final verification completed successfully:
+
+- focused Node/SSR analytics tests: **14 passed**
+- `npm run lint`: pass
+- `npm run typecheck`: pass
+- `npm test`: **195 tests, 194 passed, 1 platform skip, 0 failed**
+- `npm run test:analytics-browser-ui`: **51 passed**
+- `npm run test:html-snapshots`: **18 passed**
+- `npm run test:visual`: **108 passed**
+- `npm run test:view-hashes`: **18 frozen view/style files and 8 pinned assets verified**
+- `npm run test:baseline-manifest`: **234 immutable baseline files verified**
+- `npm run test:ejs-upgrade-gate`: pass with the same counts
+- `git diff --check`: pass
+
+SSR markup and visual output did not change. The only deterministic evidence update is the analytics HTML snapshot's cache-busted client script hash and its baseline-manifest hash; layout, PNG, template hash, and baseline index remain unchanged.

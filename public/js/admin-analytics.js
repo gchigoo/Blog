@@ -33,12 +33,14 @@
   ];
   const formFilterNames = ['days', 'search', 'traffic', ...advancedFilterNames];
   const supportedQueryNames = new Set([...formFilterNames, 'limit', 'cursor']);
-  const filterRemovalNames = new Map();
-  for (const chip of form.querySelectorAll('[data-analytics-remove-filter]')) {
-    const names = (chip.dataset.analyticsRemoveNames || chip.dataset.analyticsRemoveFilter || '').split(',');
-    if (names.length > 0 && names.every(name => formFilterNames.includes(name) && name !== 'days')) {
-      filterRemovalNames.set(chip.dataset.analyticsRemoveFilter, names);
-    }
+  const removableFilterNames = new Set(formFilterNames.filter(name => name !== 'days'));
+  const filterRemovalDependencies = new Map([
+    ['country', ['country', 'subdivision', 'city']]
+  ]);
+
+  function removedFilterNames(name) {
+    if (!removableFilterNames.has(name)) return null;
+    return filterRemovalDependencies.get(name) || [name];
   }
   const cursorPattern = /^[A-Za-z0-9_-]+$/;
   const maximumCursorStack = 100;
@@ -278,6 +280,7 @@
         const chip = element('button', 'analytics-filter-chip');
         chip.type = 'button';
         chip.dataset.analyticsRemoveFilter = item.name;
+        chip.dataset.analyticsRemoveNames = removedFilterNames(item.name).join(',');
         chip.setAttribute('aria-label', `移除${item.label}${item.label.endsWith('IP') ? ' ' : ''}筛选：${item.value}`);
         chip.append(
           element('span', '', `${item.label}：${item.value}`),
@@ -665,7 +668,7 @@
   }
 
   function removeFilter(name) {
-    const removedNames = filterRemovalNames.get(name);
+    const removedNames = removedFilterNames(name);
     if (!removedNames) return;
     const params = cloneParams(committed.params);
     for (const removedName of removedNames) params.delete(removedName);
