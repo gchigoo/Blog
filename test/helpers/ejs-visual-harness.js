@@ -253,6 +253,10 @@ function fixtureTupleBelow(row, cursor) {
     || (row.observedAtUtc === cursor.observedAtUtc && row.metricId < cursor.metricId);
 }
 
+function fixtureRowForEvent(event) {
+  return ANALYTICS_FIXTURE_ROWS.find(row => row.position === Number.parseInt(event.id, 16));
+}
+
 function analyticsFixtureEvent(position, traffic, search) {
   const fixtureRow = ANALYTICS_FIXTURE_ROWS.find(row => row.position === position);
   const forcedTraffic = traffic === 'human' || traffic === 'bot' ? traffic : null;
@@ -262,7 +266,6 @@ function analyticsFixtureEvent(position, traffic, search) {
   const displayPath = search === 'long-valid' ? `/fixture/${longValue}` : `/fixture/event-${position}`;
   return {
     id: position.toString(16).padStart(32, '0'),
-    metricId: fixtureRow.metricId,
     observedAtUtc: fixtureRow.observedAtUtc,
     requestPath: displayPath,
     displayPath,
@@ -315,13 +318,17 @@ function analyticsFixturePage(query = {}) {
   if (cursor === undefined) throw new Error('invalid_fixture_cursor');
   const dataset = ANALYTICS_FIXTURE_ROWS
     .map(row => analyticsFixtureEvent(row.position, traffic, search))
-    .sort((left, right) => (
-      right.observedAtUtc.localeCompare(left.observedAtUtc) || right.metricId - left.metricId
-    ));
-  const selectedDataset = cursor === null ? dataset : dataset.filter(item => fixtureTupleBelow(item, cursor));
+    .sort((left, right) => {
+      const leftRow = fixtureRowForEvent(left);
+      const rightRow = fixtureRowForEvent(right);
+      return right.observedAtUtc.localeCompare(left.observedAtUtc) || rightRow.metricId - leftRow.metricId;
+    });
+  const selectedDataset = cursor === null
+    ? dataset
+    : dataset.filter(item => fixtureTupleBelow(fixtureRowForEvent(item), cursor));
   const items = search === 'empty' ? [] : selectedDataset.slice(0, limit);
   let nextCursor = items.length > 0 && selectedDataset.length > items.length
-    ? encodeAnalyticsFixtureCursor(items.at(-1))
+    ? encodeAnalyticsFixtureCursor(fixtureRowForEvent(items.at(-1)))
     : null;
   if (search === 'same-cursor' && query.cursor) nextCursor = query.cursor;
   return {
@@ -331,10 +338,21 @@ function analyticsFixturePage(query = {}) {
   };
 }
 
+const ANALYTICS_ADVANCED_FILTERS = [
+  ['ip', '完整 IP'],
+  ['country', '国家代码'],
+  ['subdivision', '一级行政区'],
+  ['city', '城市'],
+  ['browser', '浏览器'],
+  ['os', '操作系统'],
+  ['device', '设备类别'],
+  ['pathPrefix', '路径前缀'],
+  ['referrerHost', '来源域']
+];
+
 function analyticsFilters(query, days) {
   const names = [
-    'search', 'traffic', 'ip', 'country', 'subdivision', 'city', 'browser', 'os',
-    'device', 'pathPrefix', 'referrerHost'
+    'search', 'traffic', ...ANALYTICS_ADVANCED_FILTERS.map(([name]) => name)
   ];
   const filters = { days: String(days) };
   for (const name of names) filters[name] = typeof query[name] === 'string' ? query[name] : '';
@@ -342,15 +360,32 @@ function analyticsFilters(query, days) {
   return filters;
 }
 
-function analyticsPageUrl(filters, cursor, limit) {
-  if (!cursor) return null;
+function analyticsFilterUrl(filters, limit, removedName = null, cursor = null) {
   const params = new URLSearchParams();
   for (const [name, value] of Object.entries(filters)) {
-    if (value) params.set(name, value);
+    if (name !== removedName && value) params.set(name, value);
   }
   if (limit !== 2) params.set('limit', String(limit));
-  params.set('cursor', cursor);
+  if (cursor) params.set('cursor', cursor);
   return `/admin/analytics?${params.toString()}#event-list`;
+}
+
+function analyticsAppliedFilters(filters, limit) {
+  const items = [];
+  if (filters.search) items.push({ name: 'search', label: '搜索', value: filters.search });
+  if (filters.traffic && filters.traffic !== 'all') {
+    items.push({
+      name: 'traffic', label: '访问类型',
+      value: filters.traffic === 'human' ? '仅真人' : '仅爬虫'
+    });
+  }
+  for (const [name, label] of ANALYTICS_ADVANCED_FILTERS) {
+    if (filters[name]) items.push({ name, label, value: filters[name] });
+  }
+  return items.map(item => ({
+    ...item,
+    removeUrl: analyticsFilterUrl(filters, limit, item.name)
+  }));
 }
 
 function analyticsQueryIsValid(query) {
@@ -411,8 +446,12 @@ function analyticsViewModel(query = {}) {
     overview,
     events,
     filters,
+    appliedFilters: analyticsAppliedFilters(filters, limit),
+    advancedFilterCount: ANALYTICS_ADVANCED_FILTERS.filter(([name]) => filters[name]).length,
     eventPreviousUrl: null,
-    eventNextUrl: analyticsPageUrl(filters, events.nextCursor, limit),
+    eventNextUrl: validQuery && events.nextCursor
+      ? analyticsFilterUrl(filters, limit, null, events.nextCursor)
+      : null,
     pageError: validQuery ? null : '筛选条件无效，请检查输入后重试。',
     analyticsEnhancementEnabled: validQuery,
     rangeOptions: [1, 7, 30],
@@ -656,7 +695,9 @@ app.get('/api/admin/analytics/events', async (req, res) => {
   }
   if (
     analyticsRetryPending &&
-    (req.query.search === 'retry' || (req.query.search === 'retry-next' && req.query.cursor))
+    (req.query.search === 'retry'
+      || req.query.search === 'retry-remove'
+      || (req.query.search === 'retry-next' && req.query.cursor))
   ) {
     analyticsRetryPending = false;
     return res.status(500).json({ error: 'analytics_query_failed' });
@@ -689,17 +730,41 @@ app.get('/api/admin/analytics/events/:eventId', async (req, res) => {
     await new Promise(resolve => setTimeout(resolve, 350));
     finishAnalyticsDetailSlowRequest();
   }
-  const detail = analyticsFixtureEvent(position, 'all', '');
+  const detail = analyticsFixtureEvent(position, position % 2 === 0 ? 'bot' : 'human', '');
+  const bot = detail.trafficKind === 'bot';
+  if (position === 3) {
+    detail.page = {
+      kind: 'other',
+      title: '<img data-hostile-title src=x onerror=alert(1)>',
+      displayPath: '/fixture/<script>alert(2)</script>'
+    };
+    detail.requestPath = '/fixture/%3Cscript%3Ealert(2)%3C/script%3E';
+    detail.referrer = '"><svg data-hostile-referrer onload=alert(3)>';
+    detail.client.contextAvailable = false;
+  }
+  if (bot) detail.client.contextAvailable = false;
   return res.json({
     ...detail,
-    raw: { userAgent: 'FixtureBrowser/1.0', requestClientHints: {}, browserClientContext: {} },
+    raw: {
+      userAgent: position === 3
+        ? '<iframe data-hostile-ua src=javascript:alert(4)>'
+        : bot ? 'Googlebot/2.1' : 'FixtureBrowser/1.0',
+      requestClientHints: {},
+      browserClientContext: detail.client.contextAvailable ? {} : null
+    },
     screen: { width: 1920, height: 1080 },
     viewport: { width: 1440, height: 900 },
     hardware: { concurrency: 8, deviceMemoryGb: 8, cpuArchitecture: 'x86' },
     touch: { maxTouchPoints: 0 },
     network: { effectiveType: '4g', downlinkMbps: 10, rttMs: 20, saveData: false },
     browserContext: { language: 'zh-CN', languages: ['zh-CN'], timezone: 'Asia/Shanghai' },
-    collection: { sources: detail.client.sources, contextCollectedAt: detail.observedAtUtc }
+    collection: {
+      sources: detail.client.sources,
+      contextCollectedAt: detail.client.contextAvailable ? detail.observedAtUtc : null,
+      geoDatasetDate: '2026-07-15T00:00:00.000Z',
+      geoStatus: 'resolved',
+      clientParseStatus: position === 3 ? 'error' : 'parsed'
+    }
   });
 });
 app.get('/admin/analytics', (req, res) => {

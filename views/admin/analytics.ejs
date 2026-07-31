@@ -92,8 +92,10 @@
         <% }) %>
       </fieldset>
 
-      <details class="analytics-advanced-filters" <% if (['ip', 'country', 'subdivision', 'city', 'browser', 'os', 'device', 'pathPrefix', 'referrerHost'].some(name => filters[name])) { %>open<% } %>>
-        <summary>高级筛选</summary>
+      <% const analyticsAdvancedNames = ['ip', 'country', 'subdivision', 'city', 'browser', 'os', 'device', 'pathPrefix', 'referrerHost']; %>
+      <% const analyticsAdvancedCount = typeof advancedFilterCount === 'number' ? advancedFilterCount : analyticsAdvancedNames.filter(name => filters[name]).length; %>
+      <details class="analytics-advanced-filters" <% if (analyticsAdvancedCount > 0) { %>open<% } %>>
+        <summary id="analytics-advanced-filter-summary">高级筛选<% if (analyticsAdvancedCount > 0) { %>（<span id="analytics-advanced-filter-count"><%= analyticsAdvancedCount %></span>）<% } %></summary>
         <div class="analytics-filter-grid">
           <label>完整 IP<input name="ip" value="<%= filters.ip %>" placeholder="203.0.113.10"></label>
           <label>国家代码<input name="country" maxlength="2" value="<%= filters.country %>" placeholder="CN"></label>
@@ -115,13 +117,33 @@
       </details>
 
       <div class="analytics-filter-footer">
-        <p class="analytics-applied-filters">
+        <% const analyticsFallbackLabels = { search: '搜索', traffic: '访问类型', ip: '完整 IP', country: '国家代码', subdivision: '一级行政区', city: '城市', browser: '浏览器', os: '操作系统', device: '设备类别', pathPrefix: '路径前缀', referrerHost: '来源域' }; %>
+        <% const analyticsFallbackRemoveUrl = removedName => {
+          const query = Object.entries(filters)
+            .filter(([name, value]) => name !== removedName && value)
+            .map(([name, value]) => `${encodeURIComponent(name)}=${encodeURIComponent(value)}`);
+          return `/admin/analytics?${query.join('&')}#event-list`;
+        }; %>
+        <% const analyticsFilterItems = typeof appliedFilters !== 'undefined' ? appliedFilters : [
+          ...(filters.search ? [{ name: 'search', label: '搜索', value: filters.search, removeUrl: analyticsFallbackRemoveUrl('search') }] : []),
+          ...(filters.traffic && filters.traffic !== 'all' ? [{ name: 'traffic', label: '访问类型', value: filters.traffic === 'human' ? '仅真人' : '仅爬虫', removeUrl: analyticsFallbackRemoveUrl('traffic') }] : []),
+          ...analyticsAdvancedNames.filter(name => filters[name]).map(name => ({ name, label: analyticsFallbackLabels[name], value: filters[name], removeUrl: analyticsFallbackRemoveUrl(name) }))
+        ]; %>
+        <div class="analytics-applied-filters" aria-label="已应用筛选">
           <strong>当前条件：</strong>
-          近 <%= filters.days %> 天 ·
-          <%= filters.traffic === 'human' ? '仅真人' : filters.traffic === 'bot' ? '仅爬虫' : '全部访问' %>
-          <% if (filters.search) { %> · 搜索“<%= filters.search %>”<% } %>
-          <% if (['ip', 'country', 'subdivision', 'city', 'browser', 'os', 'device', 'pathPrefix', 'referrerHost'].some(name => filters[name])) { %> · 已应用高级筛选<% } %>
-        </p>
+          <span class="analytics-filter-range">近 <%= filters.days %> 天</span>
+          <div class="analytics-filter-chips">
+            <% if (analyticsFilterItems.length === 0) { %>
+              <span class="analytics-filter-empty">全部访问</span>
+            <% } else { %>
+              <% analyticsFilterItems.forEach(item => { %>
+                <a class="analytics-filter-chip" href="<%= item.removeUrl %>" data-analytics-remove-filter="<%= item.name %>" aria-label="移除<%= item.label %><%= item.label.endsWith('IP') ? ' ' : '' %>筛选：<%= item.value %>">
+                  <span><%= item.label %>：<%= item.value %></span><span aria-hidden="true"> ×</span>
+                </a>
+              <% }) %>
+            <% } %>
+          </div>
+        </div>
         <div class="analytics-filter-actions">
           <button type="submit" class="secondary-button">应用全部筛选</button>
           <a href="/admin/analytics?days=<%= overview.days %>#event-list">清除筛选</a>
@@ -329,13 +351,22 @@
   <dl>
     <dt>事件 ID</dt><dd id="analytics-detail-id"></dd>
     <dt>时间</dt><dd id="analytics-detail-time"></dd>
-    <dt>可读路径</dt><dd id="analytics-detail-display-path"></dd>
+    <dt>页面标题</dt><dd id="analytics-detail-page-title"></dd>
+    <dt>页面路径</dt><dd id="analytics-detail-page-path"></dd>
     <dt>原始路径</dt><dd id="analytics-detail-raw-path"></dd>
+    <dt>访问类型</dt><dd id="analytics-detail-traffic"></dd>
+    <dt>爬虫名称</dt><dd id="analytics-detail-bot-name"></dd>
+    <dt>来源</dt><dd id="analytics-detail-referrer"></dd>
     <dt>完整 IP</dt><dd id="analytics-detail-ip"></dd>
     <dt>浏览器</dt><dd id="analytics-detail-browser"></dd>
+    <dt>原始 User-Agent</dt><dd id="analytics-detail-user-agent"></dd>
+    <dt>客户端解析状态</dt><dd id="analytics-detail-client-status"></dd>
+    <dt>浏览器上下文</dt><dd id="analytics-detail-context-status"></dd>
   </dl>
-  <h4>完整结构化与原始字段</h4>
-  <pre id="analytics-detail-json" class="analytics-detail-json"></pre>
+  <details class="analytics-detail-raw">
+    <summary>查看完整结构化与原始字段</summary>
+    <pre id="analytics-detail-json" class="analytics-detail-json"></pre>
+  </details>
 </section>
 <noscript><p class="message info">启用 JavaScript 后可在本页展开单条完整详情；筛选和分页仍可直接使用。</p></noscript>
 

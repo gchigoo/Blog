@@ -51,17 +51,19 @@ test('analytics stores bots while excluding admin, API, assets, and failed respo
   ]) {
     const response = makeResponse(); middleware(request, response, () => {}); response.finish();
   }
-  const botResponse = makeResponse();
-  middleware(makeRequest({ path: '/', userAgent: 'Googlebot/2.1' }), botResponse, () => {});
-  botResponse.finish();
+  for (const [path, userAgent] of [['/', 'Googlebot/2.1'], ['/about', 'GPTBot/1.2']]) {
+    const botResponse = makeResponse();
+    middleware(makeRequest({ path, userAgent }), botResponse, () => {});
+    botResponse.finish();
+  }
   const failed = makeResponse(404); middleware(makeRequest({ path: '/missing' }), failed, () => {}); failed.finish();
   const nonHtml = makeResponse();
   nonHtml.getHeader = () => 'application/json';
   middleware(makeRequest({ path: '/feed' }), nonHtml, () => {});
   nonHtml.finish();
   assert.deepEqual(
-    db.prepare('SELECT path, traffic_kind FROM access_metrics').all(),
-    [{ path: '/', traffic_kind: 'bot' }]
+    db.prepare('SELECT path, traffic_kind FROM access_metrics ORDER BY path').all(),
+    [{ path: '/', traffic_kind: 'bot' }, { path: '/about', traffic_kind: 'bot' }]
   );
   assert.equal(isTrackableRequest(makeRequest({ method: 'POST' })), false);
 });

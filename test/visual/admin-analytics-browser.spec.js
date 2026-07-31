@@ -195,6 +195,71 @@ test('filter submit clears the cursor stack and safely preserves encoded filters
   expect(current.searchParams.has('cursor')).toBe(false);
 });
 
+test('committed filter chips show advanced count and remove one filter at a time', async ({ page }) => {
+  await page.goto('/admin/analytics?days=7&traffic=bot&search=needle&ip=203.0.113.10&country=CN&city=beijing&limit=1');
+  await expect(page.locator('.analytics-advanced-filters summary')).toHaveText('高级筛选（3）');
+  await expect(page.locator('[data-analytics-remove-filter]')).toHaveCount(5);
+
+  const response = eventApiResponse(page, url => (
+    !url.searchParams.has('city') &&
+    url.searchParams.get('country') === 'CN' &&
+    url.searchParams.get('ip') === '203.0.113.10' &&
+    url.searchParams.get('search') === 'needle' &&
+    url.searchParams.get('traffic') === 'bot' &&
+    url.searchParams.get('limit') === '1' &&
+    !url.searchParams.has('cursor')
+  ));
+  await page.locator('[data-analytics-remove-filter="city"]').click();
+  expect((await response).status()).toBe(200);
+
+  await expect(page.locator('.analytics-advanced-filters summary')).toHaveText('高级筛选（2）');
+  await expect(page.locator('[data-analytics-remove-filter="city"]')).toHaveCount(0);
+  await expect(page.locator('[data-analytics-remove-filter="ip"]')).toHaveAttribute('aria-label', '移除完整 IP 筛选：203.0.113.10');
+  await expect(page.locator('[data-analytics-page="previous"]')).toBeDisabled();
+  const url = new URL(page.url());
+  expect(url.searchParams.has('city')).toBe(false);
+  expect(url.searchParams.get('country')).toBe('CN');
+  expect(url.searchParams.get('limit')).toBe('1');
+});
+
+test('failed chip removal keeps committed chips URL and rows; retry commits exact removal', async ({ page, request }) => {
+  await request.post('/__test/analytics-reset');
+  await page.goto('/admin/analytics?days=7&traffic=all&search=retry-remove&city=beijing&country=CN&limit=1');
+  const originalRows = await page.locator('#analytics-event-table-body').innerText();
+  const originalUrl = page.url();
+
+  const failure = eventApiResponse(page, (url, response) => (
+    url.searchParams.get('search') === 'retry-remove' &&
+    !url.searchParams.has('city') &&
+    response.status() === 500
+  ));
+  await page.locator('[data-analytics-remove-filter="city"]').click();
+  await failure;
+
+  await expect(page.locator('[data-analytics-remove-filter="city"]')).toBeVisible();
+  expect(await page.locator('#analytics-event-table-body').innerText()).toBe(originalRows);
+  expect(page.url()).toBe(originalUrl);
+  await expect(page.locator('[data-analytics-retry]')).toBeVisible();
+
+  const success = eventApiResponse(page, (url, response) => (
+    url.searchParams.get('search') === 'retry-remove' &&
+    !url.searchParams.has('city') &&
+    response.status() === 200
+  ));
+  await page.locator('[data-analytics-retry]').click();
+  await success;
+  await expect(page.locator('[data-analytics-remove-filter="city"]')).toHaveCount(0);
+  expect(new URL(page.url()).searchParams.has('city')).toBe(false);
+});
+
+test('long hostile filter values remain text-only chips', async ({ page }) => {
+  const value = '"><img data-filter-chip-injected src=x onerror=alert(9)>' + '长'.repeat(180);
+  await page.goto(`/admin/analytics?days=7&search=${encodeURIComponent(value)}&pathPrefix=${encodeURIComponent(value)}`);
+  await expect(page.locator('[data-analytics-remove-filter="search"]')).toContainText(value);
+  await expect(page.locator('[data-analytics-remove-filter="pathPrefix"]')).toContainText(value);
+  await expect(page.locator('[data-filter-chip-injected]')).toHaveCount(0);
+});
+
 test('pending list request exposes loading state and disables all filter entry points', async ({ page }) => {
   await openAnalytics(page);
   await page.locator('#analytics-search').fill('slow');
@@ -419,7 +484,7 @@ test('limit=1 enhanced paging uses the exact last-row tuple without gaps or dupl
   expect(new URL(page.url()).searchParams.get('limit')).toBe('1');
 });
 
-test('updated detail buttons work through event delegation', async ({ page }) => {
+test('human detail uses dedicated text-only fields for hostile production values', async ({ page }) => {
   await openAnalytics(page);
   await goToNextPage(page);
   const button = page.locator('#analytics-event-table-body .analytics-detail-button').first();
@@ -432,7 +497,49 @@ test('updated detail buttons work through event delegation', async ({ page }) =>
 
   await expect(page.locator('#analytics-detail-panel')).toBeVisible();
   await expect(page.locator('#analytics-detail-id')).toHaveText(eventId);
+  await expect(page.locator('#analytics-detail-page-title')).toHaveText('<img data-hostile-title src=x onerror=alert(1)>');
+  await expect(page.locator('#analytics-detail-page-path')).toHaveText('/fixture/<script>alert(2)</script>');
+  await expect(page.locator('#analytics-detail-traffic')).toHaveText('真人');
+  await expect(page.locator('#analytics-detail-bot-name')).toHaveText('不适用');
+  await expect(page.locator('#analytics-detail-referrer')).toHaveText('"><svg data-hostile-referrer onload=alert(3)>');
+  await expect(page.locator('#analytics-detail-user-agent')).toHaveText('<iframe data-hostile-ua src=javascript:alert(4)>');
+  await expect(page.locator('#analytics-detail-client-status')).toHaveText('客户端解析失败');
+  await expect(page.locator('#analytics-detail-context-status')).toHaveText('真人访问未提供浏览器上下文');
   await expect(page.locator('#analytics-detail-json')).toContainText(eventId);
+  await expect(page.locator('[data-hostile-title], [data-hostile-referrer], [data-hostile-ua]')).toHaveCount(0);
+  expect(await page.evaluate(() => window.__analyticsInjectionExecuted || false)).toBe(false);
+});
+
+test('bot detail identifies crawler context absence with the approved copy', async ({ page }) => {
+  await openAnalytics(page);
+  const button = page.locator('#analytics-event-table-body .analytics-detail-button').nth(1);
+  const eventId = await button.getAttribute('data-event-id');
+  const detailResponse = page.waitForResponse(response => (
+    new URL(response.url()).pathname === `/api/admin/analytics/events/${eventId}`
+  ));
+  await button.click();
+  expect((await detailResponse).status()).toBe(200);
+
+  await expect(page.locator('#analytics-detail-traffic')).toHaveText('爬虫');
+  await expect(page.locator('#analytics-detail-bot-name')).toHaveText('Googlebot');
+  await expect(page.locator('#analytics-detail-context-status')).toHaveText('爬虫未提供浏览器上下文');
+  await expect(page.locator('#analytics-detail-user-agent')).toContainText('Googlebot');
+});
+
+test('invalid detail contract keeps the prior detail hidden and reports an error', async ({ page }) => {
+  await openAnalytics(page);
+  const button = page.locator('#analytics-event-table-body .analytics-detail-button').first();
+  const eventId = await button.getAttribute('data-event-id');
+  await page.route(`**/api/admin/analytics/events/${eventId}`, route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ id: eventId })
+  }));
+  await button.click();
+  await expect(page.locator('#analytics-detail-panel')).toBeHidden();
+  await expect(page.locator('#analytics-detail-status')).toHaveAttribute('role', 'alert');
+  await expect(page.locator('#analytics-detail-status')).toContainText('访问详情加载失败');
+  await expect(page.locator('#analytics-detail-page-title')).toHaveText('');
 });
 
 test('latest detail wins when detail requests complete out of order', async ({ page, request }) => {
@@ -621,6 +728,27 @@ test('result summary receives focus with preventScroll behavior', async ({ page 
   await expect(page.locator('#analytics-event-summary')).toBeFocused();
   expect(await page.evaluate(() => window.__analyticsFocusOptions.some(options => options?.preventScroll === true))).toBe(true);
   expect(await page.evaluate(() => window.scrollY)).toBe(before);
+});
+
+test('JavaScript-disabled filter removal preserves unrelated filters and limit', async ({ browser }) => {
+  const context = await browser.newContext({ javaScriptEnabled: false });
+  const page = await context.newPage();
+  try {
+    await page.goto('http://127.0.0.1:4173/admin/analytics?days=7&traffic=bot&search=needle&country=CN&city=beijing&limit=1');
+    const cityRemoval = page.getByRole('link', { name: '移除城市筛选：beijing' });
+    expect(await cityRemoval.getAttribute('href')).toContain('limit=1');
+    await Promise.all([page.waitForNavigation(), cityRemoval.click()]);
+    const url = new URL(page.url());
+    expect(url.searchParams.has('city')).toBe(false);
+    expect(url.searchParams.get('country')).toBe('CN');
+    expect(url.searchParams.get('search')).toBe('needle');
+    expect(url.searchParams.get('traffic')).toBe('bot');
+    expect(url.searchParams.get('limit')).toBe('1');
+    expect(url.searchParams.has('cursor')).toBe(false);
+    expect(url.hash).toBe('#event-list');
+  } finally {
+    await context.close();
+  }
 });
 
 test('JavaScript-disabled limit=1 navigation preserves limit and visits the next event', async ({ browser }) => {

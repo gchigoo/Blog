@@ -3,6 +3,7 @@ const { performance } = require('node:perf_hooks');
 const test = require('node:test');
 const Database = require('better-sqlite3');
 const { formatAnalyticsPath } = require('../server/analytics/path-display');
+const { pagePresentationForPath } = require('../server/analytics/page-presentation');
 const { rebuildDetailDimensionMetrics, recordAccessEvent } = require('../server/analytics/repository');
 const {
   explainEventList,
@@ -83,6 +84,25 @@ test('analytics paths decode every valid UTF-8 path without changing reserved or
   assert.deepEqual(formatAnalyticsPath('/x/%3Cscript%3E'), { displayPath: '/x/<script>', displayPathStatus: 'decoded' });
   assert.match(formatAnalyticsPath('/x/%E2%80%AE').displayPath, /\\u\{202E\}/);
   assert.match(formatAnalyticsPath('/bad/%E5%A‮').displayPath, /\\u\{202E\}/);
+});
+
+test('page presentation treats malformed and multi-segment article/tag paths as safe fallbacks', () => {
+  const titles = new Map([['known', 'Known article']]);
+  assert.deepEqual(pagePresentationForPath('/article/known', titles), {
+    kind: 'article', title: 'Known article', displayPath: '/article/known'
+  });
+  assert.deepEqual(pagePresentationForPath('/article/known/extra', titles), {
+    kind: 'article', title: '文章（已删除或未知）', displayPath: '/article/known/extra'
+  });
+  assert.deepEqual(pagePresentationForPath('/article/%E5%A', titles), {
+    kind: 'article', title: '文章（已删除或未知）', displayPath: '/article/%E5%A'
+  });
+  assert.deepEqual(pagePresentationForPath('/tag/tools/extra', titles), {
+    kind: 'other', title: '/tag/tools/extra', displayPath: '/tag/tools/extra'
+  });
+  assert.deepEqual(pagePresentationForPath('/tag/%E5%A', titles), {
+    kind: 'other', title: '/tag/%E5%A', displayPath: '/tag/%E5%A'
+  });
 });
 
 test('event-list filters parse traffic, literal search, and structured errors', () => {
@@ -230,8 +250,10 @@ test('event list filters traffic and literal search while enriching page titles 
   assert.ok(botOnly.items.every(item => item.trafficKind === 'bot'));
   assert.ok(botOnly.items.every(item => item.botName === 'Googlebot'));
   assert.equal(listEvents(db, NOW, parseEventListQuery({ search: '113.10' }, 30)).items.length, 1);
+  assert.equal(listEvents(db, NOW, parseEventListQuery({ search: '203.0.113.10' }, 30)).items.length, 1);
   const titleSearch = listEvents(db, NOW, parseEventListQuery({ search: '部署' }, 30));
   assert.equal(titleSearch.items[0].page.title, 'Node.js 部署指南（新版）');
+  assert.equal(listEvents(db, NOW, parseEventListQuery({ search: 'ｎＯＤＥ．ＪＳ' }, 30)).items.length, 3);
   assert.equal(listEvents(db, NOW, parseEventListQuery({ search: '/ARTICLE/NODE' }, 30)).items.length, 3);
   db.prepare("DELETE FROM access_metrics WHERE path IN ('/tag/%E5%B7%A5%E5%85%B7', '/article/%E6%95%88%E7%8E%87%E5%B7%A5%E5%85%B7')").run();
   assert.equal(listEvents(db, NOW, parseEventListQuery({ search: '%' }, 30)).items.length, 0);

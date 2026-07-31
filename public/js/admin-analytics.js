@@ -14,16 +14,24 @@
   const detailFields = {
     id: document.getElementById('analytics-detail-id'),
     time: document.getElementById('analytics-detail-time'),
-    displayPath: document.getElementById('analytics-detail-display-path'),
+    pageTitle: document.getElementById('analytics-detail-page-title'),
+    pagePath: document.getElementById('analytics-detail-page-path'),
     rawPath: document.getElementById('analytics-detail-raw-path'),
+    traffic: document.getElementById('analytics-detail-traffic'),
+    botName: document.getElementById('analytics-detail-bot-name'),
+    referrer: document.getElementById('analytics-detail-referrer'),
     ip: document.getElementById('analytics-detail-ip'),
-    browser: document.getElementById('analytics-detail-browser')
+    browser: document.getElementById('analytics-detail-browser'),
+    userAgent: document.getElementById('analytics-detail-user-agent'),
+    clientStatus: document.getElementById('analytics-detail-client-status'),
+    contextStatus: document.getElementById('analytics-detail-context-status')
   };
+  const advancedSummary = document.getElementById('analytics-advanced-filter-summary');
   const emptyState = root.querySelector('.analytics-empty') || createEmptyState();
-  const formFilterNames = [
-    'days', 'search', 'traffic', 'ip', 'country', 'subdivision', 'city', 'browser',
-    'os', 'device', 'pathPrefix', 'referrerHost'
+  const advancedFilterNames = [
+    'ip', 'country', 'subdivision', 'city', 'browser', 'os', 'device', 'pathPrefix', 'referrerHost'
   ];
+  const formFilterNames = ['days', 'search', 'traffic', ...advancedFilterNames];
   const supportedQueryNames = new Set([...formFilterNames, 'limit', 'cursor']);
   const cursorPattern = /^[A-Za-z0-9_-]+$/;
   const maximumCursorStack = 100;
@@ -219,24 +227,70 @@
     ];
   }
 
-  function filterSummaryText(params) {
-    const search = params.get('search') || '';
+  const filterLabels = {
+    search: '搜索',
+    traffic: '访问类型',
+    ip: '完整 IP',
+    country: '国家代码',
+    subdivision: '一级行政区',
+    city: '城市',
+    browser: '浏览器',
+    os: '操作系统',
+    device: '设备类别',
+    pathPrefix: '路径前缀',
+    referrerHost: '来源域'
+  };
+
+  function appliedFilterItems(params) {
+    const items = [];
+    const search = params.get('search');
     const traffic = params.get('traffic') || 'all';
-    const advanced = ['ip', 'country', 'subdivision', 'city', 'browser', 'os', 'device', 'pathPrefix', 'referrerHost']
-      .some(name => params.has(name));
-    return [
-      `近 ${params.get('days') || '7'} 天`,
-      traffic === 'human' ? '仅真人' : traffic === 'bot' ? '仅爬虫' : '全部访问',
-      search ? `搜索“${search}”` : '',
-      advanced ? '已应用高级筛选' : ''
-    ].filter(Boolean).join(' · ');
+    if (search) items.push({ name: 'search', label: filterLabels.search, value: search });
+    if (traffic !== 'all') {
+      items.push({
+        name: 'traffic',
+        label: filterLabels.traffic,
+        value: traffic === 'human' ? '仅真人' : '仅爬虫'
+      });
+    }
+    for (const name of advancedFilterNames) {
+      const value = params.get(name);
+      if (value) items.push({ name, label: filterLabels[name], value });
+    }
+    return items;
   }
 
   function appliedFilterNodes(params) {
-    return [
-      element('strong', '', '当前条件：'),
-      document.createTextNode(` ${filterSummaryText(params)}`)
-    ];
+    const range = element('span', 'analytics-filter-range', `近 ${params.get('days') || '7'} 天`);
+    const chips = element('div', 'analytics-filter-chips');
+    const items = appliedFilterItems(params);
+    if (items.length === 0) {
+      chips.append(element('span', 'analytics-filter-empty', '全部访问'));
+    } else {
+      for (const item of items) {
+        const chip = element('button', 'analytics-filter-chip');
+        chip.type = 'button';
+        chip.dataset.analyticsRemoveFilter = item.name;
+        chip.setAttribute('aria-label', `移除${item.label}${item.label.endsWith('IP') ? ' ' : ''}筛选：${item.value}`);
+        chip.append(
+          element('span', '', `${item.label}：${item.value}`),
+          element('span', '', ' ×')
+        );
+        chip.lastChild.setAttribute('aria-hidden', 'true');
+        chips.append(chip);
+      }
+    }
+    return [element('strong', '', '当前条件：'), range, chips];
+  }
+
+  function advancedFilterCount(params) {
+    return advancedFilterNames.filter(name => Boolean(params.get(name))).length;
+  }
+
+  function updateAdvancedSummary(params) {
+    if (!advancedSummary) return;
+    const count = advancedFilterCount(params);
+    advancedSummary.textContent = count > 0 ? `高级筛选（${count}）` : '高级筛选';
   }
 
   function cursorFromPagination(direction) {
@@ -328,6 +382,7 @@
   function setControlsDisabled(disabled) {
     for (const control of form.querySelectorAll('button, input, select')) control.disabled = disabled;
     for (const shortcut of document.querySelectorAll('.analytics-filter-shortcut')) shortcut.disabled = disabled;
+    for (const chip of document.querySelectorAll('button[data-analytics-remove-filter]')) chip.disabled = disabled;
     for (const control of pagination.querySelectorAll('button, a')) {
       if (control.tagName === 'BUTTON') control.disabled = disabled || (
         control.dataset.analyticsPage === 'previous'
@@ -394,6 +449,14 @@
     return value === null || typeof value === 'string';
   }
 
+  function validNullableNumber(value) {
+    return value === null || (typeof value === 'number' && Number.isFinite(value));
+  }
+
+  function validStringArray(value) {
+    return Array.isArray(value) && value.every(entry => typeof entry === 'string');
+  }
+
   function validateItem(item) {
     if (!isPlainObject(item)) throw new Error('invalid_event_item');
     if (!/^[0-9a-f]{32}$/.test(item.id || '')) throw new Error('invalid_event_id');
@@ -419,6 +482,28 @@
       || !validOptionalString(item.client.os.name)
       || !validOptionalString(item.client.os.version)) throw new Error('invalid_client');
     return item;
+  }
+
+  function validateDetail(detail, eventId) {
+    validateItem(detail);
+    if (detail.id !== eventId) throw new Error('invalid_detail_id');
+    if (!isPlainObject(detail.raw) || !validOptionalString(detail.raw.userAgent)
+      || !(detail.raw.requestClientHints === null || isPlainObject(detail.raw.requestClientHints))
+      || !(detail.raw.browserClientContext === null || isPlainObject(detail.raw.browserClientContext))) {
+      throw new Error('invalid_detail_raw');
+    }
+    if (!isPlainObject(detail.screen) || !validNullableNumber(detail.screen.width)
+      || !validNullableNumber(detail.screen.height)) throw new Error('invalid_detail_screen');
+    if (!isPlainObject(detail.viewport) || !validNullableNumber(detail.viewport.width)
+      || !validNullableNumber(detail.viewport.height)) throw new Error('invalid_detail_viewport');
+    if (!isPlainObject(detail.collection) || !validStringArray(detail.collection.sources)
+      || !validOptionalString(detail.collection.contextCollectedAt)
+      || !validOptionalString(detail.collection.geoDatasetDate)
+      || !validString(detail.collection.geoStatus)
+      || !['parsed', 'unknown', 'error'].includes(detail.collection.clientParseStatus)) {
+      throw new Error('invalid_detail_collection');
+    }
+    return detail;
   }
 
   function validateListPayload(payload, attempt) {
@@ -454,6 +539,7 @@
     cards.replaceChildren(...previous.cardNodes);
     pagination.replaceChildren(...previous.pagingNodes);
     if (applied) applied.replaceChildren(...previous.appliedNodes);
+    if (advancedSummary) advancedSummary.textContent = previous.advancedSummaryText;
     summary.textContent = previous.summaryText;
     emptyState.hidden = previous.emptyHidden;
   }
@@ -465,6 +551,7 @@
       cardNodes: [...cards.childNodes],
       pagingNodes: [...pagination.childNodes],
       appliedNodes: applied ? [...applied.childNodes] : [],
+      advancedSummaryText: advancedSummary?.textContent || '高级筛选',
       summaryText: summary.textContent,
       emptyHidden: emptyState.hidden
     };
@@ -473,6 +560,7 @@
       cards.replaceChildren(...staged.cardNodes);
       pagination.replaceChildren(...staged.pagingNodes);
       if (applied) applied.replaceChildren(...staged.appliedNodes);
+      updateAdvancedSummary(staged.state.params);
       summary.textContent = staged.summaryText;
       emptyState.hidden = !staged.empty;
       writeHistory(attempt.historyMode, staged.state);
@@ -569,6 +657,20 @@
     requestEvents(params, { query, historyMode: 'push', cursor: null, cursorStack: [] });
   }
 
+  function removeFilter(name) {
+    if (!formFilterNames.includes(name) || name === 'days') return;
+    const params = cloneParams(committed.params);
+    params.delete(name);
+    params.delete('cursor');
+    if (name === 'traffic') params.set('traffic', 'all');
+    requestEvents(params, {
+      query: params.toString(),
+      historyMode: 'push',
+      cursor: null,
+      cursorStack: []
+    });
+  }
+
   function nextPage() {
     if (!committed.nextCursor) return;
     const params = paramsForCursor(committed.nextCursor);
@@ -618,8 +720,21 @@
     detailStatus.setAttribute('role', error ? 'alert' : 'status');
   }
 
-  function setDetailText(target, value) {
-    if (target) target.textContent = safeValue(value);
+  function setDetailText(target, value, fallback = '未知') {
+    if (target) target.textContent = safeValue(value, fallback);
+  }
+
+  function detailContextStatus(detail) {
+    if (detail.client.contextAvailable) return '已提供浏览器上下文';
+    return detail.trafficKind === 'bot'
+      ? '爬虫未提供浏览器上下文'
+      : '真人访问未提供浏览器上下文';
+  }
+
+  function detailClientStatus(detail) {
+    if (detail.collection.clientParseStatus === 'parsed') return '已解析';
+    if (detail.collection.clientParseStatus === 'error') return '客户端解析失败';
+    return '客户端信息未知';
   }
 
   async function showDetail(eventId) {
@@ -637,15 +752,22 @@
         signal: controller.signal
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const detail = await response.json();
+      const payload = await response.json();
       if (id !== detailRequestId || controller.signal.aborted) return;
-      if (!isPlainObject(detail) || detail.id !== eventId) throw new Error('invalid_detail_response');
+      const detail = validateDetail(payload, eventId);
       setDetailText(detailFields.id, detail.id);
       setDetailText(detailFields.time, detail.observedAtUtc);
-      setDetailText(detailFields.displayPath, detail.displayPath);
+      setDetailText(detailFields.pageTitle, detail.page.title);
+      setDetailText(detailFields.pagePath, detail.page.displayPath);
       setDetailText(detailFields.rawPath, detail.requestPath);
+      setDetailText(detailFields.traffic, detail.trafficKind === 'bot' ? '爬虫' : '真人');
+      setDetailText(detailFields.botName, detail.botName, '不适用');
+      setDetailText(detailFields.referrer, detail.referrer, '无来源');
       setDetailText(detailFields.ip, detail.ipAddress);
-      setDetailText(detailFields.browser, joinedName(detail.client?.browser));
+      setDetailText(detailFields.browser, joinedName(detail.client.browser));
+      setDetailText(detailFields.userAgent, detail.raw.userAgent, '未提供');
+      setDetailText(detailFields.clientStatus, detailClientStatus(detail));
+      setDetailText(detailFields.contextStatus, detailContextStatus(detail));
       detailJson.textContent = JSON.stringify(detail, null, 2);
       detailStatus.hidden = true;
       detailPanel.hidden = false;
@@ -666,7 +788,7 @@
 
   document.addEventListener('click', event => {
     const target = event.target.closest(
-      '.analytics-filter-shortcut, .analytics-detail-button, [data-analytics-page], [data-analytics-retry]'
+      '.analytics-filter-shortcut, .analytics-detail-button, [data-analytics-page], [data-analytics-retry], [data-analytics-remove-filter]'
     );
     if (!target) return;
 
@@ -678,6 +800,11 @@
     if (target.matches('.analytics-detail-button')) {
       event.preventDefault();
       showDetail(target.dataset.eventId);
+      return;
+    }
+    if (target.matches('[data-analytics-remove-filter]')) {
+      event.preventDefault();
+      removeFilter(target.dataset.analyticsRemoveFilter);
       return;
     }
     if (target.matches('[data-analytics-retry]')) {
@@ -728,6 +855,7 @@
       committed = { ...committed, ...initialProposal, nextCursor: committed.nextCursor };
     }
     applyParamsToForm(committed.params);
+    updateAdvancedSummary(committed.params);
     pagination.replaceChildren(...paginationNodes(committed));
     history.replaceState(historyState(committed), '', pageUrl(committed));
   }

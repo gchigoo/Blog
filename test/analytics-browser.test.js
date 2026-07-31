@@ -194,6 +194,12 @@ test('admin analytics API/page require authentication, are no-store, and expose 
     assert.match(unauthorizedPage.headers.get('cache-control') || '', /no-store/);
   }
 
+  const invalidOverview = await fetch(`${baseUrl}/api/admin/analytics?days=7days`, {
+    headers: { cookie: adminCookie }
+  });
+  assert.equal(invalidOverview.status, 400);
+  assert.deepEqual(await invalidOverview.json(), { error: 'invalid_filter' });
+
   const listResponse = await fetch(`${baseUrl}/api/admin/analytics/events`, {
     headers: { cookie: adminCookie }
   });
@@ -646,6 +652,11 @@ test('admin analytics view renders readable paths and hostile detail values as t
   assert.match(html, /爬虫访问量/);
   assert.match(html, /name="search"/);
   assert.match(html, /name="traffic"/);
+  assert.match(html, /<summary[^>]*>高级筛选（<span[^>]*>2<\/span>）<\/summary>/);
+  assert.match(html, /data-analytics-remove-filter="search"[^>]*aria-label="移除搜索筛选/);
+  assert.match(html, /data-analytics-remove-filter="ip"[^>]*aria-label="移除完整 IP 筛选/);
+  assert.match(html, /data-analytics-remove-filter="pathPrefix"[^>]*aria-label="移除路径前缀筛选/);
+  assert.match(html, /href="\/admin\/analytics\?[^"#]*search=[^"#]*traffic=all[^"#]*pathPrefix=[^"#]*#event-list"[^>]*data-analytics-remove-filter="ip"/);
   assert.match(html, /<details[^>]*id="analytics-more"/);
   assert.match(html, /href="[^"]*#event-list"/);
   assert.match(html, /文章（已删除或未知）/);

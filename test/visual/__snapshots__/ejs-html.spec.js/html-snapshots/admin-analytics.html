@@ -115,8 +115,10 @@
         
       </fieldset>
 
+      
+      
       <details class="analytics-advanced-filters" >
-        <summary>高级筛选</summary>
+        <summary id="analytics-advanced-filter-summary">高级筛选</summary>
         <div class="analytics-filter-grid">
           <label>完整 IP<input name="ip" value="" placeholder="203.0.113.10"></label>
           <label>国家代码<input name="country" maxlength="2" value="" placeholder="CN"></label>
@@ -144,13 +146,18 @@
       </details>
 
       <div class="analytics-filter-footer">
-        <p class="analytics-applied-filters">
+        
+        
+        
+        <div class="analytics-applied-filters" aria-label="已应用筛选">
           <strong>当前条件：</strong>
-          近 7 天 ·
-          全部访问
-          
-          
-        </p>
+          <span class="analytics-filter-range">近 7 天</span>
+          <div class="analytics-filter-chips">
+            
+              <span class="analytics-filter-empty">全部访问</span>
+            
+          </div>
+        </div>
         <div class="analytics-filter-actions">
           <button type="submit" class="secondary-button">应用全部筛选</button>
           <a href="/admin/analytics?days=7#event-list">清除筛选</a>
@@ -532,17 +539,26 @@
   <dl>
     <dt>事件 ID</dt><dd id="analytics-detail-id"></dd>
     <dt>时间</dt><dd id="analytics-detail-time"></dd>
-    <dt>可读路径</dt><dd id="analytics-detail-display-path"></dd>
+    <dt>页面标题</dt><dd id="analytics-detail-page-title"></dd>
+    <dt>页面路径</dt><dd id="analytics-detail-page-path"></dd>
     <dt>原始路径</dt><dd id="analytics-detail-raw-path"></dd>
+    <dt>访问类型</dt><dd id="analytics-detail-traffic"></dd>
+    <dt>爬虫名称</dt><dd id="analytics-detail-bot-name"></dd>
+    <dt>来源</dt><dd id="analytics-detail-referrer"></dd>
     <dt>完整 IP</dt><dd id="analytics-detail-ip"></dd>
     <dt>浏览器</dt><dd id="analytics-detail-browser"></dd>
+    <dt>原始 User-Agent</dt><dd id="analytics-detail-user-agent"></dd>
+    <dt>客户端解析状态</dt><dd id="analytics-detail-client-status"></dd>
+    <dt>浏览器上下文</dt><dd id="analytics-detail-context-status"></dd>
   </dl>
-  <h4>完整结构化与原始字段</h4>
-  <pre id="analytics-detail-json" class="analytics-detail-json"></pre>
+  <details class="analytics-detail-raw">
+    <summary>查看完整结构化与原始字段</summary>
+    <pre id="analytics-detail-json" class="analytics-detail-json"></pre>
+  </details>
 </section>
 <noscript><p class="message info">启用 JavaScript 后可在本页展开单条完整详情；筛选和分页仍可直接使用。</p></noscript>
 
-<script src="/js/admin-analytics.js?v=44fa5c31a129" defer></script>
+<script src="/js/admin-analytics.js?v=a5317a12d55b" defer></script>
 
   </main>
   

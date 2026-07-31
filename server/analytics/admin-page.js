@@ -7,6 +7,17 @@ const FILTER_NAMES = [
   'search', 'traffic', 'ip', 'country', 'subdivision', 'city', 'browser', 'os',
   'device', 'pathPrefix', 'referrerHost'
 ];
+const ADVANCED_FILTERS = [
+  ['ip', '完整 IP'],
+  ['country', '国家代码'],
+  ['subdivision', '一级行政区'],
+  ['city', '城市'],
+  ['browser', '浏览器'],
+  ['os', '操作系统'],
+  ['device', '设备类别'],
+  ['pathPrefix', '路径前缀'],
+  ['referrerHost', '来源域']
+];
 
 function filterViewModel(query, days) {
   const filters = { days: String(days) };
@@ -17,15 +28,33 @@ function filterViewModel(query, days) {
   return filters;
 }
 
-function nextPageUrl(filters, cursor, limit) {
-  if (!cursor) return null;
+function filterUrl(filters, limit, removedName = null, cursor = null) {
   const params = new URLSearchParams();
   for (const [name, value] of Object.entries(filters)) {
-    if (value) params.set(name, value);
+    if (name !== removedName && value) params.set(name, value);
   }
   if (limit !== 50) params.set('limit', String(limit));
-  params.set('cursor', cursor);
+  if (cursor) params.set('cursor', cursor);
   return `/admin/analytics?${params.toString()}#event-list`;
+}
+
+function appliedFilters(filters, limit) {
+  const items = [];
+  if (filters.search) items.push({ name: 'search', label: '搜索', value: filters.search });
+  if (filters.traffic && filters.traffic !== 'all') {
+    items.push({
+      name: 'traffic',
+      label: '访问类型',
+      value: filters.traffic === 'human' ? '仅真人' : '仅爬虫'
+    });
+  }
+  for (const [name, label] of ADVANCED_FILTERS) {
+    if (filters[name]) items.push({ name, label, value: filters[name] });
+  }
+  return items.map(item => ({
+    ...item,
+    removeUrl: filterUrl(filters, limit, item.name)
+  }));
 }
 
 function formatBeijingTime(value) {
@@ -87,12 +116,15 @@ function createAdminPageRouter({ db, config, clock, geoResolver, logger = consol
         geoData,
         config.detailsEnabled
       );
+      const filterItems = appliedFilters(filters, options.limit);
       return res.render('admin/analytics', {
         overview,
         events,
         filters,
+        appliedFilters: filterItems,
+        advancedFilterCount: ADVANCED_FILTERS.filter(([name]) => filters[name]).length,
         eventPreviousUrl: null,
-        eventNextUrl: nextPageUrl(filters, events.nextCursor, options.limit),
+        eventNextUrl: filterUrl(filters, options.limit, null, events.nextCursor),
         formatBeijingTime,
         pageError,
         analyticsEnhancementEnabled: !pageError && config.detailsEnabled,

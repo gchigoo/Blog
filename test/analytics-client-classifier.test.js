@@ -9,6 +9,14 @@ const cases = [
   ['bingpreview/1.0', 'Bingbot'],
   ['facebookexternalhit/1.1', 'Facebook crawler'],
   ['TelegramBot (like TwitterBot)', 'TelegramBot'],
+  ['GPTBot/1.2', 'GPTBot'],
+  ['ClaudeBot/1.0', 'ClaudeBot'],
+  ['AhrefsBot/7.0', 'AhrefsBot'],
+  ['Twitterbot/1.0', 'Twitterbot'],
+  ['YandexBot/3.0', 'YandexBot'],
+  ['Amazonbot/0.1', 'Amazonbot'],
+  ['PetalBot/1.0', 'PetalBot'],
+  ['ExampleBot/1.0', 'Other bot'],
   ['ExampleCrawler/1.0', 'Other bot'],
   ['ExampleSpider/1.0', 'Other bot'],
   ['Yahoo! Slurp', 'Other bot']
@@ -21,8 +29,14 @@ for (const [userAgent, botName] of cases) {
   });
 }
 
-test('keeps ordinary, blank, and ambiguous clients human', () => {
-  for (const userAgent of ['', 'Mozilla/5.0 Chrome/126 Safari/537.36', 'RoboticsLabBrowser/1.0']) {
+test('keeps ordinary, blank, and embedded crawler-product words human', () => {
+  for (const userAgent of [
+    '',
+    'Mozilla/5.0 Chrome/126 Safari/537.36',
+    'RoboticsLabBrowser/1.0',
+    'SpiderMonkey/128.0',
+    'AcmeCrawlerToolkit/4.2'
+  ]) {
     assert.deepEqual(classifyClient(userAgent), { trafficKind: 'human', botName: null });
   }
 });
