@@ -76,7 +76,7 @@ SEO、RSS、sitemap 使用 `BLOG_PUBLIC_ORIGIN` 生成绝对 URL。生产环境�
 
 ### 数据库迁移
 
-升级已有实例时，先备份，再执行幂等迁移，验证后重启：
+升级已有实例时，必须先备份并执行幂等迁移，再重启应用；不要依赖重启隐式完成迁移：
 
 ```bash
 npm run backup-db
@@ -85,7 +85,9 @@ npm test
 pm2 restart blog --update-env
 ```
 
-迁移会增加文章发布状态、摘要、规范化标签表和 FTS5 索引；现有文章会回填为 `published`。迁移只在本机数据库上执行，不会连接外部服务。回滚到不认识 `status` 的旧版本前必须恢复升级前备份，或先删除/发布所有草稿；否则旧版本可能把草稿当作普通文章公开。
+迁移会增加文章发布状态、摘要、规范化标签表、FTS5 索引，以及 analytics 的 `traffic_kind` / `bot_name` 字段、索引和一致性约束；现有文章会回填为 `published`，既有 analytics 行会回填为 `human`。迁移只在本机数据库上执行，不会连接外部服务。
+
+回滚到不认识 `status` 的旧版本前必须恢复升级前备份，或先删除/发布所有草稿；否则旧版本可能把草稿当作普通文章公开。开始采集爬虫后，回滚到不认识 `traffic_kind` 的发布前应用代码还必须恢复发布前数据库备份，或者部署显式过滤 `traffic_kind` 的兼容补丁；仅回退代码和 lockfile 不足以保证旧查询口径正确。
 
 ## Google 登录评论配置
 
@@ -261,6 +263,10 @@ sudo nginx -t                   # 测试配置
 
 访问明细默认关闭。启用后，成功的公开 HTML 页面访问会在 `blog.db` 中保存原始 IP、请求时间、公开 URL/查询、Referrer、原始 User-Agent、允许的 Client Hints、GeoLite2 City 近似地区、浏览器/系统/设备解析结果和浏览器实际提供的设备上下文。Cookie、Authorization、OAuth code/state 和凭据参数值不会进入 analytics 数据。默认保留 30 天，每 6 小时清理一次；数据库备份也会包含这些明细。
 
+已知爬虫不会再在入口被丢弃：系统保留其聚合和逐次记录，显示可读爬虫名称，但所有真人指标和真人维度都显式排除 `traffic_kind='bot'`。所选近 N 天聚合查询沿用 `access_metrics.bucket_utc` 的小时 bucket 精度，因此范围边界不是小时以内的精确计数。独立 IP 只由保留期内的真人明细去重；当范围内还包含只有聚合指标、没有明细的历史时，后台显示“至少 N 个”，不能把它解释为完整总数。
+
+当 `ANALYTICS_DETAILS_ENABLED=false` 时，逐次访问列表、单条详情 UI、`/api/admin/analytics/events` 和事件详情 API 均不可用，即使数据库中仍保留旧明细；四项聚合概览仍可使用，其中独立 IP 明确显示未启用。
+
 | 环境变量 | 生产值/约束 |
 |---|---|
 | `ANALYTICS_HMAC_SECRET` | 始终必填；canonical unpadded base64url，解码后至少 32 bytes，必须从 secret manager 注入 |
@@ -284,6 +290,8 @@ pm2 restart blog --update-env
 ```
 
 应用启动时会把 MMDB 完整读入内存并验证 City metadata 与固定 lookup；首个 reader 无法建立时拒绝监听。运行中每 60 秒检测一次原子替换，候选损坏时继续使用旧 reader。数据集 build epoch 超过 14 天时，管理员访问统计页显示 stale，但事件写入不会停止。
+
+本次 analytics 发布把匿名日访客 HMAC 的日期键从 UTC 日切换为 `Asia/Shanghai` 自然日，以匹配“今日活跃访客”口径。部署日的新旧 HMAC 可能在最多一个北京时间自然日内产生轻微重复计数或过度去重；该过渡不会超过一天，历史 HMAC 不回填、不重算。必须保持同一稳定 `ANALYTICS_HMAC_SECRET`，不要用轮换密钥处理这一过渡。
 
 ### 首次安装 GeoLite2 City updater
 
@@ -471,8 +479,13 @@ git pull
 # 2. 安装新锁定依赖
 npm ci
 
-# 3. 重启应用（PM2 会优雅重启，无停机）
-pm2 restart blog
+# 3. 在重启前完成数据库备份、迁移与验证
+npm run backup-db
+npm run migrate-db
+npm test
+
+# 4. 重启应用（PM2 会优雅重启，无停机）
+pm2 restart blog --update-env
 ```
 
 ### 查看日志
