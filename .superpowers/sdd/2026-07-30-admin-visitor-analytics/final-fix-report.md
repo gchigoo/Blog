@@ -200,3 +200,48 @@ All remain below the unchanged budgets of 250 ms, 500 ms, and 256 KiB.
 - The generic classifier deliberately uses ASCII token-ending semantics. This is conservative for unusual non-ASCII concatenated agent names; known production brands should continue to be added as explicit ordered rules when needed.
 - Human missing context and human parser errors are displayed separately. The raw JSON remains available under a collapsed disclosure for deeper diagnostics.
 - No release-blocking concern remains from the final review findings.
+
+## Residual geographic dependency fix
+
+The scoped final re-review identified one dependency-ordering defect: a valid committed query may contain `country` together with dependent `subdivision` and `city`, but both removal paths previously deleted only `country`, producing an invalid request. The narrow residual fix applies the safest dependency rule consistently:
+
+- removing `country` removes `country`, `subdivision`, and `city`;
+- removing `subdivision` or `city` remains one-at-a-time;
+- all unrelated filters, duplicate opaque query parameters, and non-form `limit` are preserved;
+- cursor is removed and the enhanced cursor stack is reset;
+- no-JavaScript links remain valid and anchored at `#event-list`.
+
+The server now owns each chip's removal-name set and serializes it into the SSR chip metadata used by the enhanced client. The client validates that metadata against supported form filters, clones committed params, applies the complete removal set, and then uses the unchanged staged request/commit machinery. Failed country-cascade requests therefore leave rows, chips, form state, URL, and history untouched; retry replays the exact pending cascade and commits only after success. The deterministic visual fixture mirrors the same dependency rule, and the template-only fallback has the same country cascade for isolated rendering.
+
+### Residual TDD evidence
+
+RED was captured before production changes:
+
+- Direct SSR/Node regression failed because the country removal link still retained `subdivision`/`city` (`true !== false`).
+- Enhanced real-browser regression timed out waiting for a valid cascade request because the attempted request retained dependent geography and received HTTP 400.
+- JavaScript-disabled browser regression navigated with `subdivision` still present (`Expected false, received true`).
+
+GREEN coverage now includes:
+
+- direct SSR link parsing and navigation with `country+subdivision+city` active, including unrelated filter, duplicate opaque parameter, `limit=1`, cursor absence, HTTP 200 results, and `#event-list`;
+- enhanced country cascade after pagination with an unsubmitted draft edit, checking committed-state derivation, chip/count reduction, result replacement, opaque/filter/limit preservation, cursor removal, and Previous-stack reset;
+- enhanced failed cascade plus exact retry, checking atomic rows/chips/URL behavior;
+- JavaScript-disabled country cascade, valid list navigation, chip/count reduction, result rendering, unrelated filter/limit preservation, and anchor behavior;
+- the existing city-removal regression, which continues to prove dependent filters remain individually removable.
+
+### Residual verification
+
+Fresh final verification completed successfully:
+
+- `npm run lint`: pass
+- `npm run typecheck`: pass
+- `npm test`: **195 tests, 194 passed, 1 platform skip, 0 failed**
+- `npm run test:analytics-browser-ui`: **50 passed**
+- `npm run test:html-snapshots`: **18 passed**
+- `npm run test:visual`: **108 passed**
+- `npm run test:view-hashes`: **18 frozen view/style files and 8 pinned assets verified**
+- `npm run test:baseline-manifest`: **234 immutable baseline files verified**
+- `npm run test:ejs-upgrade-gate`: pass with the same counts
+- `git diff --check`: pass
+
+Only deterministic analytics evidence changed: the analytics HTML snapshot, its baseline-manifest hash, and the analytics template hash. Layout and PNG baselines remained byte-identical and unchanged. No schema, query, persistence, authentication, privacy, retention, or dependency changes were introduced.

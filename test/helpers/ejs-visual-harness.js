@@ -349,6 +349,13 @@ const ANALYTICS_ADVANCED_FILTERS = [
   ['pathPrefix', '路径前缀'],
   ['referrerHost', '来源域']
 ];
+const ANALYTICS_FILTER_REMOVAL_DEPENDENCIES = {
+  country: ['country', 'subdivision', 'city']
+};
+
+function analyticsRemovedFilterNames(name) {
+  return new Set(ANALYTICS_FILTER_REMOVAL_DEPENDENCIES[name] || (name ? [name] : []));
+}
 
 function analyticsFilters(query, days) {
   const names = [
@@ -362,8 +369,9 @@ function analyticsFilters(query, days) {
 
 function analyticsFilterUrl(filters, limit, removedName = null, cursor = null) {
   const params = new URLSearchParams();
+  const removedNames = analyticsRemovedFilterNames(removedName);
   for (const [name, value] of Object.entries(filters)) {
-    if (name !== removedName && value) params.set(name, value);
+    if (!removedNames.has(name) && value) params.set(name, value);
   }
   if (limit !== 2) params.set('limit', String(limit));
   if (cursor) params.set('cursor', cursor);
@@ -384,6 +392,7 @@ function analyticsAppliedFilters(filters, limit) {
   }
   return items.map(item => ({
     ...item,
+    removeNames: [...analyticsRemovedFilterNames(item.name)],
     removeUrl: analyticsFilterUrl(filters, limit, item.name)
   }));
 }

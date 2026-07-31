@@ -118,9 +118,11 @@
 
       <div class="analytics-filter-footer">
         <% const analyticsFallbackLabels = { search: '搜索', traffic: '访问类型', ip: '完整 IP', country: '国家代码', subdivision: '一级行政区', city: '城市', browser: '浏览器', os: '操作系统', device: '设备类别', pathPrefix: '路径前缀', referrerHost: '来源域' }; %>
+        <% const analyticsFallbackRemovedNames = removedName => removedName === 'country' ? ['country', 'subdivision', 'city'] : [removedName]; %>
         <% const analyticsFallbackRemoveUrl = removedName => {
+          const removedNames = analyticsFallbackRemovedNames(removedName);
           const query = Object.entries(filters)
-            .filter(([name, value]) => name !== removedName && value)
+            .filter(([name, value]) => !removedNames.includes(name) && value)
             .map(([name, value]) => `${encodeURIComponent(name)}=${encodeURIComponent(value)}`);
           return `/admin/analytics?${query.join('&')}#event-list`;
         }; %>
@@ -137,7 +139,7 @@
               <span class="analytics-filter-empty">全部访问</span>
             <% } else { %>
               <% analyticsFilterItems.forEach(item => { %>
-                <a class="analytics-filter-chip" href="<%= item.removeUrl %>" data-analytics-remove-filter="<%= item.name %>" aria-label="移除<%= item.label %><%= item.label.endsWith('IP') ? ' ' : '' %>筛选：<%= item.value %>">
+                <a class="analytics-filter-chip" href="<%= item.removeUrl %>" data-analytics-remove-filter="<%= item.name %>" data-analytics-remove-names="<%= (item.removeNames || analyticsFallbackRemovedNames(item.name)).join(',') %>" aria-label="移除<%= item.label %><%= item.label.endsWith('IP') ? ' ' : '' %>筛选：<%= item.value %>">
                   <span><%= item.label %>：<%= item.value %></span><span aria-hidden="true"> ×</span>
                 </a>
               <% }) %>

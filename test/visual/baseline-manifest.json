@@ -8,7 +8,7 @@
   "imageSnapshotCount": 108,
   "files": {
     "__snapshots__/ejs-html.spec.js/html-snapshots/about.html": "174023a1f9edc33a7728e6f8f653fc0fd270ed6c610b1f3aa9d399d2f424ad28",
-    "__snapshots__/ejs-html.spec.js/html-snapshots/admin-analytics.html": "a51c7a661f522b56a3fc31505e1e61b2edd17f06fd6fe273b0e5e031b5f6757a",
+    "__snapshots__/ejs-html.spec.js/html-snapshots/admin-analytics.html": "cd180cc229815c16ee8188d2054228d3057319da9cfa432d77b6a0d6898afdcc",
     "__snapshots__/ejs-html.spec.js/html-snapshots/admin-articles.html": "42ecad3a2913030ec2ddab09830b389a1bd7f7340177faa3cccb091a890cc5fe",
     "__snapshots__/ejs-html.spec.js/html-snapshots/admin-comments-approved.html": "b748292d7bae174cd7adcfb9f6cda5c409447cc75d19fc72e1cc7624e37b7b0a",
     "__snapshots__/ejs-html.spec.js/html-snapshots/admin-comments-pending.html": "ec81362626d3d4769c09785ea361e54617f563eb61f62649e79eb5f98b0e327f",

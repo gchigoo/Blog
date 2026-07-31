@@ -222,34 +222,78 @@ test('committed filter chips show advanced count and remove one filter at a time
   expect(url.searchParams.get('limit')).toBe('1');
 });
 
-test('failed chip removal keeps committed chips URL and rows; retry commits exact removal', async ({ page, request }) => {
+test('country removal cascades geographic dependents from committed state and resets pagination', async ({ page }) => {
+  await page.goto('/admin/analytics?days=7&traffic=bot&search=needle&country=CN&subdivision=beijing&city=beijing&browser=chrome&limit=1&opaque=kept');
+  await expect(page.locator('.analytics-advanced-filters summary')).toHaveText('高级筛选（4）');
+  await expect(page.locator('[data-analytics-remove-filter]')).toHaveCount(6);
+  await goToNextPage(page);
+  await page.locator('#analytics-filter-form input[name="city"]').fill('draft-city');
+
+  const response = eventApiResponse(page, url => (
+    !url.searchParams.has('country') &&
+    !url.searchParams.has('subdivision') &&
+    !url.searchParams.has('city') &&
+    url.searchParams.get('browser') === 'chrome' &&
+    url.searchParams.get('search') === 'needle' &&
+    url.searchParams.get('traffic') === 'bot' &&
+    url.searchParams.get('limit') === '1' &&
+    url.searchParams.get('opaque') === 'kept' &&
+    !url.searchParams.has('cursor')
+  ));
+  await page.locator('[data-analytics-remove-filter="country"]').click();
+  expect((await response).status()).toBe(200);
+
+  await expect(page.locator('.analytics-advanced-filters summary')).toHaveText('高级筛选（1）');
+  await expect(page.locator('[data-analytics-remove-filter]')).toHaveCount(3);
+  await expect(page.locator('[data-analytics-remove-filter="country"]')).toHaveCount(0);
+  await expect(page.locator('[data-analytics-remove-filter="subdivision"]')).toHaveCount(0);
+  await expect(page.locator('[data-analytics-remove-filter="city"]')).toHaveCount(0);
+  await expect(page.locator('[data-analytics-remove-filter="browser"]')).toBeVisible();
+  await expect(page.locator('#analytics-filter-form input[name="city"]')).toHaveValue('');
+  await expect(page.locator('#analytics-event-table-body')).toContainText('needle');
+  await expect(page.locator('[data-analytics-page="previous"]')).toBeDisabled();
+  const url = new URL(page.url());
+  expect(url.searchParams.get('opaque')).toBe('kept');
+  expect(url.searchParams.get('limit')).toBe('1');
+  expect(url.searchParams.has('cursor')).toBe(false);
+});
+
+test('failed country cascade keeps committed chips URL and rows; retry commits the exact cascade', async ({ page, request }) => {
   await request.post('/__test/analytics-reset');
-  await page.goto('/admin/analytics?days=7&traffic=all&search=retry-remove&city=beijing&country=CN&limit=1');
+  await page.goto('/admin/analytics?days=7&traffic=all&search=retry-remove&country=CN&subdivision=beijing&city=beijing&browser=chrome&limit=1&opaque=kept');
   const originalRows = await page.locator('#analytics-event-table-body').innerText();
   const originalUrl = page.url();
+  const originalChipCount = await page.locator('[data-analytics-remove-filter]').count();
 
-  const failure = eventApiResponse(page, (url, response) => (
+  const isExactCascade = url => (
     url.searchParams.get('search') === 'retry-remove' &&
+    !url.searchParams.has('country') &&
+    !url.searchParams.has('subdivision') &&
     !url.searchParams.has('city') &&
-    response.status() === 500
-  ));
-  await page.locator('[data-analytics-remove-filter="city"]').click();
+    url.searchParams.get('browser') === 'chrome' &&
+    url.searchParams.get('limit') === '1' &&
+    url.searchParams.get('opaque') === 'kept' &&
+    !url.searchParams.has('cursor')
+  );
+  const failure = eventApiResponse(page, (url, response) => isExactCascade(url) && response.status() === 500);
+  await page.locator('[data-analytics-remove-filter="country"]').click();
   await failure;
 
+  await expect(page.locator('[data-analytics-remove-filter]')).toHaveCount(originalChipCount);
+  await expect(page.locator('[data-analytics-remove-filter="country"]')).toBeVisible();
+  await expect(page.locator('[data-analytics-remove-filter="subdivision"]')).toBeVisible();
   await expect(page.locator('[data-analytics-remove-filter="city"]')).toBeVisible();
   expect(await page.locator('#analytics-event-table-body').innerText()).toBe(originalRows);
   expect(page.url()).toBe(originalUrl);
   await expect(page.locator('[data-analytics-retry]')).toBeVisible();
 
-  const success = eventApiResponse(page, (url, response) => (
-    url.searchParams.get('search') === 'retry-remove' &&
-    !url.searchParams.has('city') &&
-    response.status() === 200
-  ));
+  const success = eventApiResponse(page, (url, response) => isExactCascade(url) && response.status() === 200);
   await page.locator('[data-analytics-retry]').click();
   await success;
+  await expect(page.locator('[data-analytics-remove-filter="country"]')).toHaveCount(0);
+  await expect(page.locator('[data-analytics-remove-filter="subdivision"]')).toHaveCount(0);
   await expect(page.locator('[data-analytics-remove-filter="city"]')).toHaveCount(0);
-  expect(new URL(page.url()).searchParams.has('city')).toBe(false);
+  expect(new URL(page.url()).searchParams.get('opaque')).toBe('kept');
 });
 
 test('long hostile filter values remain text-only chips', async ({ page }) => {
@@ -730,22 +774,30 @@ test('result summary receives focus with preventScroll behavior', async ({ page 
   expect(await page.evaluate(() => window.scrollY)).toBe(before);
 });
 
-test('JavaScript-disabled filter removal preserves unrelated filters and limit', async ({ browser }) => {
+test('JavaScript-disabled country removal cascades geographic dependents and preserves unrelated filters and limit', async ({ browser }) => {
   const context = await browser.newContext({ javaScriptEnabled: false });
   const page = await context.newPage();
   try {
-    await page.goto('http://127.0.0.1:4173/admin/analytics?days=7&traffic=bot&search=needle&country=CN&city=beijing&limit=1');
-    const cityRemoval = page.getByRole('link', { name: '移除城市筛选：beijing' });
-    expect(await cityRemoval.getAttribute('href')).toContain('limit=1');
-    await Promise.all([page.waitForNavigation(), cityRemoval.click()]);
+    await page.goto('http://127.0.0.1:4173/admin/analytics?days=7&traffic=bot&search=needle&country=CN&subdivision=beijing&city=beijing&browser=chrome&limit=1');
+    await expect(page.locator('.analytics-advanced-filters summary')).toHaveText('高级筛选（4）');
+    await expect(page.locator('[data-analytics-remove-filter]')).toHaveCount(6);
+    const countryRemoval = page.getByRole('link', { name: '移除国家代码筛选：CN' });
+    expect(await countryRemoval.getAttribute('href')).toContain('limit=1');
+    await Promise.all([page.waitForNavigation(), countryRemoval.click()]);
     const url = new URL(page.url());
+    expect(url.searchParams.has('country')).toBe(false);
+    expect(url.searchParams.has('subdivision')).toBe(false);
     expect(url.searchParams.has('city')).toBe(false);
-    expect(url.searchParams.get('country')).toBe('CN');
+    expect(url.searchParams.get('browser')).toBe('chrome');
     expect(url.searchParams.get('search')).toBe('needle');
     expect(url.searchParams.get('traffic')).toBe('bot');
     expect(url.searchParams.get('limit')).toBe('1');
     expect(url.searchParams.has('cursor')).toBe(false);
     expect(url.hash).toBe('#event-list');
+    await expect(page.locator('.analytics-advanced-filters summary')).toHaveText('高级筛选（1）');
+    await expect(page.locator('[data-analytics-remove-filter]')).toHaveCount(3);
+    await expect(page.locator('[data-analytics-remove-filter="browser"]')).toBeVisible();
+    await expect(page.locator('#analytics-event-table-body')).toContainText('needle');
   } finally {
     await context.close();
   }

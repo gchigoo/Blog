@@ -76,6 +76,10 @@ function occurrenceCount(html, marker) {
   return html.split(marker).length - 1;
 }
 
+function decodeHtmlAttribute(value) {
+  return value.replaceAll('&#38;', '&').replaceAll('&amp;', '&');
+}
+
 function assertEnabledWorkspaceHooksOnce(html) {
   for (const marker of [
     'id="event-list"',
@@ -265,6 +269,32 @@ test('admin analytics API/page require authentication, are no-store, and expose 
   const pagedHtml = await paged.text();
   assert.equal(paged.status, 200);
   assert.match(pagedHtml, /href="\/admin\/analytics\?[^"#]*search=about[^"#]*traffic=all[^"#]*limit=1[^"#]*cursor=[^"#]+#event-list"/);
+
+  const geographic = await fetch(
+    `${baseUrl}/admin/analytics?days=7&traffic=human&search=about&country=CN&subdivision=beijing&city=beijing&browser=opera&limit=1&opaque=kept&opaque=again`,
+    { headers: { cookie: adminCookie } }
+  );
+  const geographicHtml = await geographic.text();
+  assert.equal(geographic.status, 200);
+  const countryLink = geographicHtml.match(/<a[^>]+href="([^"]+)"[^>]+data-analytics-remove-filter="country"/);
+  assert.ok(countryLink, 'country removal chip must be rendered');
+  const countryRemovalUrl = new URL(decodeHtmlAttribute(countryLink[1]), baseUrl);
+  assert.equal(countryRemovalUrl.searchParams.has('country'), false);
+  assert.equal(countryRemovalUrl.searchParams.has('subdivision'), false);
+  assert.equal(countryRemovalUrl.searchParams.has('city'), false);
+  assert.equal(countryRemovalUrl.searchParams.get('browser'), 'opera');
+  assert.equal(countryRemovalUrl.searchParams.get('search'), 'about');
+  assert.equal(countryRemovalUrl.searchParams.get('traffic'), 'human');
+  assert.equal(countryRemovalUrl.searchParams.get('limit'), '1');
+  assert.deepEqual(countryRemovalUrl.searchParams.getAll('opaque'), ['kept', 'again']);
+  assert.equal(countryRemovalUrl.searchParams.has('cursor'), false);
+  assert.equal(countryRemovalUrl.hash, '#event-list');
+
+  const countryRemoval = await fetch(countryRemovalUrl, { headers: { cookie: adminCookie } });
+  const countryRemovalHtml = await countryRemoval.text();
+  assert.equal(countryRemoval.status, 200);
+  assert.match(countryRemovalHtml, /name="browser" value="opera"/);
+  assert.match(countryRemovalHtml, /逐次访问明细/);
 });
 
 test('admin retained-detail API and SSR are unavailable when details collection is disabled', async t => {

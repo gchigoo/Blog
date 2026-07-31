@@ -2,7 +2,7 @@
   "public/css/custom.css": "ccde5d5e06c6d1d16d44835d4b8ca44962204cac5454f23094d7a6c7ba7cb2ec",
   "views/404.ejs": "412137cb50f76e46ef1bc696b1b673218e8fedd7b6d1baa467cf3b0a7348d38c",
   "views/about.ejs": "fce694ef5b4fc9b4822a1779cb0c3d9d96253df85c6c2d02992f25be483cb170",
-  "views/admin/analytics.ejs": "f5c429031923c75f839189445aafffc86a83e5ec8fa2fe27dec9c893b01aeffd",
+  "views/admin/analytics.ejs": "5385fff8266933181869b7650a5b18bb526eb46a28dc796c3fbd769a0f32c48b",
   "views/admin/articles.ejs": "e2bf50008320238138b46497742445707f58c2bf5ffb565804ca1f4967ad4e1c",
   "views/admin/comments.ejs": "68ee318cb7834b63d97e57724b624b2ac603bd925da631c3b068ab7e7957a80e",
   "views/admin/login.ejs": "8afee24096cb6c154d315bf5fed69364e40f5d70d411b6727a64ebaa62a1bc10",

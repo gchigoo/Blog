@@ -18,6 +18,14 @@ const ADVANCED_FILTERS = [
   ['pathPrefix', '路径前缀'],
   ['referrerHost', '来源域']
 ];
+const FILTER_REMOVAL_DEPENDENCIES = {
+  country: ['country', 'subdivision', 'city']
+};
+const SUPPORTED_QUERY_NAMES = new Set([...FILTER_NAMES, 'days', 'limit', 'cursor']);
+
+function removedFilterNames(name) {
+  return new Set(FILTER_REMOVAL_DEPENDENCIES[name] || (name ? [name] : []));
+}
 
 function filterViewModel(query, days) {
   const filters = { days: String(days) };
@@ -28,17 +36,26 @@ function filterViewModel(query, days) {
   return filters;
 }
 
-function filterUrl(filters, limit, removedName = null, cursor = null) {
+function filterUrl(filters, limit, removedName = null, cursor = null, sourceQuery = null) {
   const params = new URLSearchParams();
+  const removedNames = removedFilterNames(removedName);
+  if (sourceQuery) {
+    for (const [name, value] of Object.entries(sourceQuery)) {
+      if (SUPPORTED_QUERY_NAMES.has(name)) continue;
+      for (const entry of Array.isArray(value) ? value : [value]) {
+        if (typeof entry === 'string') params.append(name, entry);
+      }
+    }
+  }
   for (const [name, value] of Object.entries(filters)) {
-    if (name !== removedName && value) params.set(name, value);
+    if (!removedNames.has(name) && value) params.set(name, value);
   }
   if (limit !== 50) params.set('limit', String(limit));
   if (cursor) params.set('cursor', cursor);
   return `/admin/analytics?${params.toString()}#event-list`;
 }
 
-function appliedFilters(filters, limit) {
+function appliedFilters(filters, limit, sourceQuery = null) {
   const items = [];
   if (filters.search) items.push({ name: 'search', label: '搜索', value: filters.search });
   if (filters.traffic && filters.traffic !== 'all') {
@@ -53,7 +70,8 @@ function appliedFilters(filters, limit) {
   }
   return items.map(item => ({
     ...item,
-    removeUrl: filterUrl(filters, limit, item.name)
+    removeNames: [...removedFilterNames(item.name)],
+    removeUrl: filterUrl(filters, limit, item.name, null, sourceQuery)
   }));
 }
 
@@ -116,7 +134,7 @@ function createAdminPageRouter({ db, config, clock, geoResolver, logger = consol
         geoData,
         config.detailsEnabled
       );
-      const filterItems = appliedFilters(filters, options.limit);
+      const filterItems = appliedFilters(filters, options.limit, req.query);
       return res.render('admin/analytics', {
         overview,
         events,
