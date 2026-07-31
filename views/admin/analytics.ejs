@@ -50,7 +50,7 @@
   </article>
 </section>
 
-<section id="event-list" class="analytics-event-workspace" aria-labelledby="analytics-event-summary" aria-busy="false">
+<section id="event-list" class="analytics-event-workspace" aria-labelledby="analytics-event-summary" aria-busy="false" data-analytics-enhancement="<%= typeof analyticsEnhancementEnabled !== 'undefined' && analyticsEnhancementEnabled ? 'enabled' : 'disabled' %>">
   <% if (events.available === false) { %>
     <div class="analytics-workspace-heading">
       <div>

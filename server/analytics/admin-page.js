@@ -95,6 +95,7 @@ function createAdminPageRouter({ db, config, clock, geoResolver, logger = consol
         eventNextUrl: nextPageUrl(filters, events.nextCursor, options.limit),
         formatBeijingTime,
         pageError,
+        analyticsEnhancementEnabled: !pageError && config.detailsEnabled,
         rangeOptions: rangeOptions(config.retentionDays),
         systemStatus: systemStatus(config.detailsEnabled, geoData),
         user: req.user

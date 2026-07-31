@@ -1,7 +1,7 @@
 (() => {
   const root = document.getElementById('event-list');
   const form = document.getElementById('analytics-filter-form');
-  if (!root || !form) return;
+  if (!root || !form || root.dataset.analyticsEnhancement !== 'enabled') return;
 
   const summary = document.getElementById('analytics-event-summary');
   const tableBody = document.getElementById('analytics-event-table-body');
@@ -275,8 +275,7 @@
     return `${window.location.pathname}${state.query ? `?${state.query}` : ''}`;
   }
 
-  function apiUrl(params) {
-    const query = params.toString();
+  function apiUrl(query) {
     return `/api/admin/analytics/events${query ? `?${query}` : ''}`;
   }
 
@@ -437,7 +436,7 @@
   function stageList(validated, attempt) {
     const state = {
       params: cloneParams(attempt.params),
-      query: attempt.params.toString(),
+      query: attempt.query,
       cursor: attempt.cursor,
       cursorStack: [...attempt.cursorStack],
       nextCursor: validated.nextCursor
@@ -512,6 +511,7 @@
     const scrollPosition = window.scrollY;
     const attempt = {
       params: cloneParams(params),
+      query: options.query === undefined ? params.toString() : options.query,
       historyMode: options.historyMode || 'push',
       cursor: options.cursor === undefined ? params.get('cursor') : options.cursor,
       cursorStack: options.cursorStack === undefined ? [...committed.cursorStack] : [...options.cursorStack]
@@ -522,7 +522,7 @@
     setListStatus('正在加载访问明细……');
 
     try {
-      const response = await fetch(apiUrl(attempt.params), {
+      const response = await fetch(apiUrl(attempt.query), {
         credentials: 'same-origin',
         headers: { Accept: 'application/json' },
         signal: controller.signal
@@ -565,12 +565,16 @@
 
   function submitFilters() {
     const params = paramsFromForm();
-    requestEvents(params, { historyMode: 'push', cursor: null, cursorStack: [] });
+    const query = params.toString();
+    requestEvents(params, { query, historyMode: 'push', cursor: null, cursorStack: [] });
   }
 
   function nextPage() {
     if (!committed.nextCursor) return;
-    requestEvents(paramsForCursor(committed.nextCursor), {
+    const params = paramsForCursor(committed.nextCursor);
+    const query = params.toString();
+    requestEvents(params, {
+      query,
       historyMode: 'push',
       cursor: committed.nextCursor,
       cursorStack: [...committed.cursorStack, committed.cursor]
@@ -581,7 +585,10 @@
     if (committed.cursorStack.length === 0) return;
     const stack = [...committed.cursorStack];
     const previousCursor = stack.pop();
-    requestEvents(paramsForCursor(previousCursor), {
+    const params = paramsForCursor(previousCursor);
+    const query = params.toString();
+    requestEvents(params, {
+      query,
       historyMode: 'push',
       cursor: previousCursor,
       cursorStack: stack
@@ -676,6 +683,7 @@
     if (target.matches('[data-analytics-retry]')) {
       event.preventDefault();
       if (pendingRequest) requestEvents(pendingRequest.params, {
+        query: pendingRequest.query,
         historyMode: pendingRequest.historyMode,
         cursor: pendingRequest.cursor,
         cursorStack: pendingRequest.cursorStack
@@ -707,6 +715,7 @@
       return;
     }
     requestEvents(proposal.params, {
+      query: proposal.query,
       historyMode: 'none',
       cursor: proposal.cursor,
       cursorStack: proposal.cursorStack

@@ -241,6 +241,7 @@ test('admin analytics API/page require authentication, are no-store, and expose 
   assert.equal(page.status, 200);
   assert.match(page.headers.get('cache-control') || '', /no-store/);
   assert.match(html, /逐次访问明细/);
+  assert.match(html, /id="event-list"[^>]*data-analytics-enhancement="enabled"/);
   assert.match(html, /203\.0\.113|127\.0\.0\.1|::1/);
 
   const operaSearch = await fetch(
@@ -390,6 +391,7 @@ test('details-disabled hostile pageError is escaped through one local alert', as
     eventPreviousUrl: null,
     eventNextUrl: null,
     pageError: hostileError,
+    analyticsEnhancementEnabled: false,
     rangeOptions: [1, 7, 30],
     systemStatus: { detailsEnabled: false, geoData: null, warning: null },
     formatBeijingTime: value => value,
@@ -428,6 +430,7 @@ test('admin analytics invalid-query SSR preserves order and reports through the 
   });
   const html = await page.text();
   assert.equal(page.status, 400);
+  assert.match(html, /id="event-list"[^>]*data-analytics-enhancement="disabled"/);
   assertAnalyticsTopLevelOrder(html);
   assertEnabledWorkspaceHooksOnce(html);
   assert.equal(occurrenceCount(html, '筛选条件无效，请检查输入后重试。'), 1);
@@ -435,6 +438,17 @@ test('admin analytics invalid-query SSR preserves order and reports through the 
   const headingEnd = html.indexOf('</header>');
   const overviewIndex = html.indexOf('id="analytics-overview"');
   assert.doesNotMatch(html.slice(headingEnd, overviewIndex), /role="alert"|筛选条件无效/);
+});
+
+test('admin analytics structurally invalid cursors are SSR errors with enhancement disabled', async t => {
+  const { baseUrl, adminCookie } = await createHarness(t);
+  const page = await fetch(`${baseUrl}/admin/analytics?cursor=abc`, {
+    headers: { cookie: adminCookie }
+  });
+  const html = await page.text();
+  assert.equal(page.status, 400);
+  assert.match(html, /id="event-list"[^>]*data-analytics-enhancement="disabled"/);
+  assert.match(html, /筛选条件无效，请检查输入后重试。/);
 });
 
 test('admin page hides ranges beyond retention and includes the configured retention range', async t => {
@@ -526,6 +540,7 @@ test('admin analytics view pins all unique-IP output states and stable-hook uniq
     eventPreviousUrl: null,
     eventNextUrl: null,
     pageError: null,
+    analyticsEnhancementEnabled: true,
     rangeOptions: [1, 7, 30],
     systemStatus: { detailsEnabled: true, geoData: null, warning: null },
     formatBeijingTime: value => value,
@@ -611,6 +626,7 @@ test('admin analytics view renders readable paths and hostile detail values as t
     eventPreviousUrl: '/admin/analytics?days=7&cursor=previous" data-prev-injected="yes"><svg data-prev-element>#event-list',
     eventNextUrl: '/admin/analytics?days=7&cursor=next" data-next-injected="yes"><img data-next-element src=x>#event-list',
     pageError: null,
+    analyticsEnhancementEnabled: true,
     rangeOptions: [1, 7, 30],
     systemStatus: {
       detailsEnabled: true,
@@ -675,4 +691,7 @@ test('admin analytics view renders readable paths and hostile detail values as t
   assert.match(source, /popstate/);
   assert.match(source, /preventScroll/);
   assert.match(source, /data-analytics-retry/);
+  assert.match(source, /attempt\.query/);
+  assert.match(source, /proposal\.query/);
+  assert.doesNotMatch(source, /query:\s*attempt\.params\.toString\(\)/);
 });

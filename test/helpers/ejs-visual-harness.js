@@ -23,6 +23,7 @@ const appConfig = require('../../server/config');
 const { parseCommentsConfig } = require('../../server/comments/config');
 const { createCommentsModule } = require('../../server/comments/module');
 const { createTokenService, sessionCookieOptions } = require('../../server/comments/security');
+const { parseEventListQuery } = require('../../server/analytics/query/analytics-query');
 const { renderMarkdown } = require('../../server/utils/markdown');
 const { assetUrl, formatDate, formatYear } = require('../../server/utils/presentation');
 
@@ -211,24 +212,49 @@ function dimension(items) {
   };
 }
 
-const ANALYTICS_FIXTURE_SIZE = 6;
+const ANALYTICS_FIXTURE_ROWS = [
+  { position: 1, observedAtUtc: '2026-07-17T08:30:00.000Z', metricId: 601 },
+  { position: 2, observedAtUtc: '2026-07-17T07:10:00.000Z', metricId: 602 },
+  { position: 3, observedAtUtc: '2026-07-17T06:30:00.000Z', metricId: 603 },
+  { position: 4, observedAtUtc: '2026-07-17T05:10:00.000Z', metricId: 604 },
+  { position: 5, observedAtUtc: '2026-07-17T04:30:00.000Z', metricId: 605 },
+  { position: 6, observedAtUtc: '2026-07-17T03:10:00.000Z', metricId: 606 }
+];
+const ANALYTICS_FIXTURE_SIZE = ANALYTICS_FIXTURE_ROWS.length;
 
-function analyticsFixtureCursor(boundary) {
+function encodeAnalyticsFixtureCursor(row) {
   return Buffer.from(JSON.stringify({
-    observedAtUtc: `2026-07-17T${String(8 - boundary).padStart(2, '0')}:00:00.000Z`,
-    metricId: 100 - boundary
+    observedAtUtc: row.observedAtUtc,
+    metricId: row.metricId
   })).toString('base64url');
 }
 
-function analyticsFixtureBoundary(cursor) {
-  if (!cursor) return 0;
-  for (let boundary = 1; boundary <= ANALYTICS_FIXTURE_SIZE; boundary += 1) {
-    if (analyticsFixtureCursor(boundary) === cursor) return boundary;
+function decodeAnalyticsFixtureCursor(value) {
+  if (value === undefined) return null;
+  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]+$/.test(value)) return undefined;
+  try {
+    const decoded = Buffer.from(value, 'base64url');
+    if (decoded.toString('base64url') !== value) return undefined;
+    const cursor = JSON.parse(decoded.toString('utf8'));
+    if (!cursor || Object.keys(cursor).join(',') !== 'observedAtUtc,metricId'
+      || typeof cursor.observedAtUtc !== 'string'
+      || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(cursor.observedAtUtc)
+      || !Number.isFinite(Date.parse(cursor.observedAtUtc))
+      || new Date(cursor.observedAtUtc).toISOString() !== cursor.observedAtUtc
+      || !Number.isSafeInteger(cursor.metricId) || cursor.metricId <= 0) return undefined;
+    return cursor;
+  } catch {
+    return undefined;
   }
-  return 0;
+}
+
+function fixtureTupleBelow(row, cursor) {
+  return row.observedAtUtc < cursor.observedAtUtc
+    || (row.observedAtUtc === cursor.observedAtUtc && row.metricId < cursor.metricId);
 }
 
 function analyticsFixtureEvent(position, traffic, search) {
+  const fixtureRow = ANALYTICS_FIXTURE_ROWS.find(row => row.position === position);
   const forcedTraffic = traffic === 'human' || traffic === 'bot' ? traffic : null;
   const trafficKind = forcedTraffic || (position % 2 === 1 ? 'human' : 'bot');
   const marker = search || `Fixture event ${position}`;
@@ -236,7 +262,8 @@ function analyticsFixtureEvent(position, traffic, search) {
   const displayPath = search === 'long-valid' ? `/fixture/${longValue}` : `/fixture/event-${position}`;
   return {
     id: position.toString(16).padStart(32, '0'),
-    observedAtUtc: `2026-07-17T${String(9 - position).padStart(2, '0')}:${position % 2 ? '30' : '10'}:00.000Z`,
+    metricId: fixtureRow.metricId,
+    observedAtUtc: fixtureRow.observedAtUtc,
     requestPath: displayPath,
     displayPath,
     displayPathStatus: 'unchanged',
@@ -284,13 +311,18 @@ function analyticsFixturePage(query = {}) {
   const limit = Number.isInteger(requestedLimit) && requestedLimit >= 1 && requestedLimit <= 100
     ? requestedLimit
     : 2;
-  const start = analyticsFixtureBoundary(query.cursor);
-  const dataset = Array.from({ length: ANALYTICS_FIXTURE_SIZE }, (_, index) => (
-    analyticsFixtureEvent(index + 1, traffic, search)
-  ));
-  const items = search === 'empty' ? [] : dataset.slice(start, start + limit);
-  const boundary = start + items.length;
-  let nextCursor = items.length > 0 && boundary < dataset.length ? analyticsFixtureCursor(boundary) : null;
+  const cursor = decodeAnalyticsFixtureCursor(query.cursor);
+  if (cursor === undefined) throw new Error('invalid_fixture_cursor');
+  const dataset = ANALYTICS_FIXTURE_ROWS
+    .map(row => analyticsFixtureEvent(row.position, traffic, search))
+    .sort((left, right) => (
+      right.observedAtUtc.localeCompare(left.observedAtUtc) || right.metricId - left.metricId
+    ));
+  const selectedDataset = cursor === null ? dataset : dataset.filter(item => fixtureTupleBelow(item, cursor));
+  const items = search === 'empty' ? [] : selectedDataset.slice(0, limit);
+  let nextCursor = items.length > 0 && selectedDataset.length > items.length
+    ? encodeAnalyticsFixtureCursor(items.at(-1))
+    : null;
   if (search === 'same-cursor' && query.cursor) nextCursor = query.cursor;
   return {
     days: Number(query.days) || 7,
@@ -327,10 +359,12 @@ function analyticsQueryIsValid(query) {
     'device', 'pathPrefix', 'referrerHost', 'limit', 'cursor'
   ];
   if (duplicateSensitive.some(name => Array.isArray(query[name]))) return false;
-  if (Object.hasOwn(query, 'cursor') && (typeof query.cursor !== 'string' || !/^[A-Za-z0-9_-]+$/.test(query.cursor))) {
+  try {
+    parseEventListQuery(query, 30);
+    return true;
+  } catch {
     return false;
   }
-  return true;
 }
 
 function analyticsViewModel(query = {}) {
@@ -380,6 +414,7 @@ function analyticsViewModel(query = {}) {
     eventPreviousUrl: null,
     eventNextUrl: analyticsPageUrl(filters, events.nextCursor, limit),
     pageError: validQuery ? null : '筛选条件无效，请检查输入后重试。',
+    analyticsEnhancementEnabled: validQuery,
     rangeOptions: [1, 7, 30],
     systemStatus: {
       detailsEnabled: true,
@@ -667,7 +702,11 @@ app.get('/api/admin/analytics/events/:eventId', async (req, res) => {
     collection: { sources: detail.client.sources, contextCollectedAt: detail.observedAtUtc }
   });
 });
-app.get('/admin/analytics', (req, res) => res.render('admin/analytics', analyticsViewModel(req.query)));
+app.get('/admin/analytics', (req, res) => {
+  const viewModel = analyticsViewModel(req.query);
+  if (viewModel.pageError) res.status(400);
+  return res.render('admin/analytics', viewModel);
+});
 app.get('/visual-not-found', (req, res) => res.status(200).render('404', { user: null }));
 app.use((req, res) => res.status(404).render('404', { user: null }));
 
