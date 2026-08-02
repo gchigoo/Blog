@@ -6,14 +6,14 @@
   <title>文章列表 - 后台管理</title>
   <link rel="stylesheet" href="/vendor/inter.css?v=8d2c79ff9827">
   <link rel="stylesheet" href="/vendor/new.css/new.min.css?v=3169a014d8fc">
-  <link rel="stylesheet" href="/css/custom.css?v=ccde5d5e06c6">
+  <link rel="stylesheet" href="/css/custom.css?v=8648ecedccfd">
 </head>
 <body>
   <header>
     <h1>后台管理</h1>
     <nav>
-      <a href="/">首页</a> /
-      <a href="/about">关于</a> /
+      <a href="/zh/">首页</a> /
+      <a href="/zh/about">关于</a> /
       <a href="/admin/upload">上传文章</a> /
       <a href="/admin/articles">文章列表</a> /
       <a href="/admin/analytics">访问统计</a> /
@@ -31,14 +31,17 @@
 
 <div id="message"></div>
 
-<p>共 5 篇文章</p>
+<p>共 9 篇文章</p>
 
 
   <table style="width: 100%; border-collapse: collapse;">
     <thead>
       <tr>
         <th style="text-align: left; padding: 0.5em;">标题</th>
-        <th style="text-align: left; padding: 0.5em;">标签</th>
+        <th style="text-align: left; padding: 0.5em;">语言</th>
+        <th style="text-align: left; padding: 0.5em;">翻译组</th>
+        <th style="text-align: left; padding: 0.5em;">大类</th>
+        <th style="text-align: left; padding: 0.5em;">细标签</th>
         <th style="text-align: left; padding: 0.5em;">状态</th>
         <th style="text-align: left; padding: 0.5em;">发布日期</th>
         <th style="text-align: center; padding: 0.5em;">操作</th>
@@ -48,7 +51,46 @@
       
         <tr>
           <td style="padding: 0.5em;">
+            <span class="article-title">A Comprehensive Practice Record of Upgrading Server-Side Template Rendering from EJS 3 to EJS 6 While Keeping the Rendered Pages Pixel-Level Identical on Every Device</span>
+          </td>
+          <td style="padding: 0.5em;">English</td>
+          <td style="padding: 0.5em;">-</td>
+          <td style="padding: 0.5em;">
+            
+              -
+            
+          </td>
+          <td style="padding: 0.5em;">
+            
+              
+                <span class="tag">EJS</span>
+              
+                <span class="tag">upgrade</span>
+              
+                <span class="tag">Visual Regression</span>
+              
+            
+          </td>
+          <td style="padding: 0.5em;">已发布</td>
+          <td style="padding: 0.5em;">
+            2026/07/16
+          </td>
+          <td style="padding: 0.5em; text-align: center;">
+            <a href="/admin/upload?replaceId=2">替换</a>
+            <button type="button" class="delete-article" data-article-id="2" style="background: #dc3545; color: white;">删除</button>
+          </td>
+        </tr>
+      
+        <tr>
+          <td style="padding: 0.5em;">
             <span class="article-title">从 EJS 3 升级到 EJS 6：保持页面像素级一致的实践记录</span>
+          </td>
+          <td style="padding: 0.5em;">中文</td>
+          <td style="padding: 0.5em;">-</td>
+          <td style="padding: 0.5em;">
+            
+              -
+            
           </td>
           <td style="padding: 0.5em;">
             
@@ -75,6 +117,13 @@
           <td style="padding: 0.5em;">
             <span class="article-title">暂无评论的文章</span>
           </td>
+          <td style="padding: 0.5em;">中文</td>
+          <td style="padding: 0.5em;">-</td>
+          <td style="padding: 0.5em;">
+            
+              -
+            
+          </td>
           <td style="padding: 0.5em;">
             
               
@@ -87,14 +136,21 @@
             2026/07/15
           </td>
           <td style="padding: 0.5em; text-align: center;">
-            <a href="/admin/upload?replaceId=2">替换</a>
-            <button type="button" class="delete-article" data-article-id="2" style="background: #dc3545; color: white;">删除</button>
+            <a href="/admin/upload?replaceId=3">替换</a>
+            <button type="button" class="delete-article" data-article-id="3" style="background: #dc3545; color: white;">删除</button>
           </td>
         </tr>
       
         <tr>
           <td style="padding: 0.5em;">
             <span class="article-title">评论功能关闭时的文章详情</span>
+          </td>
+          <td style="padding: 0.5em;">中文</td>
+          <td style="padding: 0.5em;">-</td>
+          <td style="padding: 0.5em;">
+            
+              -
+            
           </td>
           <td style="padding: 0.5em;">
             
@@ -110,14 +166,21 @@
             2026/07/14
           </td>
           <td style="padding: 0.5em; text-align: center;">
-            <a href="/admin/upload?replaceId=3">替换</a>
-            <button type="button" class="delete-article" data-article-id="3" style="background: #dc3545; color: white;">删除</button>
+            <a href="/admin/upload?replaceId=4">替换</a>
+            <button type="button" class="delete-article" data-article-id="4" style="background: #dc3545; color: white;">删除</button>
           </td>
         </tr>
       
         <tr>
           <td style="padding: 0.5em;">
             <span class="article-title">Node.js 24 下的服务端模板测试策略</span>
+          </td>
+          <td style="padding: 0.5em;">中文</td>
+          <td style="padding: 0.5em;">-</td>
+          <td style="padding: 0.5em;">
+            
+              -
+            
           </td>
           <td style="padding: 0.5em;">
             
@@ -133,14 +196,77 @@
             2026/06/20
           </td>
           <td style="padding: 0.5em; text-align: center;">
-            <a href="/admin/upload?replaceId=4">替换</a>
-            <button type="button" class="delete-article" data-article-id="4" style="background: #dc3545; color: white;">删除</button>
+            <a href="/admin/upload?replaceId=5">替换</a>
+            <button type="button" class="delete-article" data-article-id="5" style="background: #dc3545; color: white;">删除</button>
+          </td>
+        </tr>
+      
+        <tr>
+          <td style="padding: 0.5em;">
+            <span class="article-title">Frontend Toolchain Observations for 2026</span>
+          </td>
+          <td style="padding: 0.5em;">English</td>
+          <td style="padding: 0.5em;">-</td>
+          <td style="padding: 0.5em;">
+            
+              -
+            
+          </td>
+          <td style="padding: 0.5em;">
+            
+              
+                <span class="tag">Industry News</span>
+              
+            
+          </td>
+          <td style="padding: 0.5em;">已发布</td>
+          <td style="padding: 0.5em;">
+            2026/05/11
+          </td>
+          <td style="padding: 0.5em; text-align: center;">
+            <a href="/admin/upload?replaceId=8">替换</a>
+            <button type="button" class="delete-article" data-article-id="8" style="background: #dc3545; color: white;">删除</button>
+          </td>
+        </tr>
+      
+        <tr>
+          <td style="padding: 0.5em;">
+            <span class="article-title">业界新闻速览：2026 年前端工具链观察</span>
+          </td>
+          <td style="padding: 0.5em;">中文</td>
+          <td style="padding: 0.5em;">-</td>
+          <td style="padding: 0.5em;">
+            
+              -
+            
+          </td>
+          <td style="padding: 0.5em;">
+            
+              
+                <span class="tag">业界新闻</span>
+              
+            
+          </td>
+          <td style="padding: 0.5em;">已发布</td>
+          <td style="padding: 0.5em;">
+            2026/05/11
+          </td>
+          <td style="padding: 0.5em; text-align: center;">
+            <a href="/admin/upload?replaceId=7">替换</a>
+            <button type="button" class="delete-article" data-article-id="7" style="background: #dc3545; color: white;">删除</button>
           </td>
         </tr>
       
         <tr>
           <td style="padding: 0.5em;">
             <span class="article-title">把外部样式与字体固定到本地测试资源</span>
+          </td>
+          <td style="padding: 0.5em;">中文</td>
+          <td style="padding: 0.5em;">-</td>
+          <td style="padding: 0.5em;">
+            
+              -
+            
           </td>
           <td style="padding: 0.5em;">
             
@@ -156,8 +282,36 @@
             2025/12/08
           </td>
           <td style="padding: 0.5em; text-align: center;">
-            <a href="/admin/upload?replaceId=5">替换</a>
-            <button type="button" class="delete-article" data-article-id="5" style="background: #dc3545; color: white;">删除</button>
+            <a href="/admin/upload?replaceId=6">替换</a>
+            <button type="button" class="delete-article" data-article-id="6" style="background: #dc3545; color: white;">删除</button>
+          </td>
+        </tr>
+      
+        <tr>
+          <td style="padding: 0.5em;">
+            <span class="article-title">早年技术笔记（Legacy 内容归档）</span>
+          </td>
+          <td style="padding: 0.5em;">中文</td>
+          <td style="padding: 0.5em;">-</td>
+          <td style="padding: 0.5em;">
+            
+              -
+            
+          </td>
+          <td style="padding: 0.5em;">
+            
+              
+                <span class="tag">旧内容</span>
+              
+            
+          </td>
+          <td style="padding: 0.5em;">已发布</td>
+          <td style="padding: 0.5em;">
+            2024/03/02
+          </td>
+          <td style="padding: 0.5em; text-align: center;">
+            <a href="/admin/upload?replaceId=9">替换</a>
+            <button type="button" class="delete-article" data-article-id="9" style="background: #dc3545; color: white;">删除</button>
           </td>
         </tr>
       

@@ -97,8 +97,77 @@ pm2 restart blog --update-env
 
 1. 进入维护窗口：停止应用写入（停止发布流程/后台任务），并执行 `npm run backup-db` 创建同一时点的协调备份。
 2. 预览：`npm run sync-taxonomy -- --dry-run`。干跑严格零写入，只读打开 SQLite；输出精确排序的计划（新增/更新/删除的分类与标签、`legacyNames` 重映射、Markdown 改写、被阻止的 slug 变更/删除、冲突、受影响文章），存在冲突或阻止项时以非零退出。schema v2 下干跑输出迁移前审计（直接 legacyNames 匹配与迁移 3 将创建的确定性 legacy ID）。
-3. 应用：`npm run sync-taxonomy`。先原子获取 `var/operations/active.lock` 独占锁，再在同一事务中应用分类行、重接线 `article_tags`、仅删除已无引用的非系统行，并精确刷新受影响文章的 FTS 行；Markdown `tags` 改写在文件层面按阶段（`lock-acquired → prepared → files-promoted → db-committed → cleanup-complete`）落盘，任何被捕获的提交前失败都会回滚 SQLite 并按逆序恢复原文件。
-4. 进程被终止时，普通 apply/dry-run 会拒绝继续，直到 `npm run sync-taxonomy -- --recover <operation-id>` 按清单中的前后哈希恢复原状或完成已提交状态；任何第三状态或哈希不一致都会拒绝自动化恢复并要求恢复完整的同时点备份。`var/operations` 是持久的操作登记处，通用 `uploads/temp` 清理不得触碰；分类同步与后续内容迁移共享同一把锁与登记处，同一时刻只有一个 apply/recovery 持有它。
+3. 审查：应用前必须逐项审查干跑计划中的 `unmappedLegacyTags`、`legacyRewires`、`markdownRewrites`、`blockedSlugChanges`、`blockedDeletions`、`conflicts` 与受影响文章数量；任何未预期的别名重接线、slug 变更或删除都必须先在目录中修复。
+4. 应用：`npm run sync-taxonomy`。先原子获取 `var/operations/active.lock` 独占锁，再在同一事务中应用分类行、重接线 `article_tags`、仅删除已无引用的非系统行，并精确刷新受影响文章的 FTS 行；Markdown `tags` 改写在文件层面按阶段（`lock-acquired → prepared → files-promoted → db-committed → cleanup-complete`）落盘，任何被捕获的提交前失败都会回滚 SQLite 并按逆序恢复原文件。
+5. 拒绝与恢复：存在不完整操作清单或过期/活动的 `active.lock` 时，普通 apply 与 dry-run 都会拒绝执行。进程被终止时，直到 `npm run sync-taxonomy -- --recover <operation-id>` 按清单中的前后哈希恢复原状或完成已提交状态；任何第三状态或哈希不一致都会拒绝自动化恢复并要求恢复完整的同时点备份。`var/operations` 是持久的操作登记处，通用 `uploads/temp` 清理不得触碰；分类同步与内容迁移共享同一把锁与登记处，同一时刻只有一个 apply/recovery 持有它。
+6. 应用/恢复后：运行 `npm run audit-localized-content` 并保存输出，证明每个 Markdown 文件的标签 ID 与 `article_tags` 完全相等，且 `article_fts` 内容与最新文章内容一致。
+
+### 双语发布协调维护窗口（迁移、切换与回滚）
+
+内容迁移（`migrate-localized-content`）把过渡期文件布局（`articles/<slug>.md`、`public/audio/<slug>/`、`/audio/<slug>/...` HTML URL）改写为本地化布局（`articles/<locale>/<slug>.md`、`public/audio/<locale>/<slug>/`、`/audio/<locale>/<slug>/...`），并与 `sync-taxonomy` 共享 `var/operations` 锁与阶段机。以下是唯一的发布顺序。
+
+#### 维护窗口顺序
+
+```bash
+# 1. 无害预检可以在旧应用继续服务流量时执行（新脚本只读检查旧 schema）。
+npm run sync-taxonomy -- --dry-run
+npm run migrate-localized-content -- --dry-run
+
+# 2. 先启用 Nginx/边缘维护门（见“Nginx 反向代理”），验证外部流量收到 503；
+#    然后停止所有应用写入。
+pm2 stop blog
+# 验证没有其他进程/cron 正在使用 blog.db、articles/ 或 public/audio/。
+
+# 3. 停止状态下创建唯一的发布点备份集。
+npm run backup-db
+# 紧接着备份 articles/ 与 public/audio/；记录全部三个产物的确切名称、字节数与 SHA-256。
+
+# 4. 针对这份冻结状态重跑并保存两份只读 JSON 计划。
+npm run sync-taxonomy -- --dry-run
+npm run migrate-localized-content -- --dry-run
+
+# 5. schema 迁移 + 内容迁移。
+npm run migrate-db
+# 在 apply 前保存/审查精确的内容计划。
+npm run migrate-localized-content -- --dry-run
+npm run migrate-localized-content
+npm run audit-localized-content   # 保存发布后内容审计
+
+# 6. 内容迁移已改变 Markdown 路径/标签 token，因此针对该精确状态重新计算/审查分类。
+npm run sync-taxonomy -- --dry-run
+npm run sync-taxonomy
+npm run audit-localized-content   # 保存发布后分类审计
+npm test
+
+# 7. 公共维护保持启用，启动并验证候选应用。
+pm2 restart blog --update-env
+# 通过 localhost/allowlist 运行 smoke，移除一次性草稿/评论 fixtures，然后再次审计。
+npm run audit-localized-content
+# 8. 只有所有检查通过后才：关闭维护、reload Nginx，并记录切换时间。
+```
+
+要点：
+
+- **同一时点备份**：`npm run backup-db` 生成事务一致的 SQLite 快照；紧接着备份 `articles/` 与 `public/audio/`。三者来自同一个已停止的发布点，逐项记录确切文件名、字节数与 SHA-256（例如 `sha256sum blog.db <backup>.db articles.tar.gz audio.tar.gz`）。
+- **无写入者**：`pm2 stop blog` 后必须验证没有其他进程/cron 持有 `blog.db`、`articles/` 或 `public/audio/` 的写入。
+- **绝不盲目重跑 apply**：任一 apply 中断时，先检查报告的操作 ID，运行匹配的 `--recover <operation-id>`，再重跑 dry-run/audit。恢复报告歧义的 DB/文件哈希状态时，保持维护启用并先恢复完整备份集再重试。
+- **计划必须即时保存**：在每次 apply 前保存确切的 JSON 计划；路径/token 改变后绝不复用预检或内容迁移前的分类计划。
+- **清理约束**：`rm -rf uploads/temp/*` 只在共享操作锁 `var/operations/active.lock` 不存在时允许，且任何情况下都不得以 `var/operations` 为目标；清单与锁只能由验证成功的 apply/recovery 删除。
+- **审计证据**：`npm run audit-localized-content` 的保存输出必须包含 `integrity_check`、`foreign_key_check`、posts/articles/comments/article-tags/FTS 内容与计数、Markdown↔DB 标签相等性、翻译身份检查、双向 HTML 音频 URL↔SHA-256 文件检查、无遗留 legacy 路径/不完整操作清单/过期锁，以及发布前备份 SHA-256 清单。
+
+#### 流量关闭期间的 smoke 矩阵
+
+公共维护保持启用、流量仍被阻断时，逐项 smoke：`/`、`/zh/`、`/en/`、legacy 301、一篇双语文章、一篇中文独有文章的英文 404、分类/标签页（含 `/zh/tag/Node.js`）、两个关于页、两个 feed、sitemap 的 hreflang alternates、评论 OAuth 通过 allowlist 路径的返回、审核语言身份、一次性管理员草稿上传/替换/删除，以及本地化音频的完整与 Range 响应。smoke 后移除一次性评论/内容并重跑审计，才能开放流量；确认 Analytics 只记录最终本地化 `200` 响应。
+
+#### 恢复演练（发布前必做）
+
+在一次性目录中演练恢复：解包三份匹配备份，验证 SHA-256/字节数，运行 SQLite `integrity_check`/`foreign_key_check`，对比发布前行/文件计数，并仅用一次性路径以只读方式启动旧版本做 smoke。记录演练结果。
+
+#### 回滚截止点
+
+- **维护解除前**：可以恢复精确的发布前 SQLite + `articles/` + `public/audio/` 备份集，验证哈希/完整性/计数，部署旧代码与配置后重新开放流量。
+- **公共写入开启后**：绝不盲目恢复发布前备份集（会丢失新评论/上传/Analytics 事件）。先重新启用维护、捕获切换后的 DB/文件，优先前向修复；只有持有经过审查的切换后写入对账/导出计划时才允许回滚。
+- 绝不单独恢复某一个组件，也绝不进行原地 schema 降级。
 
 ## Google 登录评论配置
 
@@ -229,31 +298,69 @@ sudo systemctl restart nginx
 
 ### 配置说明
 
-参考 `nginx.conf.example`，主要配置项：
+参考 `deploy/nginx/blog.conf`，主要配置项：
 
 ```nginx
 server {
-    listen 80;
-    server_name your-domain.com;
-    
-    # 反向代理到 Node.js
+    listen 443 ssl;
+    server_name blog.cokedaily.space;
+    # ...
+
+    # 动态反向代理（taxonomy HTML 如 /zh/tag/Node.js 必须保持动态）。
     location / {
-        proxy_pass http://localhost:3000;
+        proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
+        proxy_set_header Host $host;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
         proxy_cache_bypass $http_upgrade;
     }
-    
-    # 静态文件直接服务
+
+    # 静态资源只按已知路径前缀缓存，绝不使用扩展名正则。
+    location /css/ {
+        proxy_pass http://127.0.0.1:3000;
+        expires 5m;
+        add_header Cache-Control "public, max-age=300, must-revalidate";
+    }
+    location /js/ {
+        proxy_pass http://127.0.0.1:3000;
+        expires 5m;
+        add_header Cache-Control "public, max-age=300, must-revalidate";
+    }
+    location /vendor/ {
+        proxy_pass http://127.0.0.1:3000;
+        expires 30d;
+        add_header Cache-Control "public, max-age=2592000";
+    }
+    location /fonts/ {
+        proxy_pass http://127.0.0.1:3000;
+        expires 30d;
+        add_header Cache-Control "public, max-age=2592000";
+    }
     location /images/ {
-        alias /path/to/blog/public/images/;
+        alias /root/Blog/public/images/;
         expires 30d;
         add_header Cache-Control "public, immutable";
     }
+    location = /favicon.ico {
+        proxy_pass http://127.0.0.1:3000;
+        expires 1d;
+        add_header Cache-Control "public, max-age=86400";
+    }
 }
 ```
+
+**静态缓存契约**：只对 `/css/`、`/js/`、`/vendor/`、`/fonts/`、`/images/` 这些已知前缀与精确的 `/favicon.ico` 应用缓存头。禁止扩展名正则缓存（如 `location ~* \.(css|js)$`），否则带点的 taxonomy HTML 路由（如 `/zh/tag/Node.js`）会被错误缓存或误判为静态资源，必须保持动态代理。
+
+#### 公共维护门（cutover 期间 503）
+
+`deploy/nginx/blog-maintenance.conf` 是公共维护门。切换窗口期间把它从 blog server 块中启用（去掉 `blog.conf` 中对应的 include 注释）：
+
+```nginx
+include /etc/nginx/snippets/blog-maintenance.conf;
+```
+
+启用后，公共流量收到 `503`，而 loopback（`127.0.0.1`/`::1`）与文档化的操作员 allowlist（按客户端地址）仍可访问候选应用进行 smoke。**每次 reload 前必须先运行 `sudo nginx -t`**。切换完成并确认所有 smoke/审计通过后，移除该 include、再次 `sudo nginx -t`、`sudo systemctl reload nginx`，并记录切换时间。
 
 ### Nginx 常用命令
 
@@ -515,12 +622,15 @@ sudo tail -f /var/log/nginx/blog_error.log
 ### 清理临时文件
 
 ```bash
-# 清理上传临时文件
+# 清理上传临时文件：仅当共享操作锁 var/operations/active.lock 不存在时允许。
+# 该命令绝不能以 var/operations 为目标，也不能删除其中的清单/锁。
 rm -rf uploads/temp/*
 
 # 清理日志（可选）
 pm2 flush blog
 ```
+
+`var/operations/` 是持久的操作登记处：操作清单与 `active.lock` 只能由验证成功的 apply/recovery 删除；通用临时文件清理不得触碰它。
 
 ---
 
@@ -622,11 +732,9 @@ gzip on;
 gzip_types text/css application/javascript application/json;
 gzip_min_length 1000;
 
-# 静态文件缓存
-location ~* \.(jpg|jpeg|png|gif|webp|css|js)$ {
-    expires 30d;
-    add_header Cache-Control "public, immutable";
-}
+# 静态缓存：只按已知路径前缀缓存（/css/、/js/、/vendor/、/fonts/、/images/、
+# 精确的 /favicon.ico）。禁止扩展名正则缓存，以免带点的 taxonomy HTML
+# 路由（如 /zh/tag/Node.js）被误判为静态资源。
 ```
 
 ### 2. 应用优化

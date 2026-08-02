@@ -2,6 +2,8 @@ const { createHash } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const manifest = require('./baseline-manifest.json');
+const { scenarios } = require('./scenarios');
+const { projects } = require('./baseline-projects');
 
 const visualRoot = __dirname;
 const snapshotsRoot = path.join(visualRoot, '__snapshots__');
@@ -26,10 +28,22 @@ function collectBaselineFiles(directory, result = []) {
 if (manifest.baselineEngine !== 'ejs@6.0.1') {
   throw new Error(`Unexpected baseline engine: ${manifest.baselineEngine}`);
 }
-if (manifest.htmlSnapshotCount !== 18
-  || manifest.layoutSnapshotCount !== 108
-  || manifest.imageSnapshotCount !== 108) {
-  throw new Error('Baseline manifest counts do not match the approved matrix.');
+if (manifest.scenarioCount !== scenarios.length || manifest.projectCount !== projects.length) {
+  throw new Error('Baseline manifest scenario/project counts do not match the configured matrix.');
+}
+
+// Expected counts derive from the configured scenario list and the Playwright
+// visual device projects — never hard-coded totals.
+const expectedHtmlSnapshotCount = scenarios.length;
+const expectedLayoutSnapshotCount = scenarios.length * projects.length;
+const expectedImageSnapshotCount = scenarios.length * projects.length;
+if (manifest.htmlSnapshotCount !== expectedHtmlSnapshotCount
+  || manifest.layoutSnapshotCount !== expectedLayoutSnapshotCount
+  || manifest.imageSnapshotCount !== expectedImageSnapshotCount) {
+  throw new Error(
+    `Baseline manifest counts do not match the scenario/project matrix `
+    + `(expected ${expectedHtmlSnapshotCount}/${expectedLayoutSnapshotCount}/${expectedImageSnapshotCount}).`
+  );
 }
 
 for (const [relativePath, expectedHash] of Object.entries(manifest.files)) {
@@ -41,7 +55,7 @@ for (const [relativePath, expectedHash] of Object.entries(manifest.files)) {
   }
 }
 
-const expectedTotal = 18 + 108 + 108;
+const expectedTotal = expectedHtmlSnapshotCount + expectedLayoutSnapshotCount + expectedImageSnapshotCount;
 if (Object.keys(manifest.files).length !== expectedTotal) {
   throw new Error(`Expected ${expectedTotal} immutable baseline files.`);
 }
@@ -52,4 +66,7 @@ if (JSON.stringify(actualPaths) !== JSON.stringify(expectedPaths)) {
   throw new Error('Baseline file set changed without an approved manifest update.');
 }
 
-console.log(`Verified ${expectedTotal} immutable EJS 6.0.1 baseline files.`);
+console.log(
+  `Verified ${expectedTotal} immutable EJS 6.0.1 baseline files `
+  + `(${expectedHtmlSnapshotCount} HTML, ${expectedLayoutSnapshotCount} layout, ${expectedImageSnapshotCount} PNG).`
+);

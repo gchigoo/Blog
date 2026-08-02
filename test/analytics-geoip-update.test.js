@@ -104,6 +104,41 @@ test('GeoIP deployment files pin weekly scheduling, hardening, canonical paths, 
   assert.match(nginx, /proxy_set_header X-Forwarded-For \$remote_addr;/);
 });
 
+test('Nginx caches static assets only by explicit prefixes and gates public traffic during maintenance', async () => {
+  const [nginx, maintenance] = await Promise.all([
+    fs.readFile(path.join(projectRoot, 'deploy/nginx/blog.conf'), 'utf8'),
+    fs.readFile(path.join(projectRoot, 'deploy/nginx/blog-maintenance.conf'), 'utf8')
+  ]);
+
+  // No extension-wide cache regex: a dot-containing taxonomy HTML route such as
+  // /zh/tag/Node.js must keep flowing through the dynamic proxy instead of
+  // being captured by an extension cache location.
+  assert.doesNotMatch(nginx, /location\s+~\*\s*\.\(/, 'extension-wide regex location present');
+  assert.doesNotMatch(nginx, /location\s+~/, 'any regex location present');
+
+  // Explicit static path prefixes and the exact favicon route.
+  for (const prefix of ['/css/', '/js/', '/vendor/', '/fonts/', '/images/']) {
+    const escaped = prefix.replaceAll('/', '\\/');
+    assert.match(nginx, new RegExp(`location\\s+${escaped}\\s*\\{`), `static prefix ${prefix} missing`);
+  }
+  assert.match(nginx, /location\s+=\s*\/favicon\.ico\s*\{/, 'exact favicon route missing');
+
+  // The catch-all dynamic proxy is the only location able to serve
+  // /zh/tag/Node.js (no static prefix shadows it and no regex captures it).
+  assert.match(nginx, /location\s+(\/\s*\{|\{\s*$)/, 'dynamic proxy catch-all missing');
+  assert.match(nginx, /proxy_pass\s+http:\/\/127\.0\.0\.1:3000;/);
+  assert.match(nginx, /Node\.js/, 'the /zh/tag/Node.js dynamic contract must be documented');
+
+  // Public maintenance gate: 503 for public traffic with loopback and a
+  // documented operator allowlist bypass for candidate-app smoke tests.
+  assert.match(maintenance, /return\s+503/, 'maintenance gate must return 503');
+  assert.match(maintenance, /127\.0\.0\.1/, 'loopback bypass missing');
+  assert.match(maintenance, /::1/, 'IPv6 loopback bypass missing');
+  assert.match(maintenance, /allowlist/i, 'operator allowlist must be documented');
+  assert.match(nginx, /blog-maintenance\.conf/, 'server block must document the maintenance gate include');
+  assert.match(nginx, /nginx -t/, 'nginx -t before reload must be documented');
+});
+
 test('Linux updater covers lock, bootstrap, no-op, failure preservation, promotion, and rollback', {
   skip: process.platform !== 'linux' ? 'Linux + flock integration only' : false
 }, async t => {

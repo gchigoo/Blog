@@ -1,27 +1,45 @@
+
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   
+  
   <title>从 EJS 3 升级到 EJS 6：保持页面像素级一致的实践记录 - 我的博客</title>
   
-  <link rel="alternate" type="application/rss+xml" title="RSS" href="/feed.xml">
+  <link rel="alternate" type="application/rss+xml" title="RSS" href="/zh/feed.xml">
   <link rel="stylesheet" href="/vendor/inter.css?v=8d2c79ff9827">
   <link rel="stylesheet" href="/vendor/new.css/new.min.css?v=3169a014d8fc">
   <link rel="stylesheet" href="/css/highlight.css?v=9c50a787b05d">
-  <link rel="stylesheet" href="/css/custom.css?v=ccde5d5e06c6">
+  <link rel="stylesheet" href="/css/custom.css?v=8648ecedccfd">
 </head>
 <body>
   <header>
-    <h1><a href="/" style="text-decoration: none; color: inherit;">我的博客</a></h1>
-    <nav>
-      <a href="/">首页</a> /
-      <a href="/archive">归档</a> /
-      <a href="/tags">标签</a> /
-      <a href="/search">搜索</a> /
-      <a href="/feed.xml">RSS</a> /
-      <a href="/about">关于</a>
+    <div class="site-header-bar">
+      <h1><a href="/zh/" style="text-decoration: none; color: inherit;">我的博客</a></h1>
+      <nav class="language-switcher" aria-label="切换语言">
+        
+        
+          
+            <span class="language-switcher-current" aria-current="true">中文</span>
+          
+           <span class="language-switcher-separator" aria-hidden="true">/</span> 
+        
+          
+            <a href="/en/article/comments-browser-smoke-en" lang="en">English</a>
+          
+          
+        
+      </nav>
+    </div>
+    <nav class="site-nav" aria-label="主导航">
+      <a href="/zh/">首页</a> /
+      <a href="/zh/archive">归档</a> /
+      <a href="/zh/tags">标签</a> /
+      <a href="/zh/search">搜索</a> /
+      <a href="/zh/feed.xml">RSS</a> /
+      <a href="/zh/about">关于</a>
       
     </nav>
   </header>
@@ -30,7 +48,6 @@
 
 
 <article class="article-detail">
-  <!-- 文章头部信息 -->
   <div class="article-header">
     <h1 class="article-title">从 EJS 3 升级到 EJS 6：保持页面像素级一致的实践记录</h1>
     
@@ -39,33 +56,40 @@
         发布于 2026年7月16日 09:30
       </span>
       
+        <span class="article-categories">
+          分类：
+          
+            <a href="/zh/category/%E6%8A%80%E6%9C%AF" class="category-badge">技术</a>
+          
+            <a href="/zh/category/%E7%94%9F%E6%B4%BB" class="category-badge">生活</a>
+          
+        </span>
+      
+      
         <span class="article-tags">
-          标签: 
+          标签：
           
-            <a href="/tag/EJS" class="tag">EJS</a> 
+            <a href="/zh/tag/EJS" class="tag">EJS</a>
           
-            <a href="/tag/upgrade" class="tag">upgrade</a> 
+            <a href="/zh/tag/upgrade" class="tag">upgrade</a>
           
-            <a href="/tag/%E8%A7%86%E8%A7%89%E5%9B%9E%E5%BD%92" class="tag">视觉回归</a>
+            <a href="/zh/tag/%E8%A7%86%E8%A7%89%E5%9B%9E%E5%BD%92" class="tag">视觉回归</a>
           
         </span>
       
     </div>
   </div>
   
-  <!-- 分隔线 -->
   <hr class="article-divider">
   
-  <!-- 文章内容 -->
   <div class="article-content">
     <h2>升级目标</h2><p>依赖升级前后保持完全一致的 HTML、布局和样式。</p><blockquote>先冻结行为，再替换依赖。</blockquote><h3>验证清单</h3><ul><li>HTML 快照</li><li>六档设备截图</li><li>人工目视确认</li></ul><pre><code>npm run test:visual</code></pre>
   </div>
   
-  <!-- 底部导航 -->
   <div class="article-footer">
     <nav class="article-navigation" aria-label="相邻文章">
       
-      <a href="/" class="back-link">返回首页</a>
+      <a href="/zh/" class="back-link">返回首页</a>
       
     </nav>
     
@@ -100,13 +124,21 @@
     
       <div class="comment-composer">
         <div class="comment-identity">
-          <p>正在以 <strong>视觉基线评论者</strong> 的身份评论。</p>
+          <p>正在以 视觉基线评论者 的身份评论。</p>
           <form id="comment-logout-form" action="/auth/logout" method="post">
             <input type="hidden" name="csrfToken" value="visual-csrf-token-0123456789abcdef">
             <button type="submit" class="secondary-button comment-logout-button">退出账号</button>
           </form>
         </div>
-        <form id="comment-form" class="comment-form" action="/api/articles/1/comments" method="post">
+        <form id="comment-form" class="comment-form" action="/api/articles/1/comments" method="post"
+          data-comment-submitted="评论已提交，等待审核"
+          data-comment-login-required="请先登录后再评论。"
+          data-comment-invalid-csrf="登录状态已过期，请重新登录。"
+          data-comment-article-not-found="文章不存在或已删除。"
+          data-comment-invalid-content="评论内容无效，请检查后重试。"
+          data-comment-rate-limited="评论过于频繁，请稍后再试。"
+          data-comment-server-error="评论提交失败，请稍后重试。"
+          data-comment-unknown-error="评论提交失败，请检查内容后重试。">
           <input type="hidden" name="csrfToken" value="visual-csrf-token-0123456789abcdef">
           <label for="comment-content">评论内容</label>
           <textarea
@@ -125,13 +157,13 @@
       </div>
     
   </section>
-  <script src="/js/comments.js?v=d7d7d36e54b2" defer></script>
+  <script src="/js/comments.js?v=526a377fd9f4" defer></script>
 
 
   </main>
   
   <footer>
-    <p>Powered by Gchigoo Minimalist Blog &copy; 2026</p>
+    <p>由 Gchigoo 极简博客驱动 &copy; 2026</p>
   </footer>
 </body>
 </html>

@@ -57,19 +57,25 @@ npm start
 
 ```markdown
 ---
-title: 我的第一篇文章
-description: 用于搜索结果和 SEO 的一句话摘要
-tags: [技术, 教程]
-status: published # draft 不会进入公开页面、API、搜索、RSS 或 sitemap
-date: 2026-01-16
+title: Example Post
+slug: example-post
+locale: en
+translationKey: example-post
+description: English summary
+tags: [other] # replace with IDs defined in content/taxonomy.json
+status: published
+date: 2026-08-01
 ---
-
-# 标题
-
-正文内容，支持 Markdown 语法...
-
-![图片](./images/pic.jpg)
 ```
+
+关键字段说明：
+
+- `slug`：该语言下唯一的安全 slug（URL 标识）；中文与英文文章可以各自使用相同或不同的 slug。
+- `locale`：`zh` 或 `en`；缺省按 `zh` 处理（向后兼容）。
+- `translationKey`：同一篇逻辑文章跨语言共享的身份键；**双语文章必须显式提供**（见下文“双语写作与翻译发布”）。
+- `tags`：必须是 `content/taxonomy.json` 中定义的稳定标签 ID（如 `nodejs`、`other`），不再是自由文本标签。
+- `status: draft` 不会进入公开页面、API、搜索、RSS 或 sitemap。
+- `date`：推荐使用 ISO 8601 日期；日期参与归档与按时间排序。
 
 ### 在文章中发布音乐
 
@@ -114,6 +120,43 @@ caption: 最终混音版
 - 服务端不会转码或生成兼容副本；浏览器无法解码时，可以使用播放器下方的“无法播放时打开音频文件”链接。
 - 同一音频被多次引用时只发布一份；页面不会自动播放。
 - 单独上传含 `:::audio` 块的 `.md` 会失败，因为它没有可验证的音频资产上下文。
+
+### 🌐 双语写作与翻译发布
+
+本站支持 `zh`（中文）与 `en`（英文）两种语言。文章按语言归档在 `articles/zh/` 与 `articles/en/`，公开页面使用 `/zh/...` 与 `/en/...` 前缀；关于页、归档、标签/分类、搜索、RSS、sitemap 与语言切换均按语言提供。
+
+#### 发布英文版本前的人工审查清单
+
+1. 把中文 Markdown 文件复制到英文 locale 目录/来源工作流中。
+2. 逐项翻译：标题、描述、各级标题、段落、列表文本、表格行文、图片 alt 文本、音频 title/artist/caption，以及链接标签。
+3. 保持 Front Matter 键、`translationKey`、标签 ID、标题层级/顺序、围栏代码语言标记与内容、图片/音频目标路径、表格列数、引用/列表嵌套，以及链接目标不变（除非目标本身存在对应的英文页面）。
+4. 逐节对比中英文文档：不得遗漏主张、不得新增主张、不得改动数字/日期/名称，不得改变技术含义。
+5. 预览英文文章，逐一验证链接、代码高亮、图片、音频、分类、SEO 描述与语言切换。
+6. 只有经第二位人工复核确认语义保真与结构一致后，才能发布。
+
+#### 翻译身份行为（translation identity）
+
+- 翻译文章应始终提供共享的 `translationKey`；显式指定重复 locale 会被拒绝（409），绝不会被自动加后缀。
+- `translationKey` 缺省仅为向后兼容保留：同一 locale 内发生 slug 冲突时，会分配一个带时间戳后缀的独立文章键；不带后缀的不同 locale 上传，在 slug 恰好匹配既有逻辑文章键且该语言尚无文章时，会挂接到该既有默认键。
+- 本发布版本不会调用任何 LLM API，也不要求任何 API 密钥；外部 LLM 仅作为写作辅助，其输出必须通过同样的人工审查清单。
+- `articles/zh/` 与 `articles/en/` 是后台发布流程写出的发布归档，不是被监听改动的源目录：翻译后的 Markdown 文件只有在“预览/上传（或替换）”写入其 SQLite 文章行与规范化分类/搜索记录后才会对外可见。
+
+### 🏷️ 分类目录维护（Taxonomy）
+
+`content/taxonomy.json` 是分类维护源，SQLite 规范化分类是运行时真相：
+
+- `categories`：分类列表，每个分类有稳定的 `id`、`sortOrder` 与 `zh`/`en` 双语 `name`/`slug`。
+- `tags`：每个分类下的标签，同样拥有稳定 `id`、`sortOrder`、双语 `name`/`slug` 与可选的 `legacyNames`（迁移期旧名称集合）。
+- 一个标签只能属于一个分类（one-parent rule）；标签 ID 一旦发布即保持稳定，文章 Front Matter 的 `tags` 引用这些稳定 ID。
+
+同步命令：
+
+```bash
+npm run sync-taxonomy -- --dry-run   # 只读预览：输出精确排序的计划，严格零写入
+npm run sync-taxonomy                # 在维护窗口内事务性应用
+```
+
+应用前必须审查干跑计划中的 `unmappedLegacyTags`、`legacyRewires`、`markdownRewrites`、`blockedSlugChanges`、`blockedDeletions`、`conflicts` 与受影响文章数量。任何能够重接线别名的 apply 都是一次协调的 Markdown/SQLite 写入：必须停止应用写入，并使用同一时点的全新备份后执行。存在不完整操作清单或过期锁时会拒绝执行；中断后先检查操作 ID，再运行 `npm run sync-taxonomy -- --recover <operation-id>` 恢复。应用/恢复后运行 `npm run audit-localized-content`，证明 Markdown 标签 ID 与 `article_tags` 一致且 FTS 内容新鲜。
 
 ### 功能页面
 

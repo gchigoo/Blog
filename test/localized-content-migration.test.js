@@ -1048,6 +1048,68 @@ test('content migration recovery refuses ambiguous states and retains the journa
   db.close();
 });
 
+// ---------------------------------------------------------------------------
+// Deterministic phase-anchored whole-tree comparisons for the shared-lock test
+// ---------------------------------------------------------------------------
+
+// The owner apply stages every payload before persisting phase 'prepared' and
+// performs every recorded rename before persisting phase 'files-promoted';
+// both phases are durable manifest states, so the file tree can be compared at
+// those two phase boundaries without racing the owner's ongoing writes.
+// Between 'prepared' and 'files-promoted' the non-DB tree may differ only by
+// the owner's own recorded moves; any additional difference is a write by the
+// blocked process under test. A recorded markdown move is staged under
+// uploads/temp and renamed to its destination during promotion, so its staged
+// path is also removed; audio moves link their destination from the tombstone
+// and never stage a payload.
+
+function normalizedStagedPath(file) {
+  return file.stagedPath ? file.stagedPath.replaceAll('\\', '/') : null;
+}
+
+function contentMovePathChanges(manifest) {
+  const added = [];
+  const removed = [];
+  for (const file of manifest.files) {
+    const directory = file.kind === 'audio' ? 'public/audio' : 'articles';
+    removed.push(path.posix.join(directory, file.path));
+    const stagedPath = normalizedStagedPath(file);
+    if (stagedPath) removed.push(stagedPath);
+    added.push(path.posix.join(directory, file.tombstone));
+    added.push(path.posix.join(directory, file.destination));
+  }
+  return { added: added.sort(), removed: removed.sort() };
+}
+
+function taxonomyMovePathChanges(manifest) {
+  const added = [];
+  const removed = [];
+  for (const file of manifest.files) {
+    // A taxonomy rewrite is promoted back to its own source path, so the
+    // source exists in both snapshots; only the staged copy and the tombstone
+    // change between 'prepared' and 'files-promoted'.
+    const stagedPath = normalizedStagedPath(file);
+    if (stagedPath) removed.push(stagedPath);
+    added.push(path.posix.join('articles', file.tombstone));
+  }
+  return { added: added.sort(), removed: removed.sort() };
+}
+
+function assertTreeDiff(actual, baseline, expected, message) {
+  const baselineSet = new Set(baseline);
+  const actualSet = new Set(actual);
+  assert.deepEqual(
+    actual.filter(name => !baselineSet.has(name)).sort(),
+    expected.added,
+    `${message}: unexpected added paths`
+  );
+  assert.deepEqual(
+    baseline.filter(name => !actualSet.has(name)).sort(),
+    expected.removed,
+    `${message}: unexpected removed paths`
+  );
+}
+
 test('taxonomy and content migrations serialize on the shared var/operations lock', async t => {
   const mp3 = validMp3();
   const fixture = buildV3Fixture(t, { articles: [exampleArticleData(mp3)] });
@@ -1056,22 +1118,38 @@ test('taxonomy and content migrations serialize on the shared var/operations loc
 
   // Direction 1: a paused content apply owns the lock; the taxonomy apply is inert.
   const contentHandle = spawnContentCli(root, []);
-  await waitFor(() => readOperationManifest(root, firstOperationId(root)), { timeoutMs: 15000 });
+  const contentOperationId = await waitFor(() => {
+    const id = firstOperationId(root);
+    const current = readOperationManifest(root, id);
+    return current && current.phase === 'prepared' ? id : null;
+  }, { timeoutMs: 15000 });
+
+  // Phase 'prepared' means every staging write is durable and the owner is
+  // paused before its first live rename; snapshot the tree at this boundary.
   const beforeTaxonomyFiles = walkFiles(root).filter(name => !name.startsWith('blog.db'));
+  const contentManifest = readOperationManifest(root, contentOperationId);
+  assert.ok(
+    contentManifest.files.every(file => !file.tombstoned && !file.promoted),
+    'content owner was no longer paused at prepared'
+  );
+
   const taxonomyBlocked = await runTaxonomyCli(root, []);
   assert.notEqual(taxonomyBlocked.code, 0, 'taxonomy apply must fail while content owns the lock');
   assert.match(taxonomyBlocked.stdout, /active|busy|incomplete|stale/i);
-  assert.deepEqual(walkFiles(root).filter(name => !name.startsWith('blog.db')), beforeTaxonomyFiles, 'loser changed files');
 
   // A concurrent dry-run reports the active operation without writing.
-  const beforeDryFiles = walkFiles(root).filter(name => !name.startsWith('blog.db'));
   const dryRun = await runContentCli(root, ['--dry-run']);
   assert.notEqual(dryRun.code, 0);
   assert.match(dryRun.stdout, /active operation/i);
-  assert.deepEqual(walkFiles(root).filter(name => !name.startsWith('blog.db')), beforeDryFiles);
+
+  // Re-anchor on 'files-promoted' (every recorded rename durable) and require
+  // the whole non-DB tree to differ only by the owner's own recorded moves,
+  // proving neither the blocked taxonomy apply nor the dry-run wrote anything.
+  await waitFor(() => readOperationManifest(root, contentOperationId)?.phase === 'files-promoted', { timeoutMs: 15000 });
+  const afterTaxonomyFiles = walkFiles(root).filter(name => !name.startsWith('blog.db'));
+  assertTreeDiff(afterTaxonomyFiles, beforeTaxonomyFiles, contentMovePathChanges(contentManifest), 'loser changed files');
 
   // Kill and recover the content owner.
-  const contentOperationId = firstOperationId(root);
   await killChild(contentHandle.child);
   await contentHandle.exit;
   const recoveredContent = await runContentCli(root, ['--recover', contentOperationId]);
@@ -1080,14 +1158,26 @@ test('taxonomy and content migrations serialize on the shared var/operations loc
 
   // Direction 2: a paused taxonomy apply owns the lock; the content apply is inert.
   const taxonomyHandle = spawnTaxonomyCli(root, []);
-  await waitFor(() => readOperationManifest(root, firstOperationId(root)), { timeoutMs: 15000 });
+  const taxonomyOperationId = await waitFor(() => {
+    const id = firstOperationId(root);
+    const current = readOperationManifest(root, id);
+    return current && current.phase === 'prepared' ? id : null;
+  }, { timeoutMs: 15000 });
   const beforeContentFiles = walkFiles(root).filter(name => !name.startsWith('blog.db'));
+  const taxonomyManifest = readOperationManifest(root, taxonomyOperationId);
+  assert.ok(
+    taxonomyManifest.files.every(file => !file.tombstoned && !file.promoted),
+    'taxonomy owner was no longer paused at prepared'
+  );
+
   const contentBlocked = await runContentCli(root, []);
   assert.notEqual(contentBlocked.code, 0, 'content apply must fail while taxonomy owns the lock');
   assert.match(contentBlocked.stdout, /active|busy|incomplete|stale/i);
-  assert.deepEqual(walkFiles(root).filter(name => !name.startsWith('blog.db')), beforeContentFiles, 'loser changed files');
 
-  const taxonomyOperationId = firstOperationId(root);
+  await waitFor(() => readOperationManifest(root, taxonomyOperationId)?.phase === 'files-promoted', { timeoutMs: 15000 });
+  const afterContentFiles = walkFiles(root).filter(name => !name.startsWith('blog.db'));
+  assertTreeDiff(afterContentFiles, beforeContentFiles, taxonomyMovePathChanges(taxonomyManifest), 'loser changed files');
+
   await killChild(taxonomyHandle.child);
   await taxonomyHandle.exit;
   const recoveredTaxonomy = await runTaxonomyCli(root, ['--recover', taxonomyOperationId]);

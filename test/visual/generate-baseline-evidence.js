@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const sharp = require('sharp');
 const { scenarios } = require('./scenarios');
+const { projects } = require('./baseline-projects');
 
 const BASELINE_EJS_VERSION = '6.0.1';
 const baselineWriteFlag = 'ALLOW_EJS_BASELINE_WRITE';
@@ -28,14 +29,6 @@ const visualRoot = __dirname;
 const snapshotsRoot = path.join(visualRoot, '__snapshots__');
 const visualSnapshots = path.join(snapshotsRoot, 'ejs-visual.spec.js');
 const htmlSnapshots = path.join(snapshotsRoot, 'ejs-html.spec.js', 'html-snapshots');
-const projects = Object.freeze([
-  { id: 'desktop-1080p', label: 'Desktop 1080p', viewport: '1920×1080', dpr: 1 },
-  { id: 'desktop-2k', label: 'Desktop 2K / QHD', viewport: '2560×1440', dpr: 1 },
-  { id: 'desktop-4k', label: 'Desktop 4K', viewport: '3840×2160', dpr: 1 },
-  { id: 'iphone-17', label: 'iPhone 17', viewport: '402×874', dpr: 3 },
-  { id: 'iphone-air', label: 'iPhone Air', viewport: '420×912', dpr: 3 },
-  { id: 'iphone-17-pro-max', label: 'iPhone 17 Pro Max', viewport: '440×956', dpr: 3 }
-]);
 
 function relativeToVisual(filePath) {
   return path.relative(visualRoot, filePath).replaceAll('\\', '/');

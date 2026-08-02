@@ -48,7 +48,8 @@ const AUDIO_FIXTURES = [
     ...fixture,
     buffer,
     fileName: `${hash}.${fixture.extension}`,
-    src: `/audio/zh/audio-browser/${hash}.${fixture.extension}`
+    zhSrc: `/audio/zh/audio-browser/${hash}.${fixture.extension}`,
+    enSrc: `/audio/en/audio-browser/${hash}.${fixture.extension}`
   };
 });
 const AUDIO_FIXTURES_BY_FILE = new Map(AUDIO_FIXTURES.map(fixture => [fixture.fileName, fixture]));
@@ -63,9 +64,27 @@ src: ./audio/tone.${fixture.extension}
 caption: ${fixture.extension.toUpperCase()} 合成音频播放验证
 :::`).join('\n\n')}`, {
   resolvedAudioBlocks: AUDIO_FIXTURES.map(fixture => ({
-    src: fixture.src,
+    src: fixture.zhSrc,
     mimeType: fixture.mimeType
   }))
+});
+// English audio article: the stored HTML is rendered with the en locale so the
+// audio fallback UI (article.audioFallback) is English in the baseline.
+const AUDIO_ARTICLE_HTML_EN = renderMarkdown(`## From First Idea to Final Mix
+
+I documented the lyrics, melody, and sound experiments before placing the final version in the article.
+
+${AUDIO_FIXTURES.map(fixture => `:::audio
+title: ${fixture.title}
+artist: AI Voice Experiment
+src: ./audio/tone.${fixture.extension}
+caption: ${fixture.extension.toUpperCase()} synthesized audio playback verification
+:::`).join('\n\n')}`, {
+  resolvedAudioBlocks: AUDIO_FIXTURES.map(fixture => ({
+    src: fixture.enSrc,
+    mimeType: fixture.mimeType
+  })),
+  locale: 'en'
 });
 
 db.pragma('foreign_keys = ON');
@@ -74,9 +93,11 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
     slug TEXT NOT NULL UNIQUE,
+    locale TEXT NOT NULL DEFAULT 'zh',
     content TEXT NOT NULL,
     html TEXT NOT NULL,
     tags TEXT,
+    comments_enabled INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL
   );
   CREATE TABLE users (
@@ -87,50 +108,100 @@ db.exec(`
 `);
 
 const insertArticle = db.prepare(`
-  INSERT INTO articles (title, slug, content, html, tags, created_at)
-  VALUES (@title, @slug, @content, @html, @tags, @created_at)
+  INSERT INTO articles (title, slug, locale, content, html, tags, comments_enabled, created_at)
+  VALUES (@title, @slug, @locale, @content, @html, @tags, @comments_enabled, @created_at)
 `);
 
 const articleFixtures = [
   {
     title: '从 EJS 3 升级到 EJS 6：保持页面像素级一致的实践记录',
     slug: 'comments-browser-smoke',
+    locale: 'zh',
     content: 'visual fixture',
     html: '<h2>升级目标</h2><p>依赖升级前后保持完全一致的 HTML、布局和样式。</p><blockquote>先冻结行为，再替换依赖。</blockquote><h3>验证清单</h3><ul><li>HTML 快照</li><li>六档设备截图</li><li>人工目视确认</li></ul><pre><code>npm run test:visual</code></pre>',
     tags: JSON.stringify(['EJS', 'upgrade', '视觉回归']),
+    comments_enabled: 1,
+    created_at: '2026-07-16T01:30:00.000Z'
+  },
+  {
+    title: 'A Comprehensive Practice Record of Upgrading Server-Side Template Rendering from EJS 3 to EJS 6 While Keeping the Rendered Pages Pixel-Level Identical on Every Device',
+    slug: 'comments-browser-smoke-en',
+    locale: 'en',
+    content: 'visual fixture',
+    html: '<h2>Upgrade Goals</h2><p>Keep the rendered HTML, layout, and computed styles byte-identical before and after the dependency upgrade.</p><blockquote>Freeze the behavior first, then replace the dependency.</blockquote><h3>Verification Checklist</h3><ul><li>HTML snapshots</li><li>Six device screenshot classes</li><li>Manual visual confirmation of every fixture</li></ul><pre><code>npm run test:visual</code></pre>',
+    tags: JSON.stringify(['EJS', 'upgrade', 'Visual Regression']),
+    comments_enabled: 1,
     created_at: '2026-07-16T01:30:00.000Z'
   },
   {
     title: '暂无评论的文章',
     slug: 'comments-empty',
+    locale: 'zh',
     content: 'visual fixture',
     html: '<h2>空状态</h2><p>这个页面用于固定评论区尚无公开评论时的布局。</p>',
     tags: JSON.stringify(['测试']),
+    comments_enabled: 1,
     created_at: '2026-07-15T03:00:00.000Z'
   },
   {
     title: '评论功能关闭时的文章详情',
     slug: 'comments-disabled',
+    locale: 'zh',
     content: 'visual fixture',
     html: '<h2>正文保持不变</h2><p>评论功能关闭时，文章页不渲染评论区域。</p><table><thead><tr><th>版本</th><th>状态</th></tr></thead><tbody><tr><td>EJS 3</td><td>基线</td></tr><tr><td>EJS 6</td><td>待验证</td></tr></tbody></table>',
     tags: JSON.stringify(['EJS', 'upgrade']),
+    comments_enabled: 0,
     created_at: '2026-07-14T05:20:00.000Z'
   },
   {
     title: 'Node.js 24 下的服务端模板测试策略',
     slug: 'node-24-template-tests',
+    locale: 'zh',
     content: 'visual fixture',
     html: '<p>用于首页、归档和标签页面的固定数据。</p>',
     tags: JSON.stringify(['Node.js', '测试']),
+    comments_enabled: 1,
     created_at: '2026-06-20T08:00:00.000Z'
   },
   {
     title: '把外部样式与字体固定到本地测试资源',
     slug: 'pin-browser-assets',
+    locale: 'zh',
     content: 'visual fixture',
     html: '<p>消除 CDN 和字体响应漂移。</p>',
     tags: JSON.stringify(['CSS', 'upgrade']),
+    comments_enabled: 1,
     created_at: '2025-12-08T09:00:00.000Z'
+  },
+  {
+    title: '业界新闻速览：2026 年前端工具链观察',
+    slug: 'industry-news',
+    locale: 'zh',
+    content: 'visual fixture',
+    html: '<p>新闻分类下的固定数据，用于验证跨分类的标签/分类页面。</p>',
+    tags: JSON.stringify(['业界新闻']),
+    comments_enabled: 1,
+    created_at: '2026-05-11T02:00:00.000Z'
+  },
+  {
+    title: 'Frontend Toolchain Observations for 2026',
+    slug: 'industry-news-en',
+    locale: 'en',
+    content: 'visual fixture',
+    html: '<p>Fixed news-category data used to verify taxonomy and category pages across locales.</p>',
+    tags: JSON.stringify(['Industry News']),
+    comments_enabled: 1,
+    created_at: '2026-05-11T02:00:00.000Z'
+  },
+  {
+    title: '早年技术笔记（Legacy 内容归档）',
+    slug: 'legacy-notes',
+    locale: 'zh',
+    content: 'visual fixture',
+    html: '<p>归档到“其他”分类的旧内容，用于固定 legacy 分类的展示。</p>',
+    tags: JSON.stringify(['旧内容']),
+    comments_enabled: 1,
+    created_at: '2024-03-02T09:00:00.000Z'
   }
 ];
 for (const article of articleFixtures) insertArticle.run(article);
@@ -187,78 +258,110 @@ insertComment.run(
   '2026-07-16T02:10:00.000Z'
 );
 
-function normalizeArticle(row) {
+// The public templates render category badges and fine-tag links from the
+// localized taxonomy projection that production attaches per article; the
+// legacy harness rows get a deterministic fixture mapping instead. Every
+// category/tag projection is resolved per locale so the English pages show
+// English names and slugs.
+const VISUAL_CATEGORY_BY_TAG = {
+  zh: {
+    EJS: 'technology',
+    upgrade: 'technology',
+    'Node.js': 'technology',
+    CSS: 'technology',
+    测试: 'life',
+    视觉回归: 'life',
+    业界新闻: 'news',
+    旧内容: 'uncategorized'
+  },
+  en: {
+    EJS: 'technology',
+    upgrade: 'technology',
+    'Node.js': 'technology',
+    CSS: 'technology',
+    Testing: 'life',
+    'Visual Regression': 'life',
+    'Industry News': 'news',
+    Legacy: 'uncategorized'
+  }
+};
+
+const VISUAL_TAXONOMY = {
+  zh: {
+    categories: [
+      { id: 'technology', name: '技术', slug: '技术', count: 4 },
+      { id: 'life', name: '生活', slug: '生活', count: 3 },
+      { id: 'news', name: '新闻', slug: '新闻', count: 1 },
+      { id: 'uncategorized', name: '其他', slug: '其他', count: 1 }
+    ],
+    tags: [
+      { id: 'legacy-ejs', categoryId: 'technology', name: 'EJS', slug: 'EJS', count: 2 },
+      { id: 'legacy-upgrade', categoryId: 'technology', name: 'upgrade', slug: 'upgrade', count: 3 },
+      { id: 'legacy-nodejs', categoryId: 'technology', name: 'Node.js', slug: 'Node.js', count: 1 },
+      { id: 'legacy-css', categoryId: 'technology', name: 'CSS', slug: 'CSS', count: 1 },
+      { id: 'legacy-testing', categoryId: 'life', name: '测试', slug: '测试', count: 2 },
+      { id: 'legacy-visual', categoryId: 'life', name: '视觉回归', slug: '视觉回归', count: 1 },
+      { id: 'legacy-news', categoryId: 'news', name: '业界新闻', slug: '业界新闻', count: 1 },
+      { id: 'legacy-old', categoryId: 'uncategorized', name: '旧内容', slug: '旧内容', count: 1 }
+    ]
+  },
+  en: {
+    categories: [
+      { id: 'technology', name: 'Technology', slug: 'technology', count: 1 },
+      { id: 'life', name: 'Life', slug: 'life', count: 1 },
+      { id: 'news', name: 'News', slug: 'news', count: 1 },
+      { id: 'uncategorized', name: 'Other', slug: 'other', count: 0 }
+    ],
+    tags: [
+      { id: 'legacy-ejs', categoryId: 'technology', name: 'EJS', slug: 'EJS', count: 1 },
+      { id: 'legacy-upgrade', categoryId: 'technology', name: 'upgrade', slug: 'upgrade', count: 1 },
+      { id: 'legacy-nodejs', categoryId: 'technology', name: 'Node.js', slug: 'Node.js', count: 0 },
+      { id: 'legacy-css', categoryId: 'technology', name: 'CSS', slug: 'CSS', count: 0 },
+      { id: 'legacy-testing', categoryId: 'life', name: 'Testing', slug: 'testing', count: 0 },
+      { id: 'legacy-visual', categoryId: 'life', name: 'Visual Regression', slug: 'visual-regression', count: 1 },
+      { id: 'legacy-news', categoryId: 'news', name: 'Industry News', slug: 'industry-news', count: 1 },
+      { id: 'legacy-old', categoryId: 'uncategorized', name: 'Legacy', slug: 'legacy', count: 0 }
+    ]
+  }
+};
+
+function normalizeArticle(row, locale) {
   const article = { ...row, tags: JSON.parse(row.tags || '[]') };
-  // The public templates render category badges and fine-tag links from the
-  // localized taxonomy projection that production attaches per article; the
-  // legacy harness rows get a deterministic fixture mapping instead.
+  const taxonomy = VISUAL_TAXONOMY[locale];
+  const categoryByTag = VISUAL_CATEGORY_BY_TAG[locale];
   const categories = [];
   const seenCategories = new Set();
   const taxonomyTags = [];
   for (const tagName of article.tags) {
-    const category = VISUAL_CATEGORY_BY_TAG[tagName];
-    const categoryId = category ? category.id : 'uncategorized';
-    const categoryName = category ? category.name : '其他';
-    const categorySlug = category ? category.slug : '其他';
+    const categoryId = categoryByTag[tagName] || 'uncategorized';
+    const categoryDef = taxonomy.categories.find(entry => entry.id === categoryId);
+    const categoryName = categoryDef ? categoryDef.name : '其他';
+    const categorySlug = categoryDef ? categoryDef.slug : '其他';
     if (!seenCategories.has(categoryId)) {
       seenCategories.add(categoryId);
       categories.push({ id: categoryId, name: categoryName, slug: categorySlug });
     }
+    const tagDef = taxonomy.tags.find(entry => entry.name === tagName);
     taxonomyTags.push({
-      id: `legacy-${tagName}`,
+      id: tagDef ? tagDef.id : `legacy-${tagName}`,
       categoryId,
       name: tagName,
-      slug: VISUAL_TAG_SLUG_BY_NAME[tagName] || tagName
+      slug: tagDef ? tagDef.slug : tagName
     });
   }
   article.taxonomy = { categories, tags: taxonomyTags };
   return article;
 }
 
-const VISUAL_CATEGORY_BY_TAG = {
-  EJS: { id: 'technology', name: '技术', slug: '技术' },
-  upgrade: { id: 'technology', name: '技术', slug: '技术' },
-  'Node.js': { id: 'technology', name: '技术', slug: '技术' },
-  CSS: { id: 'technology', name: '技术', slug: '技术' },
-  测试: { id: 'life', name: '生活', slug: '生活' },
-  视觉回归: { id: 'life', name: '生活', slug: '生活' }
-};
-
-const VISUAL_TAG_SLUG_BY_NAME = {
-  EJS: 'EJS',
-  upgrade: 'upgrade',
-  'Node.js': 'Node.js',
-  CSS: 'CSS',
-  测试: '测试',
-  视觉回归: '视觉回归'
-};
-
-const VISUAL_TAXONOMY = {
-  categories: [
-    { id: 'technology', name: '技术', slug: '技术', count: 4 },
-    { id: 'life', name: '生活', slug: '生活', count: 3 },
-    { id: 'news', name: '新闻', slug: '新闻', count: 0 },
-    { id: 'uncategorized', name: '其他', slug: '其他', count: 0 }
-  ],
-  tags: [
-    { id: 'legacy-ejs', categoryId: 'technology', name: 'EJS', slug: 'EJS', count: 2 },
-    { id: 'legacy-upgrade', categoryId: 'technology', name: 'upgrade', slug: 'upgrade', count: 3 },
-    { id: 'legacy-nodejs', categoryId: 'technology', name: 'Node.js', slug: 'Node.js', count: 1 },
-    { id: 'legacy-css', categoryId: 'technology', name: 'CSS', slug: 'CSS', count: 1 },
-    { id: 'legacy-testing', categoryId: 'life', name: '测试', slug: '测试', count: 2 },
-    { id: 'legacy-visual', categoryId: 'life', name: '视觉回归', slug: '视觉回归', count: 1 }
-  ]
-};
-
-function allArticles() {
-  return db.prepare('SELECT * FROM articles ORDER BY created_at DESC, id DESC')
-    .all()
-    .map(normalizeArticle);
+function allArticles(locale) {
+  return db.prepare('SELECT * FROM articles WHERE locale = ? ORDER BY created_at DESC, id DESC')
+    .all(locale)
+    .map(row => normalizeArticle(row, locale));
 }
 
-function renderHome(res, user) {
+function renderHome(res, user, locale) {
   return res.render('index', {
-    articles: allArticles(),
+    articles: allArticles(locale),
     page: 1,
     totalPages: 3,
     user
@@ -557,7 +660,7 @@ app.use(commentsModule.commenterSession);
 
 const tokens = createTokenService(SESSION_SECRET, clock);
 app.get('/__visual/ready', (req, res) => res.type('text').send('ready'));
-app.get('/audio/zh/audio-browser/:fileName', (req, res) => {
+function audioFixtureHandler(req, res) {
   const fixture = AUDIO_FIXTURES_BY_FILE.get(req.params.fileName);
   if (!fixture) return res.sendStatus(404);
   const range = req.get('range');
@@ -584,13 +687,22 @@ app.get('/audio/zh/audio-browser/:fileName', (req, res) => {
   res.set('Content-Range', `bytes ${start}-${end}/${fixture.buffer.length}`);
   res.set('Content-Length', String(chunk.length));
   return res.send(chunk);
-});
+}
+app.get('/audio/zh/audio-browser/:fileName', audioFixtureHandler);
+app.get('/audio/en/audio-browser/:fileName', audioFixtureHandler);
 app.get('/__test/commenter-login', (req, res) => {
   res.cookie('comment_session', tokens.createSession({
     commenterId: commenter.id,
     csrfToken: 'visual-csrf-token-0123456789abcdef'
   }), sessionCookieOptions(false));
-  res.redirect('/article/comments-browser-smoke');
+  res.redirect('/zh/article/comments-browser-smoke');
+});
+app.get('/zh/__test/commenter-login', (req, res) => {
+  res.cookie('comment_session', tokens.createSession({
+    commenterId: commenter.id,
+    csrfToken: 'visual-csrf-token-0123456789abcdef'
+  }), sessionCookieOptions(false));
+  res.redirect('/zh/article/comments-browser-smoke');
 });
 app.get('/__test/admin-login', (req, res) => {
   res.cookie('token', jwt.sign({ id: 1, username: 'visual-admin' }, appConfig.jwtSecret, {
@@ -607,15 +719,21 @@ app.use(commentsModule.authRouter);
 app.use(commentsModule.publicRouter);
 app.use(commentsModule.adminRouter);
 
-// Public locale locals: the harness renders the Chinese surface, so the
-// template contract (i18n, locale, localizedPath, localeMeta) matches a
-// localized production request. Every route below overrides languageSwitch
-// per page so a switch target is only offered when the endpoint exists.
+// Public locale locals: the template contract (i18n, locale, localizedPath,
+// localeMeta, site) matches a localized production request. The locale is
+// derived from the request path so /en/* renders the English surface while
+// everything else (including the admin UI, which stays Chinese) renders zh.
+// Every route below overrides languageSwitch so a switch target is only
+// offered when the endpoint exists.
 app.use((req, res, next) => {
-  res.locals.locale = 'zh';
-  res.locals.i18n = createTranslator('zh');
-  res.locals.localizedPath = pathname => localizedPathForLocale('zh', pathname);
-  res.locals.localeMeta = localeMetadata('zh');
+  const locale = req.path.startsWith('/en') ? 'en' : 'zh';
+  res.locals.locale = locale;
+  res.locals.i18n = createTranslator(locale);
+  res.locals.localizedPath = pathname => localizedPathForLocale(locale, pathname);
+  res.locals.localeMeta = localeMetadata(locale);
+  res.locals.site = locale === 'en'
+    ? { title: 'My Blog', description: 'Visual regression test blog' }
+    : { title: '我的博客', description: '视觉回归测试博客' };
   res.locals.availableLocales = ['zh', 'en'];
   res.locals.languageSwitch = [
     { locale: 'zh', path: '/zh/' },
@@ -624,53 +742,82 @@ app.use((req, res, next) => {
   next();
 });
 
-const zhOnlySwitch = pathname => [{ locale: 'zh', path: `/zh${pathname}` }];
+// Translation siblings for the bilingual fixture posts. An article only offers
+// a switch target to a locale whose endpoint actually exists.
+const ARTICLE_TRANSLATION = {
+  'comments-browser-smoke': { en: 'comments-browser-smoke-en' },
+  'comments-browser-smoke-en': { zh: 'comments-browser-smoke' },
+  'industry-news': { en: 'industry-news-en' },
+  'industry-news-en': { zh: 'industry-news' }
+};
 
-app.get('/', (req, res) => renderHome(res, null));
+function articleLanguageSwitch(locale, slug) {
+  const entry = ARTICLE_TRANSLATION[slug] || {};
+  const otherSlug = entry[locale === 'zh' ? 'en' : 'zh'];
+  if (!otherSlug) {
+    return [{ locale, path: `/${locale}/article/${encodeURIComponent(slug)}` }];
+  }
+  const otherLocale = locale === 'zh' ? 'en' : 'zh';
+  const current = { locale, path: `/${locale}/article/${encodeURIComponent(slug)}` };
+  const other = { locale: otherLocale, path: `/${otherLocale}/article/${encodeURIComponent(otherSlug)}` };
+  return locale === 'zh' ? [current, other] : [other, current];
+}
+
+app.get('/', (req, res) => renderHome(res, null, 'zh'));
+app.get('/zh/', (req, res) => renderHome(res, null, 'zh'));
+app.get('/en/', (req, res) => renderHome(res, null, 'en'));
 app.get('/__visual/home-admin', (req, res) => renderHome(res, {
   id: 1,
   username: 'visual-admin'
-}));
-app.get('/article/comments-disabled', (req, res) => {
-  const article = normalizeArticle(db.prepare('SELECT * FROM articles WHERE slug = ?').get('comments-disabled'));
-  res.locals.languageSwitch = zhOnlySwitch('/article/comments-disabled');
-  return res.render('article', { article, user: null, comments: { enabled: false } });
-});
-app.get('/__audio/article', (req, res) => {
-  res.locals.languageSwitch = zhOnlySwitch('/article/audio-browser');
+}, 'zh'));
+app.get('/zh/__visual/home-admin', (req, res) => renderHome(res, {
+  id: 1,
+  username: 'visual-admin'
+}, 'zh'));
+
+function renderAudioArticle(req, res, locale) {
+  res.locals.languageSwitch = locale === 'en'
+    ? [{ locale: 'en', path: '/en/__audio/article' }]
+    : [{ locale: 'zh', path: '/zh/__audio/article' }];
   return res.render('article', {
     article: {
-      id: 99,
-      title: '一次 AI 歌曲实验：从过程到成品',
+      id: locale === 'en' ? 100 : 99,
+      title: locale === 'en' ? 'An AI Song Experiment: From Process to Final Mix' : '一次 AI 歌曲实验：从过程到成品',
       slug: 'audio-browser',
       content: 'audio browser fixture',
-      html: AUDIO_ARTICLE_HTML,
-      tags: ['AI', '音乐', '创作过程'],
+      html: locale === 'en' ? AUDIO_ARTICLE_HTML_EN : AUDIO_ARTICLE_HTML,
+      tags: locale === 'en' ? ['EJS', 'upgrade'] : ['AI', '音乐', '创作过程'],
       created_at: '2026-07-17T08:00:00.000Z'
     },
     user: null,
     comments: { enabled: false }
   });
-});
-app.get('/article/:slug', (req, res) => {
-  const row = db.prepare('SELECT * FROM articles WHERE slug = ?').get(req.params.slug);
+}
+
+function renderArticle(req, res, locale) {
+  const row = db.prepare('SELECT * FROM articles WHERE slug = ? AND locale = ?').get(req.params.slug, locale);
   if (!row) return res.status(404).render('404', { user: null });
-  const article = normalizeArticle(row);
-  // The harness articles have no translation siblings, so the switch shows
-  // only the current language and never a dead English target.
-  res.locals.languageSwitch = zhOnlySwitch(`/article/${article.slug}`);
-  return res.render('article', {
-    article,
-    user: null,
-    comments: commentsModule.getArticleCommentsViewModel(article.id, {
-      commenter: req.commenter,
-      csrfToken: req.commentSession?.csrfToken || null
-    })
-  });
-});
-app.get('/archive', (req, res) => {
+  const article = normalizeArticle(row, locale);
+  res.locals.languageSwitch = articleLanguageSwitch(locale, article.slug);
+  const comments = row.comments_enabled
+    ? commentsModule.getArticleCommentsViewModel(article.id, {
+        commenter: req.commenter,
+        csrfToken: req.commentSession?.csrfToken || null
+      })
+    : { enabled: false };
+  return res.render('article', { article, user: null, comments });
+}
+
+app.get('/article/:slug', (req, res) => renderArticle(req, res, 'zh'));
+app.get('/zh/article/:slug', (req, res) => renderArticle(req, res, 'zh'));
+app.get('/en/article/:slug', (req, res) => renderArticle(req, res, 'en'));
+app.get('/__audio/article', (req, res) => renderAudioArticle(req, res, 'zh'));
+app.get('/zh/__audio/article', (req, res) => renderAudioArticle(req, res, 'zh'));
+app.get('/en/__audio/article', (req, res) => renderAudioArticle(req, res, 'en'));
+
+function renderArchive(req, res, locale) {
   const archive = {};
-  for (const article of allArticles()) {
+  for (const article of allArticles(locale)) {
     const date = new Date(article.created_at);
     const year = String(date.getFullYear());
     const month = String(date.getMonth() + 1);
@@ -679,47 +826,81 @@ app.get('/archive', (req, res) => {
     archive[year][month].push(article);
   }
   return res.render('archive', { archive, user: null });
-});
-app.get('/tags', (req, res) => res.render('tags', {
-  taxonomy: VISUAL_TAXONOMY,
-  user: null
-}));
+}
+app.get('/archive', (req, res) => renderArchive(req, res, 'zh'));
+app.get('/zh/archive', (req, res) => renderArchive(req, res, 'zh'));
+
+app.get('/tags', (req, res) => res.render('tags', { taxonomy: VISUAL_TAXONOMY.zh, user: null }));
+app.get('/zh/tags', (req, res) => res.render('tags', { taxonomy: VISUAL_TAXONOMY.zh, user: null }));
+app.get('/en/tags', (req, res) => res.render('tags', { taxonomy: VISUAL_TAXONOMY.en, user: null }));
+
 app.get('/tag/upgrade', (req, res) => res.render('tag', {
   tag: 'upgrade',
   category: { name: '技术', slug: '技术' },
-  articles: allArticles().filter(article => article.tags.includes('upgrade')),
+  articles: allArticles('zh').filter(article => article.tags.includes('upgrade')),
   user: null
 }));
-app.get('/category/:slug', (req, res) => {
-  const category = VISUAL_TAXONOMY.categories.find(candidate => candidate.slug === req.params.slug);
+app.get('/zh/tag/upgrade', (req, res) => res.render('tag', {
+  tag: 'upgrade',
+  category: { name: '技术', slug: '技术' },
+  articles: allArticles('zh').filter(article => article.tags.includes('upgrade')),
+  user: null
+}));
+
+function renderCategory(req, res, locale) {
+  const taxonomy = VISUAL_TAXONOMY[locale];
+  const category = taxonomy.categories.find(candidate => candidate.slug === req.params.slug);
   if (!category || category.count === 0) return res.status(404).render('404', { user: null });
-  const articles = category.id === 'technology'
-    ? allArticles()
-    : allArticles().filter(article => article.taxonomy.categories.some(entry => entry.id === category.id));
-  return res.render('category', {
-    category,
-    articles,
-    user: null
-  });
-});
+  const articles = allArticles(locale).filter(article =>
+    article.taxonomy.categories.some(entry => entry.id === category.id)
+  );
+  return res.render('category', { category, articles, user: null });
+}
+app.get('/category/:slug', (req, res) => renderCategory(req, res, 'zh'));
+app.get('/zh/category/:slug', (req, res) => renderCategory(req, res, 'zh'));
+app.get('/en/category/:slug', (req, res) => renderCategory(req, res, 'en'));
+
 app.get('/search', (req, res) => res.render('search', {
   query: 'EJS',
-  articles: allArticles().slice(0, 2),
+  articles: allArticles('zh').slice(0, 2),
   user: null,
-  seo: { title: '搜索', description: '搜索文章', canonical: 'https://example.test/search', type: 'website', noindex: true }
+  seo: { title: '搜索', description: '搜索文章', canonical: 'https://example.test/zh/search', type: 'website', noindex: true }
 }));
+app.get('/zh/search', (req, res) => res.render('search', {
+  query: 'EJS',
+  articles: allArticles('zh').slice(0, 2),
+  user: null,
+  seo: { title: '搜索', description: '搜索文章', canonical: 'https://example.test/zh/search', type: 'website', noindex: true }
+}));
+
 app.get('/about', (req, res) => res.render('about', {
   aboutHtml: renderMarkdown(fs.readFileSync(path.resolve(__dirname, '..', '..', 'content', 'zh', 'about.md'), 'utf8'), { locale: 'zh' }),
   title: '关于',
   user: null,
-  seo: { title: '关于', description: '关于本站', canonical: 'https://example.test/about', type: 'website' }
+  seo: { title: '关于', description: '关于本站', canonical: 'https://example.test/zh/about', type: 'website' }
 }));
+app.get('/zh/about', (req, res) => res.render('about', {
+  aboutHtml: renderMarkdown(fs.readFileSync(path.resolve(__dirname, '..', '..', 'content', 'zh', 'about.md'), 'utf8'), { locale: 'zh' }),
+  title: '关于',
+  user: null,
+  seo: { title: '关于', description: '关于本站', canonical: 'https://example.test/zh/about', type: 'website' }
+}));
+app.get('/en/about', (req, res) => res.render('about', {
+  aboutHtml: renderMarkdown(fs.readFileSync(path.resolve(__dirname, '..', '..', 'content', 'en', 'about.md'), 'utf8'), { locale: 'en' }),
+  title: 'About',
+  user: null,
+  seo: { title: 'About', description: 'About this site', canonical: 'https://example.test/en/about', type: 'website' }
+}));
+
+app.get('/visual-not-found', (req, res) => res.status(200).render('404', { user: null }));
+app.get('/zh/__visual/not-found', (req, res) => res.status(200).render('404', { user: null }));
 app.get('/admin/login', (req, res) => res.render('admin/login'));
 app.get('/admin/upload', (req, res) => res.render('admin/upload', {
   user: { id: 1, username: 'visual-admin' }
 }));
 app.get('/admin/articles', (req, res) => res.render('admin/articles', {
-  articles: allArticles(),
+  articles: db.prepare('SELECT * FROM articles ORDER BY created_at DESC, id DESC').all()
+    .map(row => normalizeArticle(row, row.locale)),
   user: { id: 1, username: 'visual-admin' }
 }));
 let analyticsRetryPending = true;

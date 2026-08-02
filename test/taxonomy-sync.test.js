@@ -1067,32 +1067,83 @@ test('taxonomy sync recovery restores or finalizes child-process kill states det
   }
 });
 
+// Deterministic phase-anchored whole-tree comparison for the parallel-process
+// test: the owner apply stages every payload before persisting phase
+// 'prepared' and performs every recorded rename before persisting phase
+// 'files-promoted'; both are durable manifest states. Between those two phase
+// boundaries the non-DB tree may differ only by the owner's own recorded
+// moves (a markdown rewrite is staged under uploads/temp, tombstoned, and
+// promoted back to its source path); any additional difference is a write by
+// the concurrent process under test.
+function taxonomyMovePathChanges(manifest) {
+  const added = [];
+  const removed = [];
+  for (const file of manifest.files) {
+    // A taxonomy rewrite is promoted back to its own source path, so the
+    // source exists in both snapshots; only the staged copy and the tombstone
+    // change between 'prepared' and 'files-promoted'.
+    if (file.stagedPath) removed.push(file.stagedPath.replaceAll('\\', '/'));
+    added.push(path.posix.join('articles', file.tombstone));
+  }
+  return { added: added.sort(), removed: removed.sort() };
+}
+
+function assertTreeDiff(actual, baseline, expected, message) {
+  const baselineSet = new Set(baseline);
+  const actualSet = new Set(actual);
+  assert.deepEqual(
+    actual.filter(name => !baselineSet.has(name)).sort(),
+    expected.added,
+    `${message}: unexpected added paths`
+  );
+  assert.deepEqual(
+    baseline.filter(name => !actualSet.has(name)).sort(),
+    expected.removed,
+    `${message}: unexpected removed paths`
+  );
+}
+
 test('taxonomy sync parallel processes allow exactly one owner and concurrent dry-run reports the active operation', async t => {
   const { root, options } = mainFixture(t);
   writeCliCatalog(root, baseNewCatalog());
 
   const first = spawnCli(root, []);
-  await waitFor(() => readOperationManifest(root, firstOperationId(root)), { timeoutMs: 15000 });
+  const operationId = await waitFor(() => {
+    const id = firstOperationId(root);
+    const current = readOperationManifest(root, id);
+    return current && current.phase === 'prepared' ? id : null;
+  }, { timeoutMs: 15000 });
+
+  // Phase 'prepared' means every staging write is durable and the owner is
+  // paused before its first live rename; snapshot the tree at this boundary.
+  const beforeFiles = walkFiles(root).filter(name => !name.startsWith('blog.db'));
+  const ownerManifest = readOperationManifest(root, operationId);
+  assert.ok(
+    ownerManifest.files.every(file => !file.tombstoned && !file.promoted),
+    'owner was no longer paused at prepared'
+  );
 
   // A second apply makes no DB or file changes and reports the live owner.
-  const beforeFiles = walkFiles(root).filter(name => !name.startsWith('blog.db'));
   const second = await runCli(root, []);
   assert.notEqual(second.code, 0);
   assert.match(second.stdout, /active|busy/i);
-  assert.deepEqual(walkFiles(root).filter(name => !name.startsWith('blog.db')), beforeFiles);
 
   // A concurrent dry-run performs no writes and reports the active operation.
-  const beforeDryFiles = walkFiles(root).filter(name => !name.startsWith('blog.db'));
   const dryRun = await runCli(root, ['--dry-run']);
   assert.notEqual(dryRun.code, 0);
   assert.match(dryRun.stdout, /active operation/i);
-  assert.deepEqual(walkFiles(root).filter(name => !name.startsWith('blog.db')), beforeDryFiles);
 
   // Recovery for the live owner is refused while the owner is alive.
-  const operationId = firstOperationId(root);
   const recoveryWhileLive = await runCli(root, ['--recover', operationId]);
   assert.notEqual(recoveryWhileLive.code, 0);
   assert.match(recoveryWhileLive.stdout, /active|busy/i);
+
+  // Re-anchor on 'files-promoted' (every recorded rename durable) and require
+  // the whole non-DB tree to differ only by the owner's own recorded moves,
+  // proving neither the second apply nor the dry-run wrote anything.
+  await waitFor(() => readOperationManifest(root, operationId)?.phase === 'files-promoted', { timeoutMs: 15000 });
+  const afterFiles = walkFiles(root).filter(name => !name.startsWith('blog.db'));
+  assertTreeDiff(afterFiles, beforeFiles, taxonomyMovePathChanges(ownerManifest), 'concurrent process changed files');
 
   // Kill the owner and recover.
   await killChild(first.child);

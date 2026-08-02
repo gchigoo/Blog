@@ -1,27 +1,45 @@
+
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   
-  <title>标签 - 我的博客</title>
   
-  <link rel="alternate" type="application/rss+xml" title="RSS" href="/feed.xml">
+  <title>所有标签 - 我的博客</title>
+  
+  <link rel="alternate" type="application/rss+xml" title="RSS" href="/zh/feed.xml">
   <link rel="stylesheet" href="/vendor/inter.css?v=8d2c79ff9827">
   <link rel="stylesheet" href="/vendor/new.css/new.min.css?v=3169a014d8fc">
   <link rel="stylesheet" href="/css/highlight.css?v=9c50a787b05d">
-  <link rel="stylesheet" href="/css/custom.css?v=ccde5d5e06c6">
+  <link rel="stylesheet" href="/css/custom.css?v=8648ecedccfd">
 </head>
 <body>
   <header>
-    <h1><a href="/" style="text-decoration: none; color: inherit;">我的博客</a></h1>
-    <nav>
-      <a href="/">首页</a> /
-      <a href="/archive">归档</a> /
-      <a href="/tags">标签</a> /
-      <a href="/search">搜索</a> /
-      <a href="/feed.xml">RSS</a> /
-      <a href="/about">关于</a>
+    <div class="site-header-bar">
+      <h1><a href="/zh/" style="text-decoration: none; color: inherit;">我的博客</a></h1>
+      <nav class="language-switcher" aria-label="切换语言">
+        
+        
+          
+            <span class="language-switcher-current" aria-current="true">中文</span>
+          
+           <span class="language-switcher-separator" aria-hidden="true">/</span> 
+        
+          
+            <a href="/en/" lang="en">English</a>
+          
+          
+        
+      </nav>
+    </div>
+    <nav class="site-nav" aria-label="主导航">
+      <a href="/zh/">首页</a> /
+      <a href="/zh/archive">归档</a> /
+      <a href="/zh/tags">标签</a> /
+      <a href="/zh/search">搜索</a> /
+      <a href="/zh/feed.xml">RSS</a> /
+      <a href="/zh/about">关于</a>
       
     </nav>
   </header>
@@ -32,31 +50,63 @@
 <h2>所有标签</h2>
 
 
-  <div class="tag-cloud">
+  <div class="taxonomy-groups">
     
-      <a href="/tag/upgrade" class="tag tag-cloud-item" style="font-size: 0.9500000000000001em;">
-        upgrade (3)
-      </a>
+      <section class="taxonomy-category">
+        <h3 class="taxonomy-category-heading">
+          <a href="/zh/category/%E6%8A%80%E6%9C%AF">技术</a>
+          <span class="taxonomy-count">(4)</span>
+        </h3>
+        <div class="taxonomy-tags">
+          
+            <a href="/zh/tag/EJS" class="tag">EJS</a>
+          
+            <a href="/zh/tag/upgrade" class="tag">upgrade</a>
+          
+            <a href="/zh/tag/Node.js" class="tag">Node.js</a>
+          
+            <a href="/zh/tag/CSS" class="tag">CSS</a>
+          
+        </div>
+      </section>
     
-      <a href="/tag/EJS" class="tag tag-cloud-item" style="font-size: 0.9em;">
-        EJS (2)
-      </a>
+      <section class="taxonomy-category">
+        <h3 class="taxonomy-category-heading">
+          <a href="/zh/category/%E7%94%9F%E6%B4%BB">生活</a>
+          <span class="taxonomy-count">(3)</span>
+        </h3>
+        <div class="taxonomy-tags">
+          
+            <a href="/zh/tag/%E6%B5%8B%E8%AF%95" class="tag">测试</a>
+          
+            <a href="/zh/tag/%E8%A7%86%E8%A7%89%E5%9B%9E%E5%BD%92" class="tag">视觉回归</a>
+          
+        </div>
+      </section>
     
-      <a href="/tag/%E6%B5%8B%E8%AF%95" class="tag tag-cloud-item" style="font-size: 0.9em;">
-        测试 (2)
-      </a>
+      <section class="taxonomy-category">
+        <h3 class="taxonomy-category-heading">
+          <a href="/zh/category/%E6%96%B0%E9%97%BB">新闻</a>
+          <span class="taxonomy-count">(1)</span>
+        </h3>
+        <div class="taxonomy-tags">
+          
+            <a href="/zh/tag/%E4%B8%9A%E7%95%8C%E6%96%B0%E9%97%BB" class="tag">业界新闻</a>
+          
+        </div>
+      </section>
     
-      <a href="/tag/Node.js" class="tag tag-cloud-item" style="font-size: 0.8500000000000001em;">
-        Node.js (1)
-      </a>
-    
-      <a href="/tag/CSS" class="tag tag-cloud-item" style="font-size: 0.8500000000000001em;">
-        CSS (1)
-      </a>
-    
-      <a href="/tag/%E8%A7%86%E8%A7%89%E5%9B%9E%E5%BD%92" class="tag tag-cloud-item" style="font-size: 0.8500000000000001em;">
-        视觉回归 (1)
-      </a>
+      <section class="taxonomy-category">
+        <h3 class="taxonomy-category-heading">
+          <a href="/zh/category/%E5%85%B6%E4%BB%96">其他</a>
+          <span class="taxonomy-count">(1)</span>
+        </h3>
+        <div class="taxonomy-tags">
+          
+            <a href="/zh/tag/%E6%97%A7%E5%86%85%E5%AE%B9" class="tag">旧内容</a>
+          
+        </div>
+      </section>
     
   </div>
 
@@ -64,7 +114,7 @@
   </main>
   
   <footer>
-    <p>Powered by Gchigoo Minimalist Blog &copy; 2026</p>
+    <p>由 Gchigoo 极简博客驱动 &copy; 2026</p>
   </footer>
 </body>
 </html>
