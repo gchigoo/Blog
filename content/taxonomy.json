@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "categories": [
+    {
+      "id": "news",
+      "sortOrder": 10,
+      "labels": {
+        "zh": { "name": "新闻", "slug": "新闻" },
+        "en": { "name": "News", "slug": "news" }
+      },
+      "tags": []
+    },
+    {
+      "id": "life",
+      "sortOrder": 20,
+      "labels": {
+        "zh": { "name": "生活", "slug": "生活" },
+        "en": { "name": "Life", "slug": "life" }
+      },
+      "tags": []
+    },
+    {
+      "id": "technology",
+      "sortOrder": 30,
+      "labels": {
+        "zh": { "name": "技术", "slug": "技术" },
+        "en": { "name": "Technology", "slug": "technology" }
+      },
+      "tags": []
+    },
+    {
+      "id": "uncategorized",
+      "sortOrder": 90,
+      "labels": {
+        "zh": { "name": "其他", "slug": "其他" },
+        "en": { "name": "Other", "slug": "other" }
+      },
+      "tags": [
+        {
+          "id": "other",
+          "sortOrder": 10,
+          "labels": {
+            "zh": { "name": "未分类", "slug": "未分类" },
+            "en": { "name": "Uncategorized", "slug": "uncategorized" }
+          },
+          "legacyNames": []
+        }
+      ]
+    }
+  ]
+}

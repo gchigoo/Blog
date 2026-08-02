@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 const { parseCommentsConfig } = require('./comments/config');
 const { parseAnalyticsConfig } = require('./analytics/config');
+const { SUPPORTED_LOCALES, DEFAULT_LOCALE } = require('./i18n/config');
 
 const MIN_SECRET_BYTES = 32;
 
@@ -51,6 +52,10 @@ function parsePublicOrigin(value) {
   return url.origin;
 }
 
+function siteValue(envValue, fallback) {
+  return typeof envValue === 'string' && envValue.trim() !== '' ? envValue.trim() : fallback;
+}
+
 function createBaseConfig(env) {
   const isProduction = env.NODE_ENV === 'production';
   const jwtSecret = parseJwtSecret(env);
@@ -58,6 +63,10 @@ function createBaseConfig(env) {
   if (isProduction && !publicOrigin) {
     throw new Error('BLOG_PUBLIC_ORIGIN is required in production');
   }
+  const zhTitle = siteValue(env.BLOG_TITLE_ZH, siteValue(env.BLOG_TITLE, '我的博客'));
+  const zhDescription = siteValue(env.BLOG_DESCRIPTION_ZH, siteValue(env.BLOG_DESCRIPTION, '技术文章、学习笔记与个人思考'));
+  const enTitle = siteValue(env.BLOG_TITLE_EN, 'My Blog');
+  const enDescription = siteValue(env.BLOG_DESCRIPTION_EN, 'Technical articles, study notes, and personal reflections');
   return {
     port: parsePort(env.PORT),
     host: parseListenHost(env.BLOG_LISTEN_HOST),
@@ -72,11 +81,23 @@ function createBaseConfig(env) {
     imageQuality: 80,
     pageSize: 20,
     site: Object.freeze({
-      title: (env.BLOG_TITLE || '我的博客').trim(),
-      description: (env.BLOG_DESCRIPTION || '技术文章、学习笔记与个人思考').trim(),
+      title: zhTitle,
+      description: zhDescription,
       publicOrigin
     }),
+    siteLocales: Object.freeze({
+      zh: Object.freeze({ title: zhTitle, description: zhDescription }),
+      en: Object.freeze({ title: enTitle, description: enDescription })
+    }),
+    supportedLocales: SUPPORTED_LOCALES,
+    defaultLocale: DEFAULT_LOCALE,
     aboutPath: 'content/about.md',
+    aboutPaths: Object.freeze({
+      zh: 'content/zh/about.md',
+      en: 'content/en/about.md'
+    }),
+    taxonomyPath: 'content/taxonomy.json',
+    operationsDir: 'var/operations',
     comments: parseCommentsConfig(env)
   };
 }
