@@ -28,8 +28,10 @@ function createDb() {
     CREATE TABLE articles (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       title TEXT NOT NULL,
-      slug TEXT UNIQUE NOT NULL,
-      status TEXT NOT NULL CHECK (status IN ('draft', 'published'))
+      slug TEXT NOT NULL,
+      locale TEXT NOT NULL DEFAULT 'zh' CHECK (locale IN ('zh', 'en')),
+      status TEXT NOT NULL CHECK (status IN ('draft', 'published')),
+      UNIQUE(locale, slug)
     )
   `);
   return db;
@@ -495,5 +497,27 @@ test('100k event fixture stays within list/overview query and response budgets',
   }
   assert.equal(overview.byDeviceModel.distinctCount, 90_020);
   assert.equal(overview.byReferrerHost.distinctCount, 90_001);
+  db.close();
+});
+
+test('event list title resolution tolerates the same slug across article locales', () => {
+  const db = createDb();
+  db.prepare('INSERT INTO articles (title, slug, locale, status) VALUES (?, ?, ?, ?)')
+    .run('中文标题', 'twin-slug', 'zh', 'published');
+  db.prepare('INSERT INTO articles (title, slug, locale, status) VALUES (?, ?, ?, ?)')
+    .run('English Title', 'twin-slug', 'en', 'published');
+  recordAccessEvent(db, event(1, {
+    path: '/article/twin-slug', requestPath: '/article/twin-slug',
+    fullUrl: 'https://blog.example.com/article/twin-slug'
+  }));
+
+  const all = listEvents(db, NOW, parseEventListQuery({}, 30));
+  assert.equal(all.items.length, 1);
+  assert.deepEqual(all.items[0].page, {
+    kind: 'article', title: 'English Title', displayPath: '/article/twin-slug'
+  });
+  const titleSearch = listEvents(db, NOW, parseEventListQuery({ search: '中文' }, 30));
+  assert.equal(titleSearch.items.length, 1);
+  assert.deepEqual(titleSearch.items[0].page.displayPath, '/article/twin-slug');
   db.close();
 });

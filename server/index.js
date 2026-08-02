@@ -90,6 +90,13 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/articles', require('./routes/articles').createArticlesRouter({ articleService }));
 app.use('/api/admin/analytics', analyticsModule.adminApiRouter);
 app.use('/api/admin', require('./routes/admin'));
+app.use('/api/:locale/articles', (req, res, next) => {
+  if (!SUPPORTED_LOCALES.includes(req.params.locale)) {
+    return res.status(404).json({ error: '接口不存在' });
+  }
+  req.locale = req.params.locale;
+  next();
+}, require('./routes/articles').createLocalizedArticlesRouter({ articleService }));
 
 app.use(analyticsModule.collectorMiddleware);
 app.use('/audio', (req, res, next) => {

@@ -179,6 +179,40 @@ function insertLegacyArticle(db, {
   `).run(title, slug, content, JSON.stringify(tags), status, created, updated || created).lastInsertRowid;
 }
 
+function insertLocalizedPost(db, {
+  translationKey,
+  locale,
+  slug,
+  title,
+  status = 'published',
+  body = 'body',
+  created = '2026-01-01T00:00:00.000Z'
+}) {
+  let post = db.prepare('SELECT id FROM posts WHERE translation_key = ?').get(translationKey);
+  const postId = post ? post.id : Number(db.prepare(
+    'INSERT INTO posts (translation_key, created_at, updated_at) VALUES (?, ?, ?)'
+  ).run(translationKey, created, created).lastInsertRowid);
+  const articleId = Number(db.prepare(`
+    INSERT INTO articles (post_id, locale, title, slug, content, html, status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, '<p>body</p>', ?, ?, ?)
+  `).run(postId, locale, title, slug, body, status, created, created).lastInsertRowid);
+  return { postId, articleId };
+}
+
+function attachTags(db, articleId, tagIds) {
+  const statement = db.prepare('INSERT INTO article_tags (article_id, tag_id) VALUES (?, ?)');
+  for (const tagId of tagIds) statement.run(articleId, tagId);
+}
+
+function insertTagLabels(db, { id, categoryId = 'uncategorized', zhName, zhSlug, enName, enSlug, sortOrder = 5 }) {
+  db.prepare(`
+    INSERT INTO tags (id, category_id, sort_order, origin, is_system) VALUES (?, ?, ?, 'config', 0)
+  `).run(id, categoryId, sortOrder);
+  db.prepare(`
+    INSERT INTO tag_labels (tag_id, locale, name, slug) VALUES (?, 'zh', ?, ?), (?, 'en', ?, ?)
+  `).run(id, zhName, zhSlug, id, enName, enSlug);
+}
+
 test('schema v3 migration rebuilds articles with posts and preserves comments', t => {
   const taxonomyPath = writeTaxonomyCatalog(baseCatalog());
   t.after(() => fsSync.rmSync(path.dirname(taxonomyPath), { recursive: true, force: true }));
@@ -515,48 +549,76 @@ test('draft article IDs cannot receive public comments', () => {
   db.close();
 });
 
-test('10k published articles keep indexed tag and FTS queries within local budgets', t => {
+test('10k published articles keep indexed search, tag, and category queries within local budgets', t => {
   const db = new Database(':memory:');
   db.pragma('foreign_keys = ON');
   migrateDatabase(db);
-  const { createTagResolver } = require('../server/articles/schema');
-  const resolveTagId = createTagResolver(db, { acceptTagIds: true });
   const insertPost = db.prepare('INSERT INTO posts (translation_key, created_at, updated_at) VALUES (?, ?, ?)');
   const insertArticle = db.prepare(`
     INSERT INTO articles (post_id, locale, title, slug, content, html, status, created_at, updated_at)
-    VALUES (?, 'zh', ?, ?, ?, '<p>body</p>', 'published', ?, ?)
+    VALUES (?, ?, ?, ?, ?, '<p>body</p>', 'published', ?, ?)
   `);
   const insertArticleTag = db.prepare('INSERT INTO article_tags (article_id, tag_id) VALUES (?, ?)');
+  const insertTag = db.prepare(`
+    INSERT INTO tags (id, category_id, sort_order, origin, is_system) VALUES (?, 'uncategorized', 0, 'legacy', 0)
+  `);
+  const insertTagLabel = db.prepare(`
+    INSERT INTO tag_labels (tag_id, locale, name, slug) VALUES (?, ?, ?, ?)
+  `);
+  // 20 group tags with localized labels and real slugs, plus a tag in the
+  // config-owned technology category.
+  for (let group = 0; group < 20; group += 1) {
+    insertTag.run(`perf-group-${group}`);
+    for (const locale of ['zh', 'en']) {
+      insertTagLabel.run(`perf-group-${group}`, locale, `Group ${group}`, `group-${group}`);
+    }
+  }
+  db.prepare(`
+    INSERT INTO tags (id, category_id, sort_order, origin, is_system) VALUES ('perf-node', 'technology', 5, 'config', 0)
+  `).run();
+  for (const locale of ['zh', 'en']) {
+    insertTagLabel.run('perf-node', locale, 'Node', 'node');
+  }
+  // 5000 posts with published zh + en siblings = 10,000 published articles.
   db.transaction(() => {
-    for (let index = 0; index < 10_000; index += 1) {
+    for (let index = 0; index < 5_000; index += 1) {
       const date = new Date(Date.UTC(2026, 0, 1) + index * 1000).toISOString();
       const postId = Number(insertPost.run(`article-${index}`, date, date).lastInsertRowid);
-      const articleId = Number(insertArticle.run(
-        postId, `Article ${index}`, `article-${index}`,
-        `full text performance needle ${index}`, date, date
-      ).lastInsertRowid);
-      const tagIds = new Set(['node', `group-${index % 20}`].map(resolveTagId));
-      for (const tagId of tagIds) insertArticleTag.run(articleId, tagId);
-      upsertArticleSearchDocument(db, articleId);
+      const groupTag = `perf-group-${index % 20}`;
+      for (const locale of ['zh', 'en']) {
+        const articleId = Number(insertArticle.run(
+          postId, locale, `Article ${index} ${locale}`, `article-${index}`,
+          `full text performance needle ${index} ${locale}`, date, date
+        ).lastInsertRowid);
+        insertArticleTag.run(articleId, 'perf-node');
+        insertArticleTag.run(articleId, groupTag);
+        upsertArticleSearchDocument(db, articleId);
+      }
     }
   })();
   const service = createArticleService(db);
   const searchDurations = [];
   const tagDurations = [];
+  const categoryDurations = [];
   for (let sample = 0; sample < 20; sample += 1) {
     let started = performance.now();
-    assert.ok(service.search('performance needle').length > 0);
+    assert.ok(service.search('zh', 'performance needle').length > 0);
     searchDurations.push(performance.now() - started);
     started = performance.now();
-    assert.equal(service.listByTag('group-1').length, 500);
+    assert.equal(service.listByTag('zh', 'group-1').length, 250);
     tagDurations.push(performance.now() - started);
+    started = performance.now();
+    assert.equal(service.listByCategory('zh', '技术').length, 5000);
+    categoryDurations.push(performance.now() - started);
   }
   const p95 = values => values.sort((a, b) => a - b)[Math.ceil(values.length * 0.95) - 1];
   const searchP95 = p95(searchDurations);
   const tagP95 = p95(tagDurations);
+  const categoryP95 = p95(categoryDurations);
   assert.ok(searchP95 < 250, `search p95=${searchP95}ms`);
   assert.ok(tagP95 < 250, `tag p95=${tagP95}ms`);
-  t.diagnostic(`10k local search p95=${searchP95.toFixed(2)}ms, tag p95=${tagP95.toFixed(2)}ms`);
+  assert.ok(categoryP95 < 250, `category p95=${categoryP95}ms`);
+  t.diagnostic(`10k local search p95=${searchP95.toFixed(2)}ms, tag p95=${tagP95.toFixed(2)}ms, category p95=${categoryP95.toFixed(2)}ms`);
   db.close();
 });
 
@@ -1468,4 +1530,298 @@ src: ./audio/final.mp3
       injection.name
     );
   }
+});
+
+test('localized article service isolates locale, status, and translation siblings', t => {
+  const taxonomyPath = writeTaxonomyCatalog(seededCatalog());
+  t.after(() => fsSync.rmSync(path.dirname(taxonomyPath), { recursive: true, force: true }));
+  const db = new Database(':memory:');
+  db.pragma('foreign_keys = ON');
+  migrateDatabase(db, { taxonomyPath });
+
+  const created = day => new Date(Date.UTC(2026, 0, day)).toISOString();
+
+  // alpha: zh + en published twins sharing normalized tags.
+  const alphaZh = insertLocalizedPost(db, {
+    translationKey: 'alpha', locale: 'zh', slug: 'alpha', title: '中文甲',
+    body: 'alpha zh needle', created: created(1)
+  });
+  insertLocalizedPost(db, {
+    translationKey: 'alpha', locale: 'en', slug: 'alpha', title: 'English Alpha',
+    body: 'alpha en needle', created: created(1)
+  });
+  // beta: zh published, en draft.
+  insertLocalizedPost(db, {
+    translationKey: 'beta', locale: 'zh', slug: 'beta', title: '中文乙',
+    body: 'beta zh needle', created: created(2)
+  });
+  const betaEn = insertLocalizedPost(db, {
+    translationKey: 'beta', locale: 'en', slug: 'beta', title: 'Secret Beta EN', status: 'draft',
+    body: 'beta en secret needle', created: created(2)
+  });
+  // gamma: zh draft, en published.
+  insertLocalizedPost(db, {
+    translationKey: 'gamma', locale: 'zh', slug: 'gamma', title: 'Secret Gamma ZH', status: 'draft',
+    body: 'gamma zh secret needle', created: created(3)
+  });
+  const gammaEn = insertLocalizedPost(db, {
+    translationKey: 'gamma', locale: 'en', slug: 'gamma', title: 'English Gamma',
+    body: 'gamma en needle', created: created(3)
+  });
+
+  attachTags(db, alphaZh.articleId, ['nodejs', 'tutorial']);
+  attachTags(db, betaEn.articleId, ['tutorial']);
+  attachTags(db, gammaEn.articleId, ['nodejs']);
+  const alphaEnId = db.prepare('SELECT id FROM articles WHERE locale = ? AND slug = ?').get('en', 'alpha').id;
+  attachTags(db, alphaEnId, ['nodejs']);
+  const betaZhId = db.prepare('SELECT id FROM articles WHERE locale = ? AND slug = ?').get('zh', 'beta').id;
+  attachTags(db, betaZhId, ['nodejs']);
+
+  db.transaction(() => rebuildArticleSearchIndex(db))();
+  const service = createArticleService(db);
+
+  // Per-locale published lists and totals.
+  assert.deepEqual(service.listPublished('zh', 1, 20).articles.map(article => article.slug), ['beta', 'alpha']);
+  assert.equal(service.listPublished('zh', 1, 20).total, 2);
+  assert.deepEqual(service.listPublished('en', 1, 20).articles.map(article => article.slug), ['gamma', 'alpha']);
+  assert.equal(service.listPublished('en', 1, 20).total, 2);
+
+  // Pagination totals stay per locale.
+  const zhPageTwo = service.listPublished('zh', 2, 1);
+  assert.equal(zhPageTwo.total, 2);
+  assert.deepEqual(zhPageTwo.articles.map(article => article.slug), ['alpha']);
+  const enPageOne = service.listPublished('en', 1, 1);
+  assert.equal(enPageOne.total, 2);
+  assert.deepEqual(enPageOne.articles.map(article => article.slug), ['gamma']);
+
+  // Same slugs resolve independently per locale.
+  assert.equal(service.getPublishedBySlug('zh', 'alpha').title, '中文甲');
+  assert.equal(service.getPublishedBySlug('en', 'alpha').title, 'English Alpha');
+  assert.equal(service.getPublishedBySlug('zh', 'beta').title, '中文乙');
+  assert.equal(service.getPublishedBySlug('en', 'beta'), null);
+  assert.equal(service.getPublishedBySlug('en', 'gamma').title, 'English Gamma');
+  assert.equal(service.getPublishedBySlug('zh', 'gamma'), null);
+
+  // Archive and search stay per locale.
+  assert.deepEqual(service.listArchive('zh').map(article => article.slug), ['beta', 'alpha']);
+  assert.deepEqual(service.listArchive('en').map(article => article.slug), ['gamma', 'alpha']);
+  assert.deepEqual(service.search('zh', 'needle').map(article => article.slug), ['beta', 'alpha']);
+  assert.deepEqual(service.search('en', 'needle').map(article => article.slug), ['gamma', 'alpha']);
+  assert.equal(service.search('en', '秘密').length, 0);
+  assert.equal(service.search('zh', 'Secret').length, 0);
+  assert.deepEqual(service.search('needle').map(article => article.slug), ['beta', 'alpha']);
+  assert.deepEqual(service.search('needle', 1).map(article => article.slug), ['beta']);
+
+  // Navigation never crosses locale.
+  const betaNav = service.navigationFor(service.getPublishedBySlug('zh', 'beta'));
+  assert.equal(betaNav.previous && betaNav.previous.slug, 'alpha');
+  assert.equal(betaNav.next, null);
+  const alphaEnNav = service.navigationFor(service.getPublishedBySlug('en', 'alpha'));
+  assert.equal(alphaEnNav.previous, null);
+  assert.equal(alphaEnNav.next && alphaEnNav.next.slug, 'gamma');
+
+  // Related content ranks within the locale and never includes the sibling.
+  assert.deepEqual(
+    service.relatedFor(service.getPublishedBySlug('zh', 'alpha'), 10).map(article => article.slug),
+    ['beta']
+  );
+  assert.deepEqual(
+    service.relatedFor(service.getPublishedBySlug('en', 'alpha'), 10).map(article => article.slug),
+    ['gamma']
+  );
+  assert.deepEqual(
+    service.relatedFor(service.getPublishedBySlug('zh', 'alpha'), 10).map(article => article.locale),
+    ['zh']
+  );
+
+  // Published alternates only; draft/absent siblings never leak.
+  assert.equal(service.alternateFor(service.getPublishedBySlug('zh', 'alpha')).locale, 'en');
+  assert.equal(service.alternateFor(service.getPublishedBySlug('en', 'alpha')).locale, 'zh');
+  assert.equal(service.alternateFor(service.getPublishedBySlug('zh', 'beta')), null);
+  assert.equal(service.alternateFor(service.getPublishedBySlug('en', 'gamma')), null);
+  db.close();
+});
+
+test('localized taxonomy counts distinct articles and category/tag lookups use localized slugs', t => {
+  const taxonomyPath = writeTaxonomyCatalog(seededCatalog());
+  t.after(() => fsSync.rmSync(path.dirname(taxonomyPath), { recursive: true, force: true }));
+  const db = new Database(':memory:');
+  db.pragma('foreign_keys = ON');
+  migrateDatabase(db, { taxonomyPath });
+
+  // A custom category whose localized slugs differ from its stable id.
+  db.prepare("INSERT INTO categories (id, sort_order, origin) VALUES ('guides', 5, 'config')").run();
+  db.prepare(`
+    INSERT INTO category_labels (category_id, locale, name, slug)
+    VALUES ('guides', 'zh', '指南', 'guides-zh'), ('guides', 'en', 'Guides', 'guides-en')
+  `).run();
+  insertTagLabels(db, { id: 'guide-a', categoryId: 'guides', zhName: '指南甲', zhSlug: 'a-guide', enName: 'Guide A', enSlug: 'guide-a' });
+  insertTagLabels(db, { id: 'guide-b', categoryId: 'guides', zhName: '指南乙', zhSlug: 'b-guide', enName: 'Guide B', enSlug: 'guide-b' });
+
+  const created = day => new Date(Date.UTC(2026, 0, day)).toISOString();
+  const xZh = insertLocalizedPost(db, { translationKey: 'x', locale: 'zh', slug: 'x', title: 'X', created: created(1) });
+  const yZh = insertLocalizedPost(db, { translationKey: 'y', locale: 'zh', slug: 'y', title: 'Y', created: created(2) });
+  const zEn = insertLocalizedPost(db, { translationKey: 'z', locale: 'en', slug: 'z', title: 'Z', created: created(3) });
+  attachTags(db, xZh.articleId, ['guide-a', 'guide-b']);
+  attachTags(db, yZh.articleId, ['guide-a']);
+  attachTags(db, zEn.articleId, ['guide-a']);
+
+  const service = createArticleService(db);
+
+  // Category counts use COUNT(DISTINCT articles.id): X has two tags in the
+  // same category but counts once.
+  const zhTaxonomy = service.listTaxonomy('zh');
+  const guides = zhTaxonomy.categories.find(category => category.id === 'guides');
+  assert.equal(guides.name, '指南');
+  assert.equal(guides.slug, 'guides-zh');
+  assert.equal(guides.count, 2);
+  assert.equal(zhTaxonomy.tags.find(tag => tag.id === 'guide-a').count, 2);
+  assert.equal(zhTaxonomy.tags.find(tag => tag.id === 'guide-b').count, 1);
+  assert.equal(zhTaxonomy.tags.find(tag => tag.id === 'guide-a').slug, 'a-guide');
+
+  const enTaxonomy = service.listTaxonomy('en');
+  assert.equal(enTaxonomy.categories.find(category => category.id === 'guides').count, 1);
+  assert.equal(enTaxonomy.categories.find(category => category.id === 'guides').slug, 'guides-en');
+
+  // Category lookup uses (locale, label.slug), not stable ID or display text.
+  assert.deepEqual(service.listByCategory('zh', 'guides-zh').map(article => article.slug), ['y', 'x']);
+  assert.equal(service.listByCategory('zh', '指南').length, 0);
+  assert.equal(service.listByCategory('zh', 'guides').length, 0);
+  assert.deepEqual(service.listByCategory('en', 'guides-en').map(article => article.slug), ['z']);
+  assert.equal(service.listByCategory('en', 'guides-zh').length, 0);
+
+  // Tag lookup uses (locale, label.slug), not stable ID or display text.
+  assert.deepEqual(service.listByTag('zh', 'a-guide').map(article => article.slug), ['y', 'x']);
+  assert.equal(service.listByTag('zh', 'guide-a').length, 0);
+  assert.equal(service.listByTag('zh', '指南甲').length, 0);
+  assert.deepEqual(service.listByTag('en', 'guide-a').map(article => article.slug), ['z']);
+  assert.equal(service.listByTag('en', 'a-guide').length, 0);
+
+  // Batch-loaded taxonomy projection lands on detail and list models.
+  const xArticle = service.getPublishedBySlug('zh', 'x');
+  assert.deepEqual(xArticle.taxonomy.tags.map(tag => tag.slug).sort(), ['a-guide', 'b-guide']);
+  assert.deepEqual(xArticle.taxonomy.categories.map(category => category.id), ['guides']);
+  const listItem = service.listPublished('zh', 1, 20).articles.find(article => article.slug === 'x');
+  assert.deepEqual(listItem.taxonomy.tags.map(tag => tag.id).sort(), ['guide-a', 'guide-b']);
+
+  // Legacy single-argument zh calls keep their Chinese default.
+  assert.equal(service.listByTag('a-guide').length, 2);
+  assert.deepEqual(service.listPublished(1, 20).articles.map(article => article.slug), ['y', 'x']);
+  db.close();
+});
+
+test('localized and legacy article JSON APIs isolate locale, taxonomy, and published alternates', async t => {
+  const { baseUrl } = await seededHarness(t);
+
+  const upload = async (name, fields) => {
+    const response = await submit(baseUrl, '/api/admin/upload', name, markdown(fields));
+    const body = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(body));
+    return body.article;
+  };
+  const publish = async (title, slug, locale, tags, extra = {}) => upload(
+    `${slug}.md`,
+    { title, slug, locale, translationKey: slug, tags: `[${tags.join(', ')}]`, body: `${slug} needle`, ...extra }
+  );
+
+  // zh + en published twins.
+  await publish('双语中文', 'dual-api', 'zh', ['nodejs', 'tutorial']);
+  await publish('Bilingual EN', 'dual-api', 'en', ['nodejs']);
+  // Locale-exclusive posts.
+  await publish('仅中文', 'zh-only', 'zh', ['other']);
+  await publish('English Only', 'en-only', 'en', ['tutorial']);
+  // Published zh twin + draft en sibling.
+  await publish('公开中文', 'twin-api', 'zh', ['nodejs']);
+  await publish('Draft EN Twin', 'twin-api', 'en', ['tutorial'], { status: 'draft' });
+
+  // Lists are locale-isolated.
+  const zhList = await (await fetch(`${baseUrl}/api/zh/articles`)).json();
+  const zhSlugs = zhList.articles.map(article => article.slug);
+  assert.ok(zhSlugs.includes('twin-api') && zhSlugs.includes('zh-only') && zhSlugs.includes('dual-api'));
+  assert.ok(!zhSlugs.includes('en-only'), JSON.stringify(zhSlugs));
+  assert.ok(zhList.articles.every(article => article.locale === 'zh'));
+  assert.ok(zhList.pagination.total === 3);
+
+  const enList = await (await fetch(`${baseUrl}/api/en/articles`)).json();
+  const enSlugs = enList.articles.map(article => article.slug);
+  assert.ok(!enSlugs.includes('zh-only') && !enSlugs.includes('twin-api'), JSON.stringify(enSlugs));
+  assert.ok(enSlugs.includes('dual-api') && enSlugs.includes('en-only'));
+  assert.ok(enList.articles.every(article => article.locale === 'en'));
+  assert.ok(enList.pagination.total === 2);
+
+  // Localized taxonomy endpoint.
+  const zhTaxonomy = await (await fetch(`${baseUrl}/api/zh/articles/taxonomy`)).json();
+  const nodejs = zhTaxonomy.tags.find(tag => tag.id === 'nodejs');
+  assert.equal(nodejs.name, 'Node.js');
+  assert.equal(nodejs.slug, 'Node.js');
+  assert.equal(nodejs.count, 2);
+  assert.ok(zhTaxonomy.categories.some(category => category.id === 'technology' && category.count === 2));
+  const enTaxonomy = await (await fetch(`${baseUrl}/api/en/articles/taxonomy`)).json();
+  assert.equal(enTaxonomy.tags.find(tag => tag.id === 'nodejs').name, 'Node.js');
+  assert.ok(enTaxonomy.tags.some(tag => tag.id === 'tutorial' && tag.count === 1));
+
+  // Category and tag routes resolve by localized label slugs.
+  const categoryResponse = await (await fetch(`${baseUrl}/api/zh/articles/category/${encodeURIComponent('技术')}`)).json();
+  assert.deepEqual(categoryResponse.articles.map(article => article.slug).sort(), ['dual-api', 'twin-api']);
+  const tagResponse = await (await fetch(`${baseUrl}/api/zh/articles/tag/${encodeURIComponent('Node.js')}`)).json();
+  assert.deepEqual(tagResponse.articles.map(article => article.slug).sort(), ['dual-api', 'twin-api']);
+  const enTagResponse = await (await fetch(`${baseUrl}/api/en/articles/tag/nodejs`)).json();
+  assert.deepEqual(enTagResponse.articles.map(article => article.slug), ['dual-api']);
+
+  // Archive route works under the localized router.
+  const archive = await (await fetch(`${baseUrl}/api/zh/articles/archive/all`)).json();
+  assert.ok(archive && typeof archive === 'object');
+  const archived = Object.values(archive).flatMap(months => Object.values(months).flat());
+  assert.ok(archived.length >= 3);
+
+  // Detail carries locale, translationKey, localized taxonomy, and the published alternate.
+  const detail = await (await fetch(`${baseUrl}/api/zh/articles/dual-api`)).json();
+  assert.equal(detail.locale, 'zh');
+  assert.equal(detail.translationKey, 'dual-api');
+  assert.equal(detail.title, '双语中文');
+  assert.equal(detail.slug, 'dual-api');
+  assert.ok(detail.created_at);
+  assert.equal(detail.alternate.locale, 'en');
+  assert.equal(detail.alternate.slug, 'dual-api');
+  assert.equal(detail.alternate.title, 'Bilingual EN');
+  assert.deepEqual(detail.taxonomy.categories.map(category => category.id), ['technology']);
+  assert.deepEqual(detail.taxonomy.tags.map(tag => tag.id).sort(), ['nodejs', 'tutorial']);
+
+  // A locale-exclusive article has no published alternate.
+  const zhOnlyDetail = await (await fetch(`${baseUrl}/api/zh/articles/zh-only`)).json();
+  assert.equal(zhOnlyDetail.alternate, null);
+  assert.deepEqual(zhOnlyDetail.taxonomy.tags.map(tag => tag.id), ['other']);
+
+  // Draft siblings never leak: the en twin is 404 and the zh detail has no alternate.
+  assert.equal((await fetch(`${baseUrl}/api/en/articles/twin-api`)).status, 404);
+  const twinZhDetail = await (await fetch(`${baseUrl}/api/zh/articles/twin-api`)).json();
+  assert.equal(twinZhDetail.alternate, null);
+  assert.doesNotMatch(JSON.stringify(twinZhDetail), /Draft EN Twin/);
+  assert.doesNotMatch(JSON.stringify(await (await fetch(`${baseUrl}/api/zh/articles`)).json()), /Draft EN Twin/);
+
+  // Unsupported localized API locales return JSON 404.
+  const unsupported = await fetch(`${baseUrl}/api/fr/articles`);
+  assert.equal(unsupported.status, 404);
+  assert.equal((await unsupported.json()).error, '接口不存在');
+
+  // Dynamic /:slug stays last in the localized router.
+  assert.equal((await fetch(`${baseUrl}/api/zh/articles/taxonomy`)).status, 200);
+  assert.equal((await fetch(`${baseUrl}/api/zh/articles/archive/all`)).status, 200);
+  assert.equal((await fetch(`${baseUrl}/api/zh/articles/missing-slug`)).status, 404);
+
+  // Legacy /api/articles stays Chinese-compatible.
+  const legacy = await (await fetch(`${baseUrl}/api/articles/dual-api`)).json();
+  assert.equal(legacy.title, '双语中文');
+  assert.equal(legacy.locale, 'zh');
+  assert.equal(legacy.translationKey, 'dual-api');
+  assert.deepEqual(legacy.tags, ['Node.js', '教程']);
+  const legacyList = await (await fetch(`${baseUrl}/api/articles`)).json();
+  assert.equal(legacyList.pagination.total, 3);
+  assert.ok(legacyList.articles.every(article => article.locale === 'zh'));
+  const legacyTags = await (await fetch(`${baseUrl}/api/articles/tags/all`)).json();
+  assert.ok(Array.isArray(legacyTags));
+  assert.ok(legacyTags.some(tag => tag.name === 'Node.js'));
+  const legacyTagRoute = await (await fetch(`${baseUrl}/api/articles/tag/Node.js`)).json();
+  assert.deepEqual(legacyTagRoute.articles.map(article => article.slug).sort(), ['dual-api', 'twin-api']);
+  assert.equal((await fetch(`${baseUrl}/api/articles/en-only`)).status, 404);
 });
