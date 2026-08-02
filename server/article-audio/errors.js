@@ -1,15 +1,16 @@
 class ArticleAudioInputError extends Error {
-  constructor(status, code, safeMessage) {
+  constructor(status, code, safeMessage, reason) {
     super(safeMessage);
     this.name = 'ArticleAudioInputError';
     this.status = status;
     this.code = code;
     this.safeMessage = safeMessage;
+    this.reason = reason;
   }
 }
 
-function articleAudioError(status, code, safeMessage) {
-  return new ArticleAudioInputError(status, code, safeMessage);
+function articleAudioError(status, code, safeMessage, reason) {
+  return new ArticleAudioInputError(status, code, safeMessage, reason);
 }
 
 function isArticleAudioInputError(error) {

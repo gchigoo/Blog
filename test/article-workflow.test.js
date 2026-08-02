@@ -900,14 +900,16 @@ test('replacement keeps locale, translationKey, and slug immutable', async t => 
     { replaceId: String(uploaded.article.id) });
   const wrongLocaleBody = await wrongLocaleResponse.json();
   assert.equal(wrongLocaleResponse.status, 400, JSON.stringify(wrongLocaleBody));
-  assert.equal(wrongLocaleBody.code, 'article_replace_locale_mismatch');
+  assert.equal(wrongLocaleBody.code, 'translation_identity_mismatch');
+  assert.equal(wrongLocaleBody.reason, 'locale');
 
   const wrongKeyResponse = await submit(baseUrl, '/api/admin/upload', 'wrong-key.md',
     markdown({ title: 'Wrong Key', slug: 'immutable-post', locale: 'zh', translationKey: 'other-key', tags: '[nodejs]' }),
     { replaceId: String(uploaded.article.id) });
   const wrongKeyBody = await wrongKeyResponse.json();
   assert.equal(wrongKeyResponse.status, 400, JSON.stringify(wrongKeyBody));
-  assert.equal(wrongKeyBody.code, 'article_replace_translation_key_mismatch');
+  assert.equal(wrongKeyBody.code, 'translation_identity_mismatch');
+  assert.equal(wrongKeyBody.reason, 'translation_key');
 
   const db = new Database(path.join(root, 'blog.db'));
   const article = db.prepare('SELECT locale, slug, title FROM articles WHERE id = ?').get(uploaded.article.id);
@@ -1296,7 +1298,8 @@ test('replacement with a changed slug returns 400 and preserves the original row
     { replaceId: String(uploaded.article.id) });
   const wrongSlugBody = await wrongSlugResponse.json();
   assert.equal(wrongSlugResponse.status, 400, JSON.stringify(wrongSlugBody));
-  assert.equal(wrongSlugBody.code, 'article_replace_slug_mismatch');
+  assert.equal(wrongSlugBody.code, 'translation_identity_mismatch');
+  assert.equal(wrongSlugBody.reason, 'slug');
 
   const db = new Database(path.join(root, 'blog.db'));
   const article = db.prepare('SELECT slug, title, locale, post_id FROM articles WHERE id = ?').get(uploaded.article.id);
@@ -1331,4 +1334,138 @@ test('the admin article list exposes locale, translationKey, categories, and tag
   assert.deepEqual(zh.tags, ['Node.js']);
   assert.deepEqual(en.categories, ['Technology']);
   assert.deepEqual(en.tags, ['Node.js']);
+});
+
+test('replacement injected failures after article update, tag write, and FTS refresh preserve both siblings', async t => {
+  const { root, baseUrl } = await seededHarness(t);
+  const mp3 = validMp3();
+  const hash = createHash('sha256').update(mp3).digest('hex');
+
+  const zhMarkdown = `---
+title: Target ZH
+slug: replace-pair
+locale: zh
+translationKey: replace-pair
+tags: [nodejs]
+---
+
+zh original needle
+
+:::audio
+title: ZH Audio
+src: ./audio/final.mp3
+:::`;
+  const enMarkdown = `---
+title: Target EN
+slug: replace-pair
+locale: en
+translationKey: replace-pair
+tags: [nodejs]
+---
+
+en original needle
+
+:::audio
+title: EN Audio
+src: ./audio/final.mp3
+:::`;
+
+  const [zhResponse, enResponse] = await Promise.all([
+    submit(baseUrl, '/api/admin/upload', 'zh.zip', audioZip('zh.md', zhMarkdown, mp3)),
+    submit(baseUrl, '/api/admin/upload', 'en.zip', audioZip('en.md', enMarkdown, mp3))
+  ]);
+  const zh = await zhResponse.json();
+  const en = await enResponse.json();
+  assert.equal(zhResponse.status, 200, JSON.stringify(zh));
+  assert.equal(enResponse.status, 200, JSON.stringify(en));
+
+  const db = new Database(path.join(root, 'blog.db'));
+  const store = createCommentStore(db);
+  const commenter = store.upsertIdentity(
+    { provider: 'google', subject: 'replace-failure-commenter', displayName: 'Replace Failure Commenter' },
+    '2026-07-16T00:00:00.000Z'
+  );
+  store.createPendingComment({ articleId: zh.article.id, commenterId: commenter.id, content: 'zh comment stays', createdAt: '2026-07-16T00:01:00.000Z' });
+  store.createPendingComment({ articleId: en.article.id, commenterId: commenter.id, content: 'en comment stays', createdAt: '2026-07-16T00:02:00.000Z' });
+  const originalZhUpdatedAt = db.prepare('SELECT updated_at FROM articles WHERE id = ?').get(zh.article.id).updated_at;
+  const originalEnUpdatedAt = db.prepare('SELECT updated_at FROM articles WHERE id = ?').get(en.article.id).updated_at;
+  const originalPostUpdatedAt = db.prepare('SELECT updated_at FROM posts WHERE id = ?').get(zh.article.postId).updated_at;
+  db.close();
+
+  const injectionCases = [
+    {
+      name: 'article-update',
+      create: `CREATE TRIGGER injected_replace_article AFTER UPDATE ON articles BEGIN SELECT RAISE(ABORT, 'injected'); END;`,
+      drop: 'DROP TRIGGER injected_replace_article'
+    },
+    {
+      name: 'tag-write',
+      create: `CREATE TRIGGER injected_replace_tag AFTER INSERT ON article_tags BEGIN SELECT RAISE(ABORT, 'injected'); END;`,
+      drop: 'DROP TRIGGER injected_replace_tag'
+    },
+    {
+      name: 'fts-refresh',
+      create: `CREATE TRIGGER injected_replace_fts AFTER UPDATE ON posts BEGIN SELECT RAISE(ABORT, 'injected'); END;`,
+      drop: 'DROP TRIGGER injected_replace_fts'
+    }
+  ];
+
+  for (const injection of injectionCases) {
+    const triggerDb = new Database(path.join(root, 'blog.db'));
+    triggerDb.exec(injection.create);
+    triggerDb.close();
+
+    const response = await submit(baseUrl, '/api/admin/upload', 'replace.md',
+      markdown({ title: 'Replaced ZH', slug: 'replace-pair', locale: 'zh', translationKey: 'replace-pair', tags: '[tutorial]', body: 'zh replacement needle' }),
+      { replaceId: String(zh.article.id) });
+    const body = await response.json();
+    assert.equal(response.status, 500, `${injection.name}: ${JSON.stringify(body)}`);
+    assert.equal(body.code, 'audio_publish_failed', injection.name);
+
+    const verify = new Database(path.join(root, 'blog.db'));
+    // The replaced target row is byte-identical to the original.
+    const target = verify.prepare('SELECT id, post_id, locale, slug, title, content, status, updated_at FROM articles WHERE id = ?').get(zh.article.id);
+    assert.equal(target.id, zh.article.id, injection.name);
+    assert.equal(target.post_id, zh.article.postId, injection.name);
+    assert.equal(target.locale, 'zh', injection.name);
+    assert.equal(target.slug, 'replace-pair', injection.name);
+    assert.equal(target.title, 'Target ZH', injection.name);
+    assert.match(target.content, /zh original needle/, injection.name);
+    assert.equal(target.updated_at, originalZhUpdatedAt, injection.name);
+    assert.deepEqual(
+      verify.prepare('SELECT tag_id FROM article_tags WHERE article_id = ? ORDER BY tag_id').all(zh.article.id).map(row => row.tag_id),
+      ['nodejs'], injection.name
+    );
+    assert.deepEqual(searchArticleIds(verify, 'zh', 'original'), [zh.article.id], injection.name);
+    assert.deepEqual(searchArticleIds(verify, 'zh', 'replacement'), [], injection.name);
+    assert.equal(verify.prepare('SELECT COUNT(*) AS count FROM comments WHERE content = ?').get('zh comment stays').count, 1, injection.name);
+    // The unrelated locale sibling is untouched.
+    const enRow = verify.prepare('SELECT id, title, content, updated_at FROM articles WHERE id = ?').get(en.article.id);
+    assert.equal(enRow.title, 'Target EN', injection.name);
+    assert.match(enRow.content, /en original needle/, injection.name);
+    assert.equal(enRow.updated_at, originalEnUpdatedAt, injection.name);
+    assert.deepEqual(
+      verify.prepare('SELECT tag_id FROM article_tags WHERE article_id = ? ORDER BY tag_id').all(en.article.id).map(row => row.tag_id),
+      ['nodejs'], injection.name
+    );
+    assert.deepEqual(searchArticleIds(verify, 'en', 'original'), [en.article.id], injection.name);
+    assert.equal(verify.prepare('SELECT COUNT(*) AS count FROM comments WHERE content = ?').get('en comment stays').count, 1, injection.name);
+    // The rolled-back transaction leaves posts.updated_at untouched.
+    assert.equal(verify.prepare('SELECT updated_at FROM posts WHERE id = ?').get(zh.article.postId).updated_at, originalPostUpdatedAt, injection.name);
+    verify.exec(injection.drop);
+    verify.close();
+
+    // Files: the old Markdown is restored and both audio directories survive.
+    const zhFile = await fs.readFile(path.join(root, 'articles', 'zh', 'replace-pair.md'), 'utf8');
+    assert.match(zhFile, /Target ZH/, injection.name);
+    const enFile = await fs.readFile(path.join(root, 'articles', 'en', 'replace-pair.md'), 'utf8');
+    assert.match(enFile, /Target EN/, injection.name);
+    await assert.doesNotReject(() => fs.access(path.join(root, 'public', 'audio', 'zh', 'replace-pair', `${hash}.mp3`)), injection.name);
+    await assert.doesNotReject(() => fs.access(path.join(root, 'public', 'audio', 'en', 'replace-pair', `${hash}.mp3`)), injection.name);
+    assert.equal(
+      (await fs.readdir(path.join(root, 'articles', 'zh'))).some(name => name.startsWith('.replacing-')),
+      false,
+      injection.name
+    );
+  }
 });

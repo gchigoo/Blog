@@ -416,14 +416,14 @@ router.post('/upload', authenticateToken, receiveArticleUpload, async (req, res)
             return Promise.reject(articleAudioError(404, 'article_replace_not_found', '替换文章不存在'));
           }
           if (replacementArticle.slug !== data.slug) {
-            return Promise.reject(articleAudioError(400, 'article_replace_slug_mismatch', '替换文章必须保持原 slug'));
+            return Promise.reject(articleAudioError(400, 'translation_identity_mismatch', '替换文章必须保持原 slug', 'slug'));
           }
           if (replacementArticle.locale !== data.locale) {
-            return Promise.reject(articleAudioError(400, 'article_replace_locale_mismatch', '替换文章必须保持原 locale'));
+            return Promise.reject(articleAudioError(400, 'translation_identity_mismatch', '替换文章必须保持原 locale', 'locale'));
           }
           if (replacementArticle.translation_key !== data.translationKey) {
             return Promise.reject(
-              articleAudioError(400, 'article_replace_translation_key_mismatch', '替换文章必须保持原 translationKey')
+              articleAudioError(400, 'translation_identity_mismatch', '替换文章必须保持原 translationKey', 'translation_key')
             );
           }
           articleSlug = replacementArticle.slug;
@@ -651,7 +651,8 @@ router.post('/upload', authenticateToken, receiveArticleUpload, async (req, res)
       }
       return res.status(error.status).json({
         error: error.safeMessage,
-        code: error.code
+        code: error.code,
+        ...(error.reason ? { reason: error.reason } : {})
       });
     }
 
