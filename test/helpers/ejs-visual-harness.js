@@ -45,7 +45,7 @@ const AUDIO_FIXTURES = [
     ...fixture,
     buffer,
     fileName: `${hash}.${fixture.extension}`,
-    src: `/audio/audio-browser/${hash}.${fixture.extension}`
+    src: `/audio/zh/audio-browser/${hash}.${fixture.extension}`
   };
 });
 const AUDIO_FIXTURES_BY_FILE = new Map(AUDIO_FIXTURES.map(fixture => [fixture.fileName, fixture]));
@@ -495,7 +495,7 @@ app.use(commentsModule.commenterSession);
 
 const tokens = createTokenService(SESSION_SECRET, clock);
 app.get('/__visual/ready', (req, res) => res.type('text').send('ready'));
-app.get('/audio/audio-browser/:fileName', (req, res) => {
+app.get('/audio/zh/audio-browser/:fileName', (req, res) => {
   const fixture = AUDIO_FIXTURES_BY_FILE.get(req.params.fileName);
   if (!fixture) return res.sendStatus(404);
   const range = req.get('range');

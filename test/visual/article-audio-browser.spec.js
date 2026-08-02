@@ -80,7 +80,7 @@ test('article audio card is usable without desktop or mobile overflow', async ({
   await expect(audio.locator('a')).toHaveCount(0);
   await expect(card.locator('.article-audio__fallback')).toHaveAttribute(
     'href',
-    /^\/audio\/audio-browser\/[a-f0-9]{64}\.mp3$/
+    /^\/audio\/zh\/audio-browser\/[a-f0-9]{64}\.mp3$/
   );
 
   await audio.focus();
