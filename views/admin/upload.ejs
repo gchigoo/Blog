@@ -25,6 +25,9 @@
 
 <section id="previewPanel" class="upload-preview" aria-labelledby="previewTitle" hidden>
   <h3 id="previewTitle">文章预览</h3>
+  <p>语言：<span id="previewLocale"></span></p>
+  <p>翻译组：<span id="previewTranslationKey"></span></p>
+  <div id="previewCategories"></div>
   <iframe id="previewFrame" title="文章渲染预览" sandbox="allow-same-origin"></iframe>
 </section>
 
@@ -35,7 +38,10 @@
 <pre><code>---
 title: 文章标题
 description: 一句话摘要
-tags: [标签1, 标签2]
+slug: example-post
+locale: zh
+translationKey: example-post
+tags: [other]
 status: published # 或 draft
 date: 2026-01-16
 ---
@@ -48,6 +54,18 @@ date: 2026-01-16
 
 ![图片说明](./images/pic.jpg)
 </code></pre>
+
+<p><strong>语言与翻译：</strong></p>
+<ul>
+  <li><code>locale</code> 为 <code>zh</code>（中文）或 <code>en</code>（英文），省略时默认 <code>zh</code>。</li>
+  <li>同一篇文章的多语言版本必须显式使用相同的 <code>translationKey</code>，中文与英文版本会链接到同一个逻辑文章。</li>
+  <li>省略 <code>translationKey</code> 仅保留旧版兼容行为（自动按 slug 分配），不是推荐的多语言工作流。</li>
+</ul>
+
+<p><strong>标签：</strong></p>
+<ul>
+  <li><code>tags</code> 中的值是 <code>content/taxonomy.json</code> 中定义的稳定 ID（例如 <code>other</code>、<code>nodejs</code>），不是任意文本。</li>
+</ul>
 
 <p><strong>图片处理:</strong></p>
 <ul>
@@ -69,6 +87,9 @@ date: 2026-01-16
   const messageDiv = document.getElementById('message');
   const previewPanel = document.getElementById('previewPanel');
   const previewFrame = document.getElementById('previewFrame');
+  const previewLocale = document.getElementById('previewLocale');
+  const previewTranslationKey = document.getElementById('previewTranslationKey');
+  const previewCategories = document.getElementById('previewCategories');
   const replaceId = new URLSearchParams(window.location.search).get('replaceId');
   
   let selectedFile = null;
@@ -130,6 +151,7 @@ date: 2026-01-16
     uploadArea.style.display = 'block';
     previewPanel.hidden = true;
     previewFrame.removeAttribute('srcdoc');
+    previewCategories.replaceChildren();
   });
 
   async function submitFile(endpoint) {
@@ -149,6 +171,18 @@ date: 2026-01-16
     try {
       const preview = await submitFile('/api/admin/preview');
       previewFrame.srcdoc = `<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/vendor/new.css/new.min.css"><link rel="stylesheet" href="/css/custom.css"><main>${preview.html}</main>`;
+      previewLocale.textContent = preview.locale === 'en' ? 'English' : '中文';
+      previewTranslationKey.textContent = preview.translationKey || '-';
+      previewCategories.replaceChildren();
+      for (const category of preview.categories || []) {
+        const item = document.createElement('div');
+        const heading = document.createElement('strong');
+        heading.textContent = `${category.name}：`;
+        const names = document.createElement('span');
+        names.textContent = category.tags.join('、');
+        item.append(heading, names);
+        previewCategories.append(item);
+      }
       previewPanel.hidden = false;
       previewPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (error) {

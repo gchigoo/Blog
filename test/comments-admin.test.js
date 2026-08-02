@@ -269,3 +269,30 @@ test('moderation page filters status, escapes content, and exposes the admin nav
   assert.match(html, /<div class="moderation-meta">/);
   assert.doesNotMatch(html, /<header class="moderation-meta">/);
 });
+
+test('article deletion cascades its comments while sibling article comments survive', async t => {
+  const { db } = await createHarness(t);
+  const user = db.prepare(`
+    INSERT INTO comment_users (google_sub, display_name, created_at, updated_at, last_login_at)
+    VALUES ('cascade-user', 'Cascade User', '2026-07-16T00:00:00.000Z', '2026-07-16T00:00:00.000Z', '2026-07-16T00:00:00.000Z')
+    RETURNING id
+  `).get();
+  const targetId = seedComment(db, { content: 'deleted with article' });
+  db.prepare(`
+    INSERT INTO articles (title, slug, content, html, tags, created_at)
+    VALUES ('Second Article', 'second', 'body', '<p>body</p>', '[]', '2026-07-16T00:00:00.000Z')
+  `).run();
+  const siblingId = db.prepare(`
+    INSERT INTO comments (article_id, comment_user_id, content, status, created_at)
+    VALUES (2, ?, 'sibling survives', 'approved', '2026-07-16T00:00:00.000Z')
+    RETURNING id
+  `).get(user.id).id;
+
+  // The admin article deletion transaction relies on this FK cascade: removing
+  // one locale row must never touch another article's comments.
+  db.prepare('DELETE FROM articles WHERE id = 1').run();
+
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM comments WHERE id = ?').get(targetId).count, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM comments WHERE id = ?').get(siblingId).count, 1);
+  assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+});

@@ -639,6 +639,10 @@ test('admin delete reports failure and preserves files when the article row vani
   const surviving = verify.prepare('SELECT id, post_id FROM articles WHERE id = ?').get(uploaded.article.id);
   assert.ok(surviving);
   assert.ok(verify.prepare('SELECT id FROM posts WHERE id = ?').get(surviving.post_id));
+  // The FTS row must survive too: the transaction deletes it only after the
+  // article row actually vanished, so a zero-change DELETE cannot strand a
+  // stale search document.
+  assert.equal(verify.prepare('SELECT COUNT(*) AS count FROM article_fts WHERE rowid = ?').get(uploaded.article.id).count, 1);
   verify.close();
 });
 
@@ -988,4 +992,343 @@ src: ./audio/final.mp3
   assert.equal(rangeResponse.status, 206);
   assert.equal(rangeResponse.headers.get('content-range'), `bytes 0-3/${mp3.length}`);
   assert.deepEqual(Buffer.from(await rangeResponse.arrayBuffer()), mp3.subarray(0, 4));
+});
+
+test('preview and upload responses carry locale, translationKey, postId, and localized taxonomy summaries', async t => {
+  const { baseUrl } = await seededHarness(t);
+
+  const previewResponse = await submit(baseUrl, '/api/admin/preview', 'summary.md',
+    markdown({ title: 'Summary Post', slug: 'summary-post', locale: 'zh', translationKey: 'summary-post', tags: '[nodejs, tutorial]' }));
+  const preview = await previewResponse.json();
+  assert.equal(previewResponse.status, 200, JSON.stringify(preview));
+  assert.equal(preview.locale, 'zh');
+  assert.equal(preview.translationKey, 'summary-post');
+  assert.deepEqual(preview.categories, [{ name: '技术', tags: ['Node.js', '教程'] }]);
+  assert.deepEqual(preview.tags, ['Node.js', '教程']);
+
+  const uploadResponse = await submit(baseUrl, '/api/admin/upload', 'summary.md',
+    markdown({ title: 'Summary Post', slug: 'summary-post', locale: 'zh', translationKey: 'summary-post', tags: '[nodejs, tutorial]' }));
+  const uploaded = await uploadResponse.json();
+  assert.equal(uploadResponse.status, 200, JSON.stringify(uploaded));
+  assert.equal(uploaded.article.locale, 'zh');
+  assert.equal(uploaded.article.translationKey, 'summary-post');
+  assert.ok(uploaded.article.postId);
+  assert.deepEqual(uploaded.article.tags, ['nodejs', 'tutorial']);
+  assert.deepEqual(uploaded.article.categories, [{ name: '技术', tags: ['Node.js', '教程'] }]);
+
+  // An English sibling summarizes in its own locale without leaking Chinese data.
+  const enUploadResponse = await submit(baseUrl, '/api/admin/upload', 'summary-en.md',
+    markdown({ title: 'Summary EN', slug: 'summary-post', locale: 'en', translationKey: 'summary-post', tags: '[tutorial]' }));
+  const enUploaded = await enUploadResponse.json();
+  assert.equal(enUploadResponse.status, 200, JSON.stringify(enUploaded));
+  assert.equal(enUploaded.article.locale, 'en');
+  assert.equal(enUploaded.article.postId, uploaded.article.postId);
+  assert.equal(enUploaded.article.translationKey, 'summary-post');
+  assert.deepEqual(enUploaded.article.categories, [{ name: 'Technology', tags: ['Tutorial'] }]);
+  assert.deepEqual(enUploaded.article.tags, ['tutorial']);
+
+  // The earlier zh summaries still show only zh taxonomy.
+  assert.deepEqual(preview.categories, [{ name: '技术', tags: ['Node.js', '教程'] }]);
+  assert.deepEqual(uploaded.article.categories, [{ name: '技术', tags: ['Node.js', '教程'] }]);
+});
+
+test('a draft English sibling stays out of public discovery while the Chinese post is published', async t => {
+  const { root, baseUrl } = await seededHarness(t);
+  const zhResponse = await submit(baseUrl, '/api/admin/upload', 'zh.md',
+    markdown({ title: '公开中文', slug: 'twin-post', locale: 'zh', translationKey: 'twin-post', tags: '[nodejs]', body: '公开中文正文' }));
+  const zhBody = await zhResponse.json();
+  assert.equal(zhResponse.status, 200, JSON.stringify(zhBody));
+
+  const enResponse = await submit(baseUrl, '/api/admin/upload', 'en.md',
+    markdown({ title: 'Secret Draft EN', slug: 'twin-post', locale: 'en', translationKey: 'twin-post', status: 'draft', tags: '[tutorial]', body: 'secret english needle' }));
+  const enBody = await enResponse.json();
+  assert.equal(enResponse.status, 200, JSON.stringify(enBody));
+  assert.equal(enBody.article.status, 'draft');
+
+  const db = new Database(path.join(root, 'blog.db'), { readonly: true });
+  const enArticle = db.prepare('SELECT id, status FROM articles WHERE locale = ? AND slug = ?').get('en', 'twin-post');
+  assert.equal(enArticle.status, 'draft');
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM articles WHERE locale = ? AND status = ?').get('en', 'published').count, 0);
+  db.close();
+
+  const api = await (await fetch(`${baseUrl}/api/articles/twin-post`)).json();
+  assert.equal(api.title, '公开中文');
+  assert.doesNotMatch(JSON.stringify(api), /Secret Draft EN/);
+
+  const pageHtml = await (await fetch(`${baseUrl}/article/twin-post`)).text();
+  assert.match(pageHtml, /公开中文/);
+  assert.doesNotMatch(pageHtml, /Secret Draft EN/);
+
+  const searchHtml = await (await fetch(`${baseUrl}/search?q=needle`)).text();
+  assert.doesNotMatch(searchHtml, /Secret Draft EN/);
+  const sitemap = await (await fetch(`${baseUrl}/sitemap.xml`)).text();
+  assert.doesNotMatch(sitemap, /Secret Draft EN/);
+});
+
+test('replacement keeps id, post_id, locale, slug, and comments and refreshes only its own locale FTS and files', async t => {
+  const { root, baseUrl } = await seededHarness(t);
+  const zhResponse = await submit(baseUrl, '/api/admin/upload', 'zh.md',
+    markdown({ title: 'Original ZH', slug: 'pair-post', locale: 'zh', translationKey: 'pair-post', tags: '[nodejs]', body: 'zh original needle' }));
+  const zh = await zhResponse.json();
+  assert.equal(zhResponse.status, 200, JSON.stringify(zh));
+
+  const enResponse = await submit(baseUrl, '/api/admin/upload', 'en.md',
+    markdown({ title: 'Original EN', slug: 'pair-post', locale: 'en', translationKey: 'pair-post', tags: '[nodejs]', body: 'en original needle' }));
+  const en = await enResponse.json();
+  assert.equal(enResponse.status, 200, JSON.stringify(en));
+
+  const db = new Database(path.join(root, 'blog.db'));
+  const store = createCommentStore(db);
+  const commenter = store.upsertIdentity(
+    { provider: 'google', subject: 'replace-commenter', displayName: 'Replace Commenter' },
+    '2026-07-16T00:00:00.000Z'
+  );
+  const comment = store.createPendingComment({
+    articleId: zh.article.id,
+    commenterId: commenter.id,
+    content: 'keep this comment',
+    createdAt: '2026-07-16T00:01:00.000Z'
+  });
+  const oldPost = db.prepare('SELECT updated_at FROM posts WHERE id = ?').get(zh.article.postId);
+
+  const replaceResponse = await submit(baseUrl, '/api/admin/upload', 'replace.md',
+    markdown({ title: 'Replaced ZH', slug: 'pair-post', locale: 'zh', translationKey: 'pair-post', tags: '[tutorial]', body: 'zh replacement needle' }),
+    { replaceId: String(zh.article.id) });
+  const replaced = await replaceResponse.json();
+  assert.equal(replaceResponse.status, 200, JSON.stringify(replaced));
+  assert.equal(replaced.article.id, zh.article.id);
+  assert.equal(replaced.article.postId, zh.article.postId);
+  assert.equal(replaced.article.locale, 'zh');
+  assert.equal(replaced.article.translationKey, 'pair-post');
+  assert.equal(replaced.article.replaced, true);
+
+  const post = db.prepare('SELECT updated_at FROM posts WHERE id = ?').get(zh.article.postId);
+  assert.ok(post.updated_at >= oldPost.updated_at, 'posts.updated_at must advance on replacement');
+
+  const zhRow = db.prepare('SELECT id, post_id, locale, slug, title FROM articles WHERE id = ?').get(zh.article.id);
+  assert.equal(zhRow.post_id, zh.article.postId);
+  assert.equal(zhRow.locale, 'zh');
+  assert.equal(zhRow.slug, 'pair-post');
+  assert.equal(zhRow.title, 'Replaced ZH');
+  assert.equal(db.prepare('SELECT id FROM comments WHERE id = ?').get(comment.id).id, comment.id);
+  assert.deepEqual(
+    db.prepare('SELECT tag_id FROM article_tags WHERE article_id = ? ORDER BY tag_id').all(zh.article.id).map(row => row.tag_id),
+    ['tutorial']
+  );
+
+  // Only the zh FTS row and files changed; the en sibling is untouched.
+  assert.deepEqual(searchArticleIds(db, 'zh', 'replacement'), [zh.article.id]);
+  assert.deepEqual(searchArticleIds(db, 'zh', 'original'), []);
+  const enRow = db.prepare('SELECT title, content, updated_at FROM articles WHERE id = ?').get(en.article.id);
+  assert.equal(enRow.title, 'Original EN');
+  assert.match(enRow.content, /en original needle/);
+  assert.deepEqual(searchArticleIds(db, 'en', 'original'), [en.article.id]);
+  assert.deepEqual(
+    db.prepare('SELECT tag_id FROM article_tags WHERE article_id = ? ORDER BY tag_id').all(en.article.id).map(row => row.tag_id),
+    ['nodejs']
+  );
+  const enMarkdown = await fs.readFile(path.join(root, 'articles', 'en', 'pair-post.md'), 'utf8');
+  assert.match(enMarkdown, /Original EN/);
+  db.close();
+});
+
+test('deleting one sibling preserves the other locale, comments, and files and recalculates posts.updated_at', async t => {
+  const { root, baseUrl } = await seededHarness(t);
+  const zhResponse = await submit(baseUrl, '/api/admin/upload', 'zh.md',
+    markdown({ title: '中文版本', slug: 'delete-pair', locale: 'zh', translationKey: 'delete-pair', tags: '[nodejs]' }));
+  const zh = await zhResponse.json();
+  assert.equal(zhResponse.status, 200, JSON.stringify(zh));
+  const enResponse = await submit(baseUrl, '/api/admin/upload', 'en.md',
+    markdown({ title: 'English Version', slug: 'delete-pair', locale: 'en', translationKey: 'delete-pair', tags: '[nodejs]' }));
+  const en = await enResponse.json();
+  assert.equal(enResponse.status, 200, JSON.stringify(en));
+
+  const db = new Database(path.join(root, 'blog.db'));
+  const store = createCommentStore(db);
+  const commenter = store.upsertIdentity(
+    { provider: 'google', subject: 'delete-commenter', displayName: 'Delete Commenter' },
+    '2026-07-16T00:00:00.000Z'
+  );
+  store.createPendingComment({ articleId: zh.article.id, commenterId: commenter.id, content: 'zh comment', createdAt: '2026-07-16T00:01:00.000Z' });
+  store.createPendingComment({ articleId: en.article.id, commenterId: commenter.id, content: 'en comment', createdAt: '2026-07-16T00:02:00.000Z' });
+
+  const deleteResponse = await fetch(`${baseUrl}/api/admin/articles/${zh.article.id}`, {
+    method: 'DELETE',
+    headers: { cookie: cookie() }
+  });
+  assert.equal(deleteResponse.status, 200, await deleteResponse.text());
+
+  const post = db.prepare('SELECT id, updated_at FROM posts WHERE id = ?').get(zh.article.postId);
+  assert.ok(post, 'post must survive while a sibling remains');
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM articles WHERE id = ?').get(zh.article.id).count, 0);
+  assert.ok(db.prepare('SELECT id FROM articles WHERE id = ?').get(en.article.id));
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM comments WHERE content = ?').get('zh comment').count, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM comments WHERE content = ?').get('en comment').count, 1);
+  const maxSibling = db.prepare('SELECT MAX(updated_at) AS max FROM articles WHERE post_id = ?').get(zh.article.postId).max;
+  assert.equal(post.updated_at, maxSibling, 'posts.updated_at must reflect the surviving sibling');
+  await assert.rejects(fs.access(path.join(root, 'articles', 'zh', 'delete-pair.md')), { code: 'ENOENT' });
+  await assert.doesNotReject(() => fs.access(path.join(root, 'articles', 'en', 'delete-pair.md')));
+
+  // Deleting the final sibling removes the empty post and every file.
+  const finalDelete = await fetch(`${baseUrl}/api/admin/articles/${en.article.id}`, {
+    method: 'DELETE',
+    headers: { cookie: cookie() }
+  });
+  assert.equal(finalDelete.status, 200, await finalDelete.text());
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM posts WHERE id = ?').get(zh.article.postId).count, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM articles').get().count, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM article_fts').get().count, 0);
+  db.close();
+  await assert.rejects(fs.access(path.join(root, 'articles', 'en', 'delete-pair.md')), { code: 'ENOENT' });
+});
+
+test('injected failures after post, article, tag, and FTS writes roll back the new post and keep the sibling untouched', async t => {
+  const { root, baseUrl } = await seededHarness(t);
+  const keeperResponse = await submit(baseUrl, '/api/admin/upload', 'keeper.md',
+    markdown({ title: 'Keeper', slug: 'keeper-post', tags: '[nodejs]', body: 'keeper needle' }));
+  const keeper = await keeperResponse.json();
+  assert.equal(keeperResponse.status, 200, JSON.stringify(keeper));
+
+  const injectionCases = [
+    {
+      name: 'posts-write',
+      create: `CREATE TRIGGER injected_post AFTER INSERT ON posts BEGIN SELECT RAISE(ABORT, 'injected'); END;`,
+      drop: 'DROP TRIGGER injected_post'
+    },
+    {
+      name: 'article-write',
+      create: `CREATE TRIGGER injected_article AFTER INSERT ON articles BEGIN SELECT RAISE(ABORT, 'injected'); END;`,
+      drop: 'DROP TRIGGER injected_article'
+    },
+    {
+      name: 'tag-write',
+      create: `CREATE TRIGGER injected_tag AFTER INSERT ON article_tags BEGIN SELECT RAISE(ABORT, 'injected'); END;`,
+      drop: 'DROP TRIGGER injected_tag'
+    },
+    {
+      name: 'fts-refresh',
+      create: `CREATE TRIGGER injected_fts AFTER UPDATE ON posts BEGIN SELECT RAISE(ABORT, 'injected'); END;`,
+      drop: 'DROP TRIGGER injected_fts'
+    }
+  ];
+
+  for (const injection of injectionCases) {
+    const db = new Database(path.join(root, 'blog.db'));
+    db.exec(injection.create);
+    db.close();
+
+    const response = await submit(baseUrl, '/api/admin/upload', 'doomed.md',
+      markdown({ title: 'Doomed', slug: 'doomed-post', tags: '[nodejs]', body: 'doomed needle' }));
+    const body = await response.json();
+    assert.equal(response.status, 500, `${injection.name}: ${JSON.stringify(body)}`);
+    assert.equal(body.code, 'audio_publish_failed', injection.name);
+
+    const verify = new Database(path.join(root, 'blog.db'));
+    assert.equal(verify.prepare('SELECT COUNT(*) AS count FROM posts WHERE translation_key = ?').get('doomed-post').count, 0, injection.name);
+    assert.equal(verify.prepare('SELECT COUNT(*) AS count FROM articles WHERE slug = ?').get('doomed-post').count, 0, injection.name);
+    assert.equal(verify.prepare('SELECT COUNT(*) AS count FROM articles WHERE post_id IN (SELECT id FROM posts WHERE translation_key = ?)').get('doomed-post').count, 0, injection.name);
+    assert.equal(verify.prepare('SELECT COUNT(*) AS count FROM article_fts').get().count, 1, injection.name);
+    assert.equal(verify.prepare('SELECT title FROM articles WHERE id = ?').get(keeper.article.id).title, 'Keeper', injection.name);
+    assert.deepEqual(searchArticleIds(verify, 'zh', 'keeper'), [keeper.article.id], injection.name);
+    assert.deepEqual(searchArticleIds(verify, 'zh', 'doomed'), [], injection.name);
+    verify.exec(injection.drop);
+    verify.close();
+
+    await assert.rejects(fs.access(path.join(root, 'articles', 'zh', 'doomed-post.md')), { code: 'ENOENT' }, injection.name);
+  }
+});
+
+test('markdown and audio promotion failures leave no post, article, or files and keep the sibling intact', async t => {
+  const { root, baseUrl } = await seededHarness(t);
+  const mp3 = validMp3();
+  const keeperResponse = await submit(baseUrl, '/api/admin/upload', 'keeper.md',
+    markdown({ title: 'Keeper', slug: 'keeper-post', tags: '[nodejs]' }));
+  const keeper = await keeperResponse.json();
+  assert.equal(keeperResponse.status, 200, JSON.stringify(keeper));
+
+  // Markdown promotion fails when the destination exists as a directory.
+  await fs.mkdir(path.join(root, 'articles', 'zh', 'doomed-md.md'), { recursive: true });
+  const mdResponse = await submit(baseUrl, '/api/admin/upload', 'doomed.md',
+    markdown({ title: 'Doomed MD', slug: 'doomed-md', tags: '[nodejs]' }));
+  const mdBody = await mdResponse.json();
+  assert.equal(mdResponse.status, 500, JSON.stringify(mdBody));
+  assert.equal(mdBody.code, 'audio_publish_failed');
+  await fs.rm(path.join(root, 'articles', 'zh', 'doomed-md.md'), { recursive: true, force: true });
+
+  // Audio promotion fails when the final audio directory exists as a file.
+  await fs.mkdir(path.join(root, 'public', 'audio', 'zh'), { recursive: true });
+  await fs.writeFile(path.join(root, 'public', 'audio', 'zh', 'doomed-audio'), 'blocker');
+  const audioMarkdown = `---
+title: Doomed Audio
+slug: doomed-audio
+tags: [nodejs]
+---
+
+:::audio
+title: Doomed
+src: ./audio/final.mp3
+:::`;
+  const audioResponse = await submit(baseUrl, '/api/admin/upload', 'doomed.zip', audioZip('doomed.md', audioMarkdown, mp3));
+  const audioBody = await audioResponse.json();
+  assert.equal(audioResponse.status, 500, JSON.stringify(audioBody));
+  assert.equal(audioBody.code, 'audio_publish_failed');
+  await fs.rm(path.join(root, 'public', 'audio', 'zh', 'doomed-audio'), { force: true });
+
+  const db = new Database(path.join(root, 'blog.db'));
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM posts').get().count, 1);
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM articles').get().count, 1);
+  assert.equal(db.prepare('SELECT title FROM articles WHERE id = ?').get(keeper.article.id).title, 'Keeper');
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM article_fts').get().count, 1);
+  db.close();
+  await assert.rejects(fs.access(path.join(root, 'articles', 'zh', 'doomed-md.md')), { code: 'ENOENT' });
+  await assert.rejects(fs.access(path.join(root, 'articles', 'zh', 'doomed-audio.md')), { code: 'ENOENT' });
+});
+
+test('replacement with a changed slug returns 400 and preserves the original row and file', async t => {
+  const { root, baseUrl } = await seededHarness(t);
+  const uploadedResponse = await submit(baseUrl, '/api/admin/upload', 'orig.md',
+    markdown({ title: 'Slug Original', slug: 'slug-original', locale: 'zh', translationKey: 'slug-original', tags: '[nodejs]' }));
+  const uploaded = await uploadedResponse.json();
+  assert.equal(uploadedResponse.status, 200, JSON.stringify(uploaded));
+
+  const wrongSlugResponse = await submit(baseUrl, '/api/admin/upload', 'wrong.md',
+    markdown({ title: 'Wrong Slug', slug: 'slug-changed', locale: 'zh', translationKey: 'slug-original', tags: '[nodejs]' }),
+    { replaceId: String(uploaded.article.id) });
+  const wrongSlugBody = await wrongSlugResponse.json();
+  assert.equal(wrongSlugResponse.status, 400, JSON.stringify(wrongSlugBody));
+  assert.equal(wrongSlugBody.code, 'article_replace_slug_mismatch');
+
+  const db = new Database(path.join(root, 'blog.db'));
+  const article = db.prepare('SELECT slug, title, locale, post_id FROM articles WHERE id = ?').get(uploaded.article.id);
+  assert.equal(article.slug, 'slug-original');
+  assert.equal(article.title, 'Slug Original');
+  assert.equal(article.locale, 'zh');
+  assert.equal(article.post_id, uploaded.article.postId);
+  db.close();
+  const saved = await fs.readFile(path.join(root, 'articles', 'zh', 'slug-original.md'), 'utf8');
+  assert.match(saved, /Slug Original/);
+  await assert.rejects(fs.access(path.join(root, 'articles', 'zh', 'slug-changed.md')), { code: 'ENOENT' });
+});
+
+test('the admin article list exposes locale, translationKey, categories, and tags for both locales', async t => {
+  const { baseUrl } = await seededHarness(t);
+  const zhResponse = await submit(baseUrl, '/api/admin/upload', 'zh.md',
+    markdown({ title: '管理列表中文', slug: 'dual-admin', locale: 'zh', translationKey: 'dual-admin', tags: '[nodejs]' }));
+  assert.equal(zhResponse.status, 200, await zhResponse.text());
+  const enResponse = await submit(baseUrl, '/api/admin/upload', 'en.md',
+    markdown({ title: 'Admin List EN', slug: 'dual-admin', locale: 'en', translationKey: 'dual-admin', tags: '[nodejs]' }));
+  assert.equal(enResponse.status, 200, await enResponse.text());
+
+  const response = await fetch(`${baseUrl}/api/admin/articles`, { headers: { cookie: cookie() } });
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  const zh = body.find(article => article.locale === 'zh');
+  const en = body.find(article => article.locale === 'en');
+  assert.ok(zh && en, JSON.stringify(body));
+  assert.equal(zh.translationKey, 'dual-admin');
+  assert.equal(en.translationKey, 'dual-admin');
+  assert.deepEqual(zh.categories, ['技术']);
+  assert.deepEqual(zh.tags, ['Node.js']);
+  assert.deepEqual(en.categories, ['Technology']);
+  assert.deepEqual(en.tags, ['Node.js']);
 });

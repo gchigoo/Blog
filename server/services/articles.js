@@ -1,3 +1,4 @@
+const { SUPPORTED_LOCALES } = require('../i18n/config');
 const ZH_LOCALE = 'zh';
 
 function parseTags(value) {
@@ -165,12 +166,7 @@ function createArticleService(db) {
   }
 
   function listAdmin() {
-    const rows = db.prepare(`
-      SELECT id, title, slug, description, status, created_at, updated_at
-      FROM articles WHERE locale = ?
-      ORDER BY updated_at DESC, id DESC
-    `).all(ZH_LOCALE);
-    return attachChineseTags(db, rows).map(mapArticle);
+    return listAdminArticles(db);
   }
 
   return Object.freeze({
@@ -187,4 +183,82 @@ function createArticleService(db) {
   });
 }
 
-module.exports = { createArticleService, loadChineseTagLabels, mapArticle, parseTags };
+/**
+ * Batch-load localized tag and category display labels for a set of admin
+ * rows. Labels follow each article's own locale so the zh and en versions of
+ * the same logical post read naturally in the admin list.
+ *
+ * @returns {Map<number, { categories: string[], tags: string[] }>}
+ */
+function loadAdminTaxonomy(db, articles) {
+  const taxonomyByArticle = new Map();
+  if (!articles || articles.length === 0) return taxonomyByArticle;
+  const rows = [];
+  for (const locale of SUPPORTED_LOCALES) {
+    const ids = articles.filter(article => article.locale === locale).map(article => article.id);
+    if (ids.length === 0) continue;
+    const placeholders = ids.map(() => '?').join(', ');
+    rows.push(...db.prepare(`
+      SELECT article_tags.article_id AS article_id,
+             category_labels.name AS category_name,
+             tag_labels.name AS tag_name
+      FROM article_tags
+      JOIN tags ON tags.id = article_tags.tag_id
+      JOIN tag_labels ON tag_labels.tag_id = tags.id AND tag_labels.locale = ?
+      JOIN category_labels ON category_labels.category_id = tags.category_id AND category_labels.locale = ?
+      WHERE article_tags.article_id IN (${placeholders})
+      ORDER BY tags.sort_order ASC, tags.id ASC
+    `).all(locale, locale, ...ids));
+  }
+  for (const row of rows) {
+    if (!taxonomyByArticle.has(row.article_id)) {
+      taxonomyByArticle.set(row.article_id, { categories: [], tags: [], seenCategories: new Set() });
+    }
+    const entry = taxonomyByArticle.get(row.article_id);
+    entry.tags.push(row.tag_name);
+    if (!entry.seenCategories.has(row.category_name)) {
+      entry.seenCategories.add(row.category_name);
+      entry.categories.push(row.category_name);
+    }
+  }
+  return taxonomyByArticle;
+}
+
+function attachAdminTaxonomy(db, articles) {
+  if (!articles || articles.length === 0) return articles;
+  const taxonomyByArticle = loadAdminTaxonomy(db, articles);
+  return articles.map(article => {
+    const taxonomy = taxonomyByArticle.get(article.id);
+    return {
+      ...article,
+      categories: taxonomy ? taxonomy.categories : [],
+      tags: taxonomy ? taxonomy.tags : []
+    };
+  });
+}
+
+/**
+ * The full admin article list across every locale. Unlike the public zh-scoped
+ * surfaces, the admin needs both versions of a logical post, their translation
+ * group, and their localized category/tag labels.
+ */
+function listAdminArticles(db) {
+  const rows = db.prepare(`
+    SELECT a.id, a.title, a.slug, a.description, a.status, a.created_at, a.updated_at,
+           a.locale, a.post_id, p.translation_key AS translationKey
+    FROM articles a
+    JOIN posts p ON p.id = a.post_id
+    ORDER BY a.updated_at DESC, a.id DESC
+  `).all();
+  return attachAdminTaxonomy(db, rows);
+}
+
+module.exports = {
+  createArticleService,
+  attachAdminTaxonomy,
+  listAdminArticles,
+  loadAdminTaxonomy,
+  loadChineseTagLabels,
+  mapArticle,
+  parseTags
+};

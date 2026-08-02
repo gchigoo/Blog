@@ -38,7 +38,7 @@ const {
   deleteArticleSearchDocument,
   upsertArticleSearchDocument
 } = require('../articles/search-index');
-const { loadChineseTagLabels } = require('../services/articles');
+const { listAdminArticles } = require('../services/articles');
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
 // 配置文件上传
@@ -124,6 +124,44 @@ function findReferencedImage(imageFiles, markdownEntryName, imageReference) {
   return matches.length === 1 ? matches[0] : null;
 }
 
+/**
+ * Localized taxonomy summary for preview/upload responses. Groups the stable
+ * tag IDs of one article by their localized category labels and returns the
+ * localized tag names; the article's own locale drives every label, so a
+ * preview/upload response can never leak another locale's (or draft sibling's)
+ * taxonomy data. Unknown IDs are skipped: this is a display summary, while the
+ * upload path enforces strict ID existence in validateTaxonomyTags.
+ *
+ * @returns {{ categories: Array<{ name: string, tags: string[] }>, tags: string[] }}
+ */
+function summarizeTaxonomy(db, locale, tagIds) {
+  if (!Array.isArray(tagIds) || tagIds.length === 0) return { categories: [], tags: [] };
+  const placeholders = tagIds.map(() => '?').join(', ');
+  const rows = dbAll(`
+    SELECT category_labels.name AS category_name, tag_labels.name AS tag_name
+    FROM tags
+    JOIN tag_labels ON tag_labels.tag_id = tags.id AND tag_labels.locale = ?
+    JOIN category_labels ON category_labels.category_id = tags.category_id AND category_labels.locale = ?
+    WHERE tags.id IN (${placeholders})
+    ORDER BY tags.sort_order ASC, tags.id ASC
+  `, [locale, locale, ...tagIds]);
+  const categories = [];
+  const tags = [];
+  const categoriesByName = new Map();
+  for (const row of rows) {
+    tags.push(row.tag_name);
+    const existing = categoriesByName.get(row.category_name);
+    if (existing) {
+      existing.tags.push(row.tag_name);
+    } else {
+      const category = { name: row.category_name, tags: [row.tag_name] };
+      categoriesByName.set(row.category_name, category);
+      categories.push(category);
+    }
+  }
+  return { categories, tags };
+}
+
 router.post('/preview', authenticateToken, receiveArticleUpload, async (req, res) => {
   const temporaryPaths = [];
   try {
@@ -150,10 +188,15 @@ router.post('/preview', authenticateToken, receiveArticleUpload, async (req, res
     const previewContent = audioBlocks.length > 0
       ? `${content.replace(/^:::audio\s*$[\s\S]*?^:::\s*$/gm, '')}\n\n> 预览不会加载尚未发布的音频文件。`
       : content;
+    const taxonomy = summarizeTaxonomy(db, data.locale, data.tags);
     return res.json({
       title: data.title,
       description: data.description,
       status: data.status,
+      locale: data.locale,
+      translationKey: data.translationKey,
+      categories: taxonomy.categories,
+      tags: taxonomy.tags,
       html: renderMarkdown(previewContent, { locale: data.locale })
     });
   } catch (error) {
@@ -354,14 +397,21 @@ router.post('/upload', authenticateToken, receiveArticleUpload, async (req, res)
       let publicationStarted = false;
       try {
         let replacementArticle = null;
-        let replacementPost = null;
         let identity = null;
         let locale;
         if (req.body.replaceId !== undefined && req.body.replaceId !== '') {
           if (typeof req.body.replaceId !== 'string' || !/^\d+$/.test(req.body.replaceId)) {
             return Promise.reject(articleAudioError(400, 'article_replace_invalid', '替换文章参数无效'));
           }
-          replacementArticle = dbGet('SELECT id, locale, slug, post_id FROM articles WHERE id = ?', [req.body.replaceId]);
+          // Immutable identity fields are compared before any file staging:
+          // id, post_id, locale, slug, and translation_key all come from one
+          // posts-joined lookup.
+          replacementArticle = dbGet(`
+            SELECT a.id, a.locale, a.slug, a.post_id, p.translation_key
+            FROM articles a
+            JOIN posts p ON p.id = a.post_id
+            WHERE a.id = ?
+          `, [req.body.replaceId]);
           if (!replacementArticle) {
             return Promise.reject(articleAudioError(404, 'article_replace_not_found', '替换文章不存在'));
           }
@@ -371,8 +421,7 @@ router.post('/upload', authenticateToken, receiveArticleUpload, async (req, res)
           if (replacementArticle.locale !== data.locale) {
             return Promise.reject(articleAudioError(400, 'article_replace_locale_mismatch', '替换文章必须保持原 locale'));
           }
-          replacementPost = dbGet('SELECT id, translation_key FROM posts WHERE id = ?', [replacementArticle.post_id]);
-          if (!replacementPost || replacementPost.translation_key !== data.translationKey) {
+          if (replacementArticle.translation_key !== data.translationKey) {
             return Promise.reject(
               articleAudioError(400, 'article_replace_translation_key_mismatch', '替换文章必须保持原 translationKey')
             );
@@ -385,7 +434,7 @@ router.post('/upload', authenticateToken, receiveArticleUpload, async (req, res)
           locale = data.locale;
         }
         const finalTranslationKey = replacementArticle
-          ? replacementPost.translation_key
+          ? replacementArticle.translation_key
           : identity.finalTranslationKey;
         const articlesRoot = path.join(config.articlesDir, locale);
         const audioRoot = path.join(config.audioDir, locale);
@@ -456,6 +505,13 @@ router.post('/upload', authenticateToken, receiveArticleUpload, async (req, res)
 
         const insertArticleTag = db.prepare('INSERT OR IGNORE INTO article_tags (article_id, tag_id) VALUES (?, ?)');
 
+        // posts.updated_at always equals the newest surviving sibling version.
+        // The statement runs after the FTS refresh so the whole lifecycle keeps
+        // one ordering: article write, tag replacement, FTS refresh, post touch.
+        const refreshPostUpdatedAt = db.prepare(`
+          UPDATE posts SET updated_at = (SELECT MAX(updated_at) FROM articles WHERE post_id = ?) WHERE id = ?
+        `);
+
         const commitArticle = db.transaction(() => {
           const now = new Date().toISOString();
           if (replacementArticle) {
@@ -467,14 +523,13 @@ router.post('/upload', authenticateToken, receiveArticleUpload, async (req, res)
               data.title, updatedContent, updatedHtml,
               data.description || null, data.status, now, replacementArticle.id
             );
-            db.prepare('UPDATE posts SET updated_at = ? WHERE id = ?')
-              .run(now, replacementArticle.post_id);
             db.prepare('DELETE FROM article_tags WHERE article_id = ?').run(replacementArticle.id);
             for (const tagId of data.tags) {
               insertArticleTag.run(replacementArticle.id, tagId);
             }
             upsertArticleSearchDocument(db, replacementArticle.id);
-            return { id: replacementArticle.id, changes: updateInfo.changes };
+            refreshPostUpdatedAt.run(replacementArticle.post_id, replacementArticle.post_id);
+            return { id: replacementArticle.id, postId: replacementArticle.post_id, changes: updateInfo.changes };
           }
 
           // Recheck and allocate the logical post inside the final transaction.
@@ -516,7 +571,8 @@ router.post('/upload', authenticateToken, receiveArticleUpload, async (req, res)
             insertArticleTag.run(articleId, tagId);
           }
           upsertArticleSearchDocument(db, articleId);
-          return { id: articleId, changes: articleInfo.changes };
+          refreshPostUpdatedAt.run(postId, postId);
+          return { id: articleId, postId, changes: articleInfo.changes };
         });
 
         publicationStarted = true;
@@ -536,7 +592,10 @@ router.post('/upload', authenticateToken, receiveArticleUpload, async (req, res)
           : await publishArticle(publicationOptions);
         return {
           id: result.id,
+          postId: result.postId,
           slug: articleSlug,
+          locale,
+          translationKey: finalTranslationKey,
           imagesConverted: Object.keys(imageMap).length,
           audioPublished: audioAssets.publishedCount,
           replaced: Boolean(replacementArticle)
@@ -562,9 +621,13 @@ router.post('/upload', authenticateToken, receiveArticleUpload, async (req, res)
       message: '文章上传成功',
       article: {
         id: publication.id,
+        postId: publication.postId,
         title: data.title,
         slug: publication.slug,
+        locale: publication.locale,
+        translationKey: publication.translationKey,
         tags: data.tags,
+        categories: summarizeTaxonomy(db, publication.locale, data.tags).categories,
         imagesConverted: publication.imagesConverted,
         audioPublished: publication.audioPublished,
         status: data.status,
@@ -601,23 +664,11 @@ router.post('/upload', authenticateToken, receiveArticleUpload, async (req, res)
 
 /**
  * GET /api/admin/articles
- * 获取所有文章（管理用）
+ * 获取所有文章（管理用，包含全部语言版本与翻译组信息）
  */
 router.get('/articles', authenticateToken, (req, res) => {
   try {
-    const articles = dbAll(
-      `SELECT id, title, slug, description, status, created_at, updated_at
-       FROM articles
-       WHERE locale = 'zh'
-       ORDER BY created_at DESC`
-    );
-    const tagsByArticle = loadChineseTagLabels(db, articles.map(article => article.id));
-    const articlesWithTags = articles.map(article => ({
-      ...article,
-      tags: tagsByArticle.get(article.id) || []
-    }));
-
-    res.json(articlesWithTags);
+    res.json(listAdminArticles(db));
   } catch (error) {
     console.error('获取文章列表失败:', error);
     res.status(500).json({ error: '服务器错误' });
@@ -641,11 +692,22 @@ router.delete('/articles/:id', authenticateToken, async (req, res) => {
         articlesRoot: path.join(config.articlesDir, article.locale),
         publicAudioRoot: path.join(config.audioDir, article.locale),
         commitDatabase: () => db.transaction(() => {
-          deleteArticleSearchDocument(db, article.id);
+          // Delete the article row first so article_tags and comments cascade;
+          // the FTS row is only removed once the row is really gone. A
+          // zero-change DELETE aborts the transaction so no stale document or
+          // post bookkeeping survives a vanished row.
           const deleted = dbRun('DELETE FROM articles WHERE id = ?', [article.id]);
+          if (deleted.changes === 0) {
+            throw new Error('article delete did not change a row');
+          }
+          deleteArticleSearchDocument(db, article.id);
           const remaining = dbGet('SELECT COUNT(*) AS count FROM articles WHERE post_id = ?', [article.post_id]);
           if (remaining.count === 0) {
             dbRun('DELETE FROM posts WHERE id = ?', [article.post_id]);
+          } else {
+            dbRun(`
+              UPDATE posts SET updated_at = (SELECT MAX(updated_at) FROM articles WHERE post_id = ?) WHERE id = ?
+            `, [article.post_id, article.post_id]);
           }
           return { id: article.id, changes: deleted.changes };
         })()

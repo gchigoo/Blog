@@ -454,6 +454,29 @@ src: ./audio/final.mp3
   assert.match(enMarkdownFile, /translationKey: same-song/);
   assert.deepEqual(matter(zhMarkdownFile).data.tags, ['other']);
   assert.deepEqual(matter(enMarkdownFile).data.tags, ['other']);
+
+  // Sibling-safe deletion: removing the Chinese version keeps the English
+  // audio and the shared post; removing the final version removes the post.
+  const zhDelete = await fetch(`${baseUrl}/api/admin/articles/${zhBody.article.id}`, {
+    method: 'DELETE',
+    headers: { cookie: authCookie() }
+  });
+  assert.equal(zhDelete.status, 200, await zhDelete.text());
+  assert.equal((await fetch(`${baseUrl}/audio/zh/same-song/${hash}.mp3`)).status, 404);
+  assert.equal((await fetch(`${baseUrl}/audio/en/same-song/${hash}.mp3`)).status, 200);
+  const postDb = new Database(path.join(root, 'blog.db'));
+  assert.equal(postDb.prepare('SELECT COUNT(*) AS count FROM posts WHERE translation_key = ?').get('same-song').count, 1);
+  postDb.close();
+
+  const enDelete = await fetch(`${baseUrl}/api/admin/articles/${enBody.article.id}`, {
+    method: 'DELETE',
+    headers: { cookie: authCookie() }
+  });
+  assert.equal(enDelete.status, 200, await enDelete.text());
+  assert.equal((await fetch(`${baseUrl}/audio/en/same-song/${hash}.mp3`)).status, 404);
+  const finalDb = new Database(path.join(root, 'blog.db'));
+  assert.equal(finalDb.prepare('SELECT COUNT(*) AS count FROM posts WHERE translation_key = ?').get('same-song').count, 0);
+  finalDb.close();
 });
 
 test('legacy audio URL rewriting is exact and rejects foreign, missing, and malformed references', () => {
