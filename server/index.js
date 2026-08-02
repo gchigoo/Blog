@@ -105,6 +105,12 @@ app.use('/api/:locale/articles', (req, res, next) => {
   next();
 }, require('./routes/articles').createLocalizedArticlesRouter({ articleService }));
 
+// Unmatched /api/* requests must stay JSON 404s. This explicit fallback mounts
+// after every intended API/comment/admin API router and before the strict
+// /:locale HTML router so paths like /api/zh/foo or /api/auth/missing can
+// never be captured by the localized HTML 404.
+app.use('/api', (req, res) => res.status(404).json({ error: '接口不存在' }));
+
 // Root negotiation, slash canonicalizers, and legacy redirects mount before
 // the Analytics collector so no redirect hop can ever be counted.
 app.use(createRootNegotiatorRouter());

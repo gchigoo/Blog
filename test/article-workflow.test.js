@@ -1975,6 +1975,40 @@ test('localized pagination and missing content return localized 404 pages while 
   assert.deepEqual(await api.json(), { error: '接口不存在' });
 });
 
+test('unmatched API paths return JSON 404s and never reach the localized HTML router', async t => {
+  const { baseUrl } = await seededHarness(t);
+
+  for (const pathname of ['/api', '/api/anything', '/api/zh/foo', '/api/auth/missing']) {
+    const response = await fetch(`${baseUrl}${pathname}`);
+    assert.equal(response.status, 404, pathname);
+    assert.match(response.headers.get('content-type') || '', /application\/json/, pathname);
+    assert.deepEqual(await response.json(), { error: '接口不存在' }, pathname);
+  }
+
+  // The fallback must not shadow valid APIs.
+  const legacy = await (await fetch(`${baseUrl}/api/articles`)).json();
+  assert.equal(legacy.pagination.total, 0);
+  const localized = await (await fetch(`${baseUrl}/api/zh/articles`)).json();
+  assert.ok(Array.isArray(localized.articles));
+  const auth = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: 'admin', password: 'wrong-password' })
+  });
+  assert.equal(auth.status, 401, 'auth API must stay reachable');
+  const missingArticle = await fetch(`${baseUrl}/api/articles/nope`);
+  assert.equal(missingArticle.status, 404, 'legacy article 404 stays JSON');
+  assert.match(missingArticle.headers.get('content-type') || '', /application\/json/);
+  assert.deepEqual(await missingArticle.json(), { error: '文章不存在' });
+  assert.equal((await fetch(`${baseUrl}/api/admin/articles`)).status, 401, 'admin API stays reachable');
+
+  // HTML unknown paths remain localized HTML 404s, not JSON.
+  const unknownHtml = await fetch(`${baseUrl}/fr/`);
+  assert.equal(unknownHtml.status, 404);
+  assert.match(unknownHtml.headers.get('content-type') || '', /text\/html/);
+  assert.match(await unknownHtml.text(), /<html lang="zh-CN"/);
+});
+
 test('bilingual About pages render the exact brief content with safe external links', async t => {
   const { baseUrl } = await seededHarness(t);
 
