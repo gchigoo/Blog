@@ -680,6 +680,118 @@ test('admin analytics API and page present localized labels for article, taxonom
   assert.doesNotMatch(html, /q=%E9%83%A8%E7%BD%B2/);
 });
 
+test('admin analytics strips percent-encoded query/fragment payloads from stored labels', async t => {
+  const { baseUrl, adminCookie, db } = await createHarness(t);
+  db.exec(`
+    CREATE TABLE articles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      locale TEXT NOT NULL DEFAULT 'zh' CHECK (locale IN ('zh', 'en')),
+      status TEXT NOT NULL DEFAULT 'published',
+      UNIQUE(locale, slug)
+    );
+    CREATE TABLE tag_labels (
+      tag_id TEXT NOT NULL,
+      locale TEXT NOT NULL,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      PRIMARY KEY(tag_id, locale),
+      UNIQUE(locale, slug)
+    );
+    CREATE TABLE category_labels (
+      category_id TEXT NOT NULL,
+      locale TEXT NOT NULL,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      PRIMARY KEY(category_id, locale),
+      UNIQUE(locale, slug)
+    );
+  `);
+  db.prepare('INSERT INTO articles (title, slug, locale) VALUES (?, ?, ?)').run('中文标题', 'twin', 'zh');
+  db.prepare('INSERT INTO tag_labels (tag_id, locale, name, slug) VALUES (?, ?, ?, ?)').run('tools', 'zh', '工具', '工具');
+  db.prepare('INSERT INTO category_labels (category_id, locale, name, slug) VALUES (?, ?, ?, ?)').run('tech', 'zh', '技术', '技术');
+
+  const localizedEvent = (id, requestPath) => {
+    const observedAtUtc = new Date().toISOString();
+    return {
+      eventId: id.toString(16).padStart(32, '0'),
+      observedAtUtc,
+      bucketUtc: new Date(Math.floor(Date.parse(observedAtUtc) / 3_600_000) * 3_600_000).toISOString(),
+      path: requestPath,
+      visitorDayHmac: `visitor-${id}`,
+      deviceKind: 'desktop',
+      trafficKind: 'human',
+      botName: null,
+      method: 'GET',
+      requestPath,
+      queryString: null,
+      fullUrl: `https://blog.example.com${requestPath}`,
+      referrer: null,
+      referrerHost: null,
+      urlSanitizationStatus: 'ok',
+      referrerParseStatus: 'ok',
+      statusCode: 200,
+      durationMs: 10,
+      responseBytes: 1000,
+      ipAddress: `203.0.113.${id}`,
+      ipFamily: 4,
+      geo: { status: 'not_found', data: null, datasetDate: null },
+      requestClient: { userAgent: `Mozilla/${id}`, acceptLanguage: 'zh-CN', clientHints: {} },
+      client: {
+        status: 'parsed',
+        data: {
+          browserName: 'Chrome', browserVersion: '1', browserNameNormalized: 'chrome',
+          osName: 'Windows', osNameNormalized: 'windows',
+          deviceType: 'desktop', deviceTypeNormalized: 'desktop'
+        }
+      }
+    };
+  };
+
+  recordAccessEvent(db, localizedEvent(1, '/zh/search%3Fq%3D%E9%83%A8%E7%BD%B2'));
+  recordAccessEvent(db, localizedEvent(2, '/zh/article/twin%3Futm_source%3Dfeed'));
+  recordAccessEvent(db, localizedEvent(3, '/zh/tag/%E5%B7%A5%E5%85%B7%23extra'));
+  recordAccessEvent(db, localizedEvent(4, '/zh/category/%E6%8A%80%E6%9C%AF%3Fsort%3Dnew'));
+
+  const listResponse = await fetch(`${baseUrl}/api/admin/analytics/events`, {
+    headers: { cookie: adminCookie }
+  });
+  assert.equal(listResponse.status, 200);
+  const list = await listResponse.json();
+  const byPath = new Map(list.items.map(item => [item.requestPath, item]));
+  assert.equal(byPath.get('/zh/search%3Fq%3D%E9%83%A8%E7%BD%B2').requestPath, '/zh/search%3Fq%3D%E9%83%A8%E7%BD%B2');
+  assert.deepEqual(byPath.get('/zh/search%3Fq%3D%E9%83%A8%E7%BD%B2').page, {
+    kind: 'search', title: '搜索', displayPath: '/zh/search'
+  });
+  assert.deepEqual(byPath.get('/zh/article/twin%3Futm_source%3Dfeed').page, {
+    kind: 'article', title: '中文标题', displayPath: '/zh/article/twin'
+  });
+  assert.deepEqual(byPath.get('/zh/tag/%E5%B7%A5%E5%85%B7%23extra').page, {
+    kind: 'tag', title: '标签：工具', displayPath: '/zh/tag/工具'
+  });
+  assert.deepEqual(byPath.get('/zh/category/%E6%8A%80%E6%9C%AF%3Fsort%3Dnew').page, {
+    kind: 'category', title: '分类：技术', displayPath: '/zh/category/技术'
+  });
+  for (const item of list.items) {
+    assert.doesNotMatch(JSON.stringify(item.page), /[?#]|%E9%83%A8%E7%BD%B2/);
+  }
+
+  const page = await fetch(`${baseUrl}/admin/analytics`, { headers: { cookie: adminCookie } });
+  const html = await page.text();
+  assert.equal(page.status, 200);
+  // The event-list labels come from page-presentation; assert only that
+  // section so the check targets the fixed pipeline.
+  const eventsIndex = html.indexOf('id="event-list"');
+  const moreIndex = html.indexOf('id="analytics-more"');
+  const eventListHtml = html.slice(eventsIndex, moreIndex);
+  assert.match(eventListHtml, /<strong>搜索<\/strong>\s*<code class="analytics-break">\/zh\/search<\/code>/);
+  assert.match(eventListHtml, /中文标题/);
+  assert.match(eventListHtml, /标签：工具/);
+  assert.match(eventListHtml, /分类：技术/);
+  assert.doesNotMatch(eventListHtml, /%E9%83%A8%E7%BD%B2|utm_source|page%3D2|sort%3Dnew|%23extra/);
+});
+
 test('admin analytics view pins all unique-IP output states and stable-hook uniqueness', async () => {
   const emptyDimension = { items: [], distinctCount: 0, truncated: false, otherPageViews: 0 };
   const baseOverview = {

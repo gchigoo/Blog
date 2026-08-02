@@ -34,6 +34,26 @@ function articleSlugForPath(rawPath) {
 }
 
 /**
+ * The pathname used for label recognition and display. A stored path may
+ * carry a query/fragment payload either literally (`?…`, `#…`) or
+ * percent-encoded (`%3F…`, `%23…`); decodeURI preserves those reserved
+ * bytes, so the boundary is found on the raw string first. Double-encoded
+ * forms (`%253F`) represent literal `%3F` text and are not boundaries. The
+ * payload is stripped before any decoding, then the remaining pathname is
+ * decoded for recognition and display. Stored fields are never rewritten.
+ */
+function presentationPathname(rawPath) {
+  if (typeof rawPath !== 'string') return null;
+  const boundary = rawPath.search(/[?#]|%3[fF]|%23/);
+  const withoutPayload = boundary === -1 ? rawPath : rawPath.slice(0, boundary);
+  try {
+    return decodeURI(withoutPayload);
+  } catch {
+    return withoutPayload;
+  }
+}
+
+/**
  * Parse a locale-prefixed path. The query/fragment suffix (kept only in the
  * separately sanitized stored URL fields) is never part of the recognized
  * path, so raw search query text can never leak into a page label.
@@ -83,27 +103,28 @@ function localizedPresentation(parsed, titles, displayPath) {
 }
 
 function pagePresentationForPath(rawPath, articleTitles = new Map()) {
-  const displayPath = formatAnalyticsPath(rawPath).displayPath;
-  const fixed = FIXED_PAGES.get(rawPath);
+  const pathname = presentationPathname(rawPath);
+  const displayPath = formatAnalyticsPath(pathname).displayPath;
+  const fixed = FIXED_PAGES.get(pathname);
   if (fixed) return { ...fixed, displayPath };
 
-  if (typeof rawPath !== 'string') {
+  if (pathname === null) {
     return { kind: 'other', title: displayPath, displayPath };
   }
 
-  const parsed = parseLocalizedPath(rawPath);
+  const parsed = parseLocalizedPath(pathname);
   if (parsed) {
     return localizedPresentation(parsed, articleTitles, displayPath);
   }
 
-  if (rawPath.startsWith('/tag/')) {
-    const match = rawPath.match(/^\/tag\/([^/]+)$/);
+  if (pathname.startsWith('/tag/')) {
+    const match = pathname.match(/^\/tag\/([^/]+)$/);
     const tag = match ? safeDecode(match[1]) : null;
     if (tag !== null) return { kind: 'tag', title: `标签：${tag}`, displayPath };
   }
 
-  if (rawPath.startsWith('/article/')) {
-    const slug = articleSlugForPath(rawPath);
+  if (pathname.startsWith('/article/')) {
+    const slug = articleSlugForPath(pathname);
     return {
       kind: 'article',
       title: slug !== null && articleTitles.has(slug)
@@ -136,7 +157,8 @@ function presentEventPages(db, rows) {
   const tagSlugs = new Map();
   const categorySlugs = new Map();
   for (const row of rows) {
-    const parsed = parseLocalizedPath(row.request_path);
+    const pathname = presentationPathname(row.request_path);
+    const parsed = parseLocalizedPath(pathname);
     if (parsed) {
       const segments = parsed.rest.split('/');
       const [kind] = segments;
@@ -151,7 +173,7 @@ function presentEventPages(db, rows) {
         if (slug !== null) addToGroup(categorySlugs, parsed.locale, slug);
       }
     } else {
-      const slug = articleSlugForPath(row.request_path);
+      const slug = articleSlugForPath(pathname);
       if (slug !== null) addToGroup(articleSlugs, null, slug);
     }
   }

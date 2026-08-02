@@ -684,3 +684,82 @@ test('localized title search expands locale-prefixed and historical Chinese cand
   assert.equal(encodedSearch.items.length, 2);
   db.close();
 });
+
+test('page labels strip percent-encoded query/fragment payloads from localized paths', () => {
+  const titles = new Map([
+    ['zh\u0000twin', '中文标题'],
+    ['en\u0000deploy', 'English Post'],
+    ['tag\u0000zh\u0000工具', '工具'],
+    ['category\u0000zh\u0000技术', '技术'],
+    ['known', 'Known article']
+  ]);
+  const cases = [
+    ['/zh/search%3Fq%3D%E9%83%A8%E7%BD%B2', { kind: 'search', title: '搜索', displayPath: '/zh/search' }],
+    ['/en/search%23filter%3Dhot', { kind: 'search', title: '搜索', displayPath: '/en/search' }],
+    ['/zh/search%253Fq%253Dx', { kind: 'other', title: '/zh/search%3Fq%3Dx', displayPath: '/zh/search%3Fq%3Dx' }],
+    ['/zh/article/twin%3Futm_source%3Dfeed', { kind: 'article', title: '中文标题', displayPath: '/zh/article/twin' }],
+    ['/en/article/deploy%23top', { kind: 'article', title: 'English Post', displayPath: '/en/article/deploy' }],
+    ['/zh/tag/%E5%B7%A5%E5%85%B7%3Fpage%3D2', { kind: 'tag', title: '标签：工具', displayPath: '/zh/tag/工具' }],
+    ['/zh/tag/%E5%B7%A5%E5%85%B7%23extra', { kind: 'tag', title: '标签：工具', displayPath: '/zh/tag/工具' }],
+    ['/zh/category/%E6%8A%80%E6%9C%AF%3Fsort%3Dnew', { kind: 'category', title: '分类：技术', displayPath: '/zh/category/技术' }],
+    ['/zh/category/%E6%8A%80%E6%9C%AF%23top', { kind: 'category', title: '分类：技术', displayPath: '/zh/category/技术' }],
+    ['/article/known%3Fref%3Dhome', { kind: 'article', title: 'Known article', displayPath: '/article/known' }]
+  ];
+  for (const [path, expected] of cases) {
+    assert.deepEqual(pagePresentationForPath(path, titles), expected, path);
+  }
+});
+
+test('stored localized paths with encoded query/fragment payloads keep clean labels and title lookup', () => {
+  const db = createDb();
+  db.prepare('INSERT INTO articles (title, slug, locale, status) VALUES (?, ?, ?, ?)')
+    .run('中文标题', 'twin', 'zh', 'published');
+  db.prepare('INSERT INTO articles (title, slug, locale, status) VALUES (?, ?, ?, ?)')
+    .run('English Title', 'twin', 'en', 'published');
+  db.prepare('INSERT INTO tag_labels (tag_id, locale, name, slug) VALUES (?, ?, ?, ?)')
+    .run('tools', 'zh', '工具', '工具');
+  db.prepare('INSERT INTO category_labels (category_id, locale, name, slug) VALUES (?, ?, ?, ?)')
+    .run('tech', 'zh', '技术', '技术');
+
+  const pageEvent = (id, requestPath, overrides = {}) => event(id, {
+    path: requestPath,
+    requestPath,
+    fullUrl: `https://blog.example.com${requestPath}`,
+    ...overrides
+  });
+  const stored = [
+    '/zh/search%3Fq%3D%E9%83%A8%E7%BD%B2',
+    '/en/search%23filter%3Dhot',
+    '/zh/article/twin%3Futm_source%3Dfeed',
+    '/zh/tag/%E5%B7%A5%E5%85%B7%3Fpage%3D2',
+    '/zh/category/%E6%8A%80%E6%9C%AF%23top'
+  ];
+  stored.forEach((pathname, index) => recordAccessEvent(db, pageEvent(index + 1, pathname)));
+
+  const all = listEvents(db, NOW, parseEventListQuery({}, 30));
+  const byPath = new Map(all.items.map(item => [item.requestPath, item]));
+
+  // Stored request_path stays byte-for-byte unchanged.
+  for (const pathname of stored) {
+    assert.equal(byPath.get(pathname).requestPath, pathname);
+  }
+  assert.deepEqual(byPath.get('/zh/search%3Fq%3D%E9%83%A8%E7%BD%B2').page, {
+    kind: 'search', title: '搜索', displayPath: '/zh/search'
+  });
+  assert.deepEqual(byPath.get('/en/search%23filter%3Dhot').page, {
+    kind: 'search', title: '搜索', displayPath: '/en/search'
+  });
+  assert.deepEqual(byPath.get('/zh/article/twin%3Futm_source%3Dfeed').page, {
+    kind: 'article', title: '中文标题', displayPath: '/zh/article/twin'
+  });
+  assert.deepEqual(byPath.get('/zh/tag/%E5%B7%A5%E5%85%B7%3Fpage%3D2').page, {
+    kind: 'tag', title: '标签：工具', displayPath: '/zh/tag/工具'
+  });
+  assert.deepEqual(byPath.get('/zh/category/%E6%8A%80%E6%9C%AF%23top').page, {
+    kind: 'category', title: '分类：技术', displayPath: '/zh/category/技术'
+  });
+  for (const item of all.items) {
+    assert.doesNotMatch(JSON.stringify(item.page), /[?#]|%E9%83%A8%E7%BD%B2/);
+  }
+  db.close();
+});
