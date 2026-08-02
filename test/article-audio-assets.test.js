@@ -101,6 +101,7 @@ test('applies inclusive declared and actual size limits for lossy and FLAC asset
   const publicAudioRoot = path.join(root, 'public', 'audio');
 
   const exactMp3 = await prepareArticleAudioAssets({
+    locale: 'zh',
     articleSlug: 'exact-mp3',
     markdownEntryName: 'entry.md',
     audioBlocks: [{ title: 'MP3', src: './audio/song.mp3' }],
@@ -114,6 +115,7 @@ test('applies inclusive declared and actual size limits for lossy and FLAC asset
   await exactMp3.rollback();
 
   const exactFlac = await prepareArticleAudioAssets({
+    locale: 'zh',
     articleSlug: 'exact-flac',
     markdownEntryName: 'entry.md',
     audioBlocks: [{ title: 'FLAC', src: './audio/song.flac' }],
@@ -134,6 +136,7 @@ test('applies inclusive declared and actual size limits for lossy and FLAC asset
   await assert.rejects(
     () => prepareArticleAudioAssets({
       ...base,
+      locale: 'zh',
       articleSlug: 'declared-mp3-large',
       archiveEntries: [
         dataEntry('entry.md', Buffer.from('# post')),
@@ -147,6 +150,7 @@ test('applies inclusive declared and actual size limits for lossy and FLAC asset
   await assert.rejects(
     () => prepareArticleAudioAssets({
       ...base,
+      locale: 'zh',
       articleSlug: 'declared-flac-large',
       audioBlocks: [{ title: 'Too large', src: './audio/song.flac' }],
       archiveEntries: [
@@ -162,6 +166,7 @@ test('applies inclusive declared and actual size limits for lossy and FLAC asset
   await assert.rejects(
     () => prepareArticleAudioAssets({
       ...base,
+      locale: 'zh',
       articleSlug: 'actual-large',
       archiveEntries: [
         dataEntry('entry.md', Buffer.from('# post')),
@@ -201,6 +206,7 @@ test('stages, deduplicates, promotes, and idempotently rolls back article audio'
   const hash = crypto.createHash('sha256').update(audio).digest('hex');
 
   const prepared = await prepareArticleAudioAssets({
+    locale: 'zh',
     articleSlug: 'audio-post',
     markdownEntryName: 'posts/entry.md',
     audioBlocks: [
@@ -217,19 +223,19 @@ test('stages, deduplicates, promotes, and idempotently rolls back article audio'
 
   assert.equal(prepared.publishedCount, 1);
   assert.deepEqual(prepared.resolvedBlocks.map(block => block.src), [
-    `/audio/audio-post/${hash}.mp3`,
-    `/audio/audio-post/${hash}.mp3`
+    `/audio/zh/audio-post/${hash}.mp3`,
+    `/audio/zh/audio-post/${hash}.mp3`
   ]);
   await assert.doesNotReject(() => fs.access(path.join(stagingRoot, 'article-audio', `${hash}.mp3`)));
-  await assert.rejects(() => fs.access(path.join(publicAudioRoot, 'audio-post', `${hash}.mp3`)));
+  await assert.rejects(() => fs.access(path.join(publicAudioRoot, 'zh', 'audio-post', `${hash}.mp3`)));
 
   await prepared.promote();
   await prepared.promote();
-  await assert.doesNotReject(() => fs.access(path.join(publicAudioRoot, 'audio-post', `${hash}.mp3`)));
+  await assert.doesNotReject(() => fs.access(path.join(publicAudioRoot, 'zh', 'audio-post', `${hash}.mp3`)));
 
   await prepared.rollback();
   await prepared.rollback();
-  await assert.rejects(() => fs.access(path.join(publicAudioRoot, 'audio-post')));
+  await assert.rejects(() => fs.access(path.join(publicAudioRoot, 'zh', 'audio-post')));
 });
 
 test('stages mixed AAC and FLAC assets with canonical MIME and original extensions', async t => {
@@ -242,6 +248,7 @@ test('stages mixed AAC and FLAC assets with canonical MIME and original extensio
   let aacReads = 0;
 
   const prepared = await prepareArticleAudioAssets({
+    locale: 'zh',
     articleSlug: 'mixed-audio',
     markdownEntryName: 'entry.md',
     audioBlocks: [
@@ -269,24 +276,26 @@ test('stages mixed AAC and FLAC assets with canonical MIME and original extensio
   assert.deepEqual(
     prepared.resolvedBlocks.map(block => ({ src: block.src, mimeType: block.mimeType })),
     [
-      { src: `/audio/mixed-audio/${crypto.createHash('sha256').update(aac).digest('hex')}.aac`, mimeType: 'audio/aac' },
-      { src: `/audio/mixed-audio/${crypto.createHash('sha256').update(aac).digest('hex')}.aac`, mimeType: 'audio/aac' },
-      { src: `/audio/mixed-audio/${crypto.createHash('sha256').update(flac).digest('hex')}.flac`, mimeType: 'audio/flac' }
+      { src: `/audio/zh/mixed-audio/${crypto.createHash('sha256').update(aac).digest('hex')}.aac`, mimeType: 'audio/aac' },
+      { src: `/audio/zh/mixed-audio/${crypto.createHash('sha256').update(aac).digest('hex')}.aac`, mimeType: 'audio/aac' },
+      { src: `/audio/zh/mixed-audio/${crypto.createHash('sha256').update(flac).digest('hex')}.flac`, mimeType: 'audio/flac' }
     ]
   );
   await prepared.promote();
   await assert.doesNotReject(() => fs.access(path.join(
     publicAudioRoot,
+    'zh',
     'mixed-audio',
     `${crypto.createHash('sha256').update(aac).digest('hex')}.aac`
   )));
   await assert.doesNotReject(() => fs.access(path.join(
     publicAudioRoot,
+    'zh',
     'mixed-audio',
     `${crypto.createHash('sha256').update(flac).digest('hex')}.flac`
   )));
   await prepared.rollback();
-  await assert.rejects(fs.access(path.join(publicAudioRoot, 'mixed-audio')), { code: 'ENOENT' });
+  await assert.rejects(fs.access(path.join(publicAudioRoot, 'zh', 'mixed-audio')), { code: 'ENOENT' });
 });
 
 test('removes already staged mixed-format assets when a later entry is invalid', async t => {
@@ -296,6 +305,7 @@ test('removes already staged mixed-format assets when a later entry is invalid',
 
   await assert.rejects(
     () => prepareArticleAudioAssets({
+      locale: 'zh',
       articleSlug: 'mixed-invalid',
       markdownEntryName: 'entry.md',
       audioBlocks: [
@@ -320,13 +330,14 @@ test('reuses an identical published hash without claiming ownership during rollb
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const stagingRoot = path.join(root, 'staging');
   const publicAudioRoot = path.join(root, 'public', 'audio');
-  const finalDirectory = path.join(publicAudioRoot, 'audio-post');
+  const finalDirectory = path.join(publicAudioRoot, 'zh', 'audio-post');
   const audio = validMp3();
   const hash = crypto.createHash('sha256').update(audio).digest('hex');
   await fs.mkdir(finalDirectory, { recursive: true });
   await fs.writeFile(path.join(finalDirectory, `${hash}.mp3`), audio);
 
   const prepared = await prepareArticleAudioAssets({
+    locale: 'zh',
     articleSlug: 'audio-post',
     markdownEntryName: 'entry.md',
     audioBlocks: [{ title: 'Existing', src: './audio/song.mp3' }],
@@ -349,7 +360,7 @@ test('reuses an existing mixed-format directory without claiming its files', asy
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const stagingRoot = path.join(root, 'staging');
   const publicAudioRoot = path.join(root, 'public', 'audio');
-  const finalDirectory = path.join(publicAudioRoot, 'mixed-audio');
+  const finalDirectory = path.join(publicAudioRoot, 'zh', 'mixed-audio');
   const aac = validAac();
   const flac = validFlac();
   const aacName = `${crypto.createHash('sha256').update(aac).digest('hex')}.aac`;
@@ -359,6 +370,7 @@ test('reuses an existing mixed-format directory without claiming its files', asy
   await fs.writeFile(path.join(finalDirectory, flacName), flac);
 
   const prepared = await prepareArticleAudioAssets({
+    locale: 'zh',
     articleSlug: 'mixed-audio',
     markdownEntryName: 'entry.md',
     audioBlocks: [
@@ -385,7 +397,7 @@ test('rejects a conflicting published hash without overwriting either side', asy
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const stagingRoot = path.join(root, 'staging');
   const publicAudioRoot = path.join(root, 'public', 'audio');
-  const finalDirectory = path.join(publicAudioRoot, 'audio-post');
+  const finalDirectory = path.join(publicAudioRoot, 'zh', 'audio-post');
   const audio = validMp3();
   const hash = crypto.createHash('sha256').update(audio).digest('hex');
   const conflict = Buffer.from('conflicting published file');
@@ -393,6 +405,7 @@ test('rejects a conflicting published hash without overwriting either side', asy
   await fs.writeFile(path.join(finalDirectory, `${hash}.mp3`), conflict);
 
   const prepared = await prepareArticleAudioAssets({
+    locale: 'zh',
     articleSlug: 'audio-post',
     markdownEntryName: 'entry.md',
     audioBlocks: [{ title: 'Conflict', src: './audio/song.mp3' }],
@@ -419,6 +432,7 @@ test('rejects missing, unsupported, oversized, and forged audio assets before st
   t.after(() => fs.rm(root, { recursive: true, force: true }));
 
   const base = {
+    locale: 'zh',
     articleSlug: 'audio-post',
     markdownEntryName: 'entry.md',
     stagingRoot: path.join(root, 'staging'),
@@ -476,4 +490,89 @@ test('rejects missing, unsupported, oversized, and forged audio assets before st
   }
 
   await assert.rejects(() => fs.access(path.join(base.stagingRoot, 'article-audio')));
+});
+
+test('publishes identical slugs under separate locale-scoped audio roots', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'blog-audio-locales-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const stagingRoot = path.join(root, 'staging');
+  const publicAudioRoot = path.join(root, 'public', 'audio');
+  const audio = validMp3();
+  const hash = crypto.createHash('sha256').update(audio).digest('hex');
+
+  const zh = await prepareArticleAudioAssets({
+    locale: 'zh',
+    articleSlug: 'same-song',
+    markdownEntryName: 'zh.md',
+    audioBlocks: [{ title: 'Song', src: './audio/final.mp3' }],
+    archiveEntries: [
+      dataEntry('zh.md', Buffer.from('# zh')),
+      dataEntry('audio/final.mp3', audio)
+    ],
+    stagingRoot: path.join(stagingRoot, 'zh'),
+    publicAudioRoot
+  });
+  const en = await prepareArticleAudioAssets({
+    locale: 'en',
+    articleSlug: 'same-song',
+    markdownEntryName: 'en.md',
+    audioBlocks: [{ title: 'Song', src: './audio/final.mp3' }],
+    archiveEntries: [
+      dataEntry('en.md', Buffer.from('# en')),
+      dataEntry('audio/final.mp3', audio)
+    ],
+    stagingRoot: path.join(stagingRoot, 'en'),
+    publicAudioRoot
+  });
+
+  assert.deepEqual(zh.resolvedBlocks.map(block => block.src), [`/audio/zh/same-song/${hash}.mp3`]);
+  assert.deepEqual(en.resolvedBlocks.map(block => block.src), [`/audio/en/same-song/${hash}.mp3`]);
+
+  await zh.promote();
+  await en.promote();
+  await assert.doesNotReject(() => fs.access(path.join(publicAudioRoot, 'zh', 'same-song', `${hash}.mp3`)));
+  await assert.doesNotReject(() => fs.access(path.join(publicAudioRoot, 'en', 'same-song', `${hash}.mp3`)));
+
+  await zh.rollback();
+  await en.rollback();
+  await assert.rejects(() => fs.access(path.join(publicAudioRoot, 'zh', 'same-song')));
+  await assert.rejects(() => fs.access(path.join(publicAudioRoot, 'en', 'same-song')));
+});
+
+test('rejects unknown locales and unsafe slugs in localized audio preparation', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'blog-audio-locale-reject-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const stagingRoot = path.join(root, 'staging');
+
+  await assert.rejects(
+    () => prepareArticleAudioAssets({
+      locale: 'fr',
+      articleSlug: 'audio-post',
+      markdownEntryName: 'entry.md',
+      audioBlocks: [{ title: 'MP3', src: './audio/song.mp3' }],
+      archiveEntries: [
+        dataEntry('entry.md', Buffer.from('# post')),
+        dataEntry('audio/song.mp3', validMp3())
+      ],
+      stagingRoot,
+      publicAudioRoot: path.join(root, 'public', 'audio')
+    }),
+    error => error.code === 'audio_path_invalid' && error.status === 400
+  );
+
+  await assert.rejects(
+    () => prepareArticleAudioAssets({
+      locale: 'en',
+      articleSlug: '../up',
+      markdownEntryName: 'entry.md',
+      audioBlocks: [{ title: 'MP3', src: './audio/song.mp3' }],
+      archiveEntries: [
+        dataEntry('entry.md', Buffer.from('# post')),
+        dataEntry('audio/song.mp3', validMp3())
+      ],
+      stagingRoot,
+      publicAudioRoot: path.join(root, 'public', 'audio')
+    }),
+    error => error.code === 'audio_path_invalid' && error.status === 400
+  );
 });

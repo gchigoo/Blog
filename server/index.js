@@ -9,6 +9,7 @@ const { db } = require('./db');
 const { createPagesRouter } = require('./routes/pages');
 const { createArticleService } = require('./services/articles');
 const { assetUrl, formatDate, formatYear } = require('./utils/presentation');
+const { SUPPORTED_LOCALES } = require('./i18n/config');
 const { validateRuntimePaths } = require('./utils/runtime-paths');
 
 validateRuntimePaths(config);
@@ -28,7 +29,7 @@ app.locals.site = config.site;
 const articleService = createArticleService(db);
 const analyticsModule = createAnalyticsModule({ db, config: config.analytics });
 const articleAudioPath = new RegExp(
-  `^/[a-z0-9]+(?:-[a-z0-9]+)*/[a-f0-9]{64}(${Object.keys(AUDIO_FORMATS)
+  `^/(${SUPPORTED_LOCALES.join('|')})/[a-z0-9]+(?:-[a-z0-9]+)*/[a-f0-9]{64}(${Object.keys(AUDIO_FORMATS)
     .map(extension => extension.replace('.', '\\.'))
     .join('|')})$`
 );
@@ -93,7 +94,7 @@ app.use('/api/admin', require('./routes/admin'));
 app.use(analyticsModule.collectorMiddleware);
 app.use('/audio', (req, res, next) => {
   const match = articleAudioPath.exec(req.path);
-  if (!match || !AUDIO_FORMATS[match[1]]) return res.sendStatus(404);
+  if (!match || !AUDIO_FORMATS[match[2]]) return res.sendStatus(404);
   articleAudioStatic(req, res, error => {
     if (error) return next(error);
     res.sendStatus(404);

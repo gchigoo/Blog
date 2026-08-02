@@ -24,7 +24,8 @@ const messages = {
       tags: '标签：',
       readingTime: '阅读时长约 {minutes} 分钟',
       backHome: '返回首页',
-      related: '相关文章'
+      related: '相关文章',
+      audioFallback: '无法播放时打开音频文件'
     },
     categories: {
       title: '文章分类',
@@ -103,7 +104,8 @@ const messages = {
       tags: 'Tags: ',
       readingTime: 'About {minutes} min read',
       backHome: 'Back to Home',
-      related: 'Related Articles'
+      related: 'Related Articles',
+      audioFallback: 'Open audio file if playback fails'
     },
     categories: {
       title: 'Categories',

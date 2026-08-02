@@ -542,3 +542,41 @@ test('the admin route never retries final-resource rollback after releasing the 
   assert.ok(deleteSerializedStart > deleteRouteStart);
   assert.ok(deleteCall > deleteSerializedStart && deleteCall < deleteSerializedEnd);
 });
+
+test('replaces same-slug articles in separate locale-scoped roots independently', async t => {
+  const fixture = await createFixture(t);
+  const zhRoot = path.join(fixture.articlesRoot, 'zh');
+  const enRoot = path.join(fixture.articlesRoot, 'en');
+  const zhAudio = path.join(fixture.root, 'public', 'audio', 'zh', 'same-post');
+  const enAudio = path.join(fixture.root, 'public', 'audio', 'en', 'same-post');
+  await fs.mkdir(zhRoot, { recursive: true });
+  await fs.mkdir(enRoot, { recursive: true });
+  await fs.writeFile(path.join(zhRoot, 'same-post.md'), '# zh old');
+  await fs.writeFile(path.join(enRoot, 'same-post.md'), '# en old');
+
+  const zhResult = await replaceArticlePublication({
+    articleSlug: 'same-post',
+    markdown: '# zh new',
+    stagingRoot: fixture.stagingRoot,
+    articlesRoot: zhRoot,
+    publicAudioRoot: path.join(fixture.root, 'public', 'audio', 'zh'),
+    audioAssets: createAudioAssets(zhAudio, []),
+    commitDatabase: () => ({ id: 1, changes: 1 })
+  });
+  const enResult = await replaceArticlePublication({
+    articleSlug: 'same-post',
+    markdown: '# en new',
+    stagingRoot: fixture.stagingRoot,
+    articlesRoot: enRoot,
+    publicAudioRoot: path.join(fixture.root, 'public', 'audio', 'en'),
+    audioAssets: createAudioAssets(enAudio, []),
+    commitDatabase: () => ({ id: 2, changes: 1 })
+  });
+
+  assert.equal(zhResult.id, 1);
+  assert.equal(enResult.id, 2);
+  assert.equal(await fs.readFile(path.join(zhRoot, 'same-post.md'), 'utf8'), '# zh new');
+  assert.equal(await fs.readFile(path.join(enRoot, 'same-post.md'), 'utf8'), '# en new');
+  assert.equal(await fs.readFile(path.join(zhAudio, 'track.mp3'), 'utf8'), 'audio');
+  assert.equal(await fs.readFile(path.join(enAudio, 'track.mp3'), 'utf8'), 'audio');
+});

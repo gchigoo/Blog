@@ -3,6 +3,7 @@ const crypto = require('node:crypto');
 const fsSync = require('node:fs');
 const fs = require('node:fs/promises');
 const { isSafeSlug } = require('../utils/path-security');
+const { isSupportedLocale } = require('../i18n/config');
 const { articleAudioError, isArticleAudioInputError } = require('./errors');
 const { AUDIO_FORMATS, MAX_AUDIO_BYTES, validateMp3Buffer } = require('./formats');
 
@@ -122,6 +123,7 @@ function resolveArticleAudioDirectory(publicAudioRoot, articleSlug) {
 }
 
 async function prepareArticleAudioAssets({
+  locale,
   articleSlug,
   markdownEntryName,
   audioBlocks,
@@ -129,6 +131,9 @@ async function prepareArticleAudioAssets({
   stagingRoot,
   publicAudioRoot
 }) {
+  if (!isSupportedLocale(locale)) {
+    throw invalidAudioPath();
+  }
   if (!isSafeSlug(articleSlug)) {
     throw articleAudioError(400, 'audio_path_invalid', '文章 slug 格式不安全');
   }
@@ -189,7 +194,7 @@ async function prepareArticleAudioAssets({
 
       resolvedBlocks.push({
         ...block,
-        src: `/audio/${articleSlug}/${asset.hash}${asset.extension}`,
+        src: `/audio/${locale}/${articleSlug}/${asset.hash}${asset.extension}`,
         mimeType: asset.mimeType
       });
     }
@@ -199,7 +204,10 @@ async function prepareArticleAudioAssets({
     throw articleAudioError(500, 'audio_publish_failed', '音频暂存失败');
   }
 
-  const finalDirectory = resolveArticleAudioDirectory(publicAudioRoot, articleSlug);
+  const finalDirectory = resolveArticleAudioDirectory(
+    path.join(publicAudioRoot, locale),
+    articleSlug
+  );
   let promotionComplete = false;
   let ownsFinalDirectory = false;
 

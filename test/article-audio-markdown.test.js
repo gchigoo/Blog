@@ -49,13 +49,13 @@ src: ./audio/second.flac
       {
         title: 'Stay Until Tomorrow',
         artist: 'AI Bieber Experiment',
-        src: `/audio/audio-post/${HASH_ONE}.mp3`,
+        src: `/audio/zh/audio-post/${HASH_ONE}.mp3`,
         mimeType: 'audio/mpeg',
         caption: 'Final mix'
       },
       {
         title: '<img src=x onerror=alert(1)>',
-        src: `/audio/audio-post/${HASH_TWO}.flac`,
+        src: `/audio/zh/audio-post/${HASH_TWO}.flac`,
         mimeType: 'audio/flac'
       }
     ]
@@ -66,9 +66,9 @@ src: ./audio/second.flac
   assert.match(html, /id="article-audio-title-1"/);
   assert.match(html, /aria-labelledby="article-audio-title-2"/);
   assert.match(html, /controls preload="metadata"/);
-  assert.match(html, new RegExp(`<source src="/audio/audio-post/${HASH_ONE}\\.mp3" type="audio/mpeg">`));
-  assert.match(html, new RegExp(`<source src="/audio/audio-post/${HASH_TWO}\\.flac" type="audio/flac">`));
-  assert.match(html, new RegExp(`</audio>\\s*<a class="article-audio__fallback" href="/audio/audio-post/${HASH_TWO}\\.flac"`));
+  assert.match(html, new RegExp(`<source src="/audio/zh/audio-post/${HASH_ONE}\\.mp3" type="audio/mpeg">`));
+  assert.match(html, new RegExp(`<source src="/audio/zh/audio-post/${HASH_TWO}\\.flac" type="audio/flac">`));
+  assert.match(html, new RegExp(`</audio>\\s*<a class="article-audio__fallback" href="/audio/zh/audio-post/${HASH_TWO}\\.flac"`));
   assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
   assert.doesNotMatch(html, /<img src=x/);
   assert.doesNotMatch(html, /autoplay/i);
@@ -100,7 +100,7 @@ ${VALID_BLOCK}`, {
     resolvedAudioBlocks: [{
       title: 'Stay Until Tomorrow',
       artist: 'AI Bieber Experiment',
-      src: `/audio/audio-post/${HASH_ONE}.mp3`,
+      src: `/audio/zh/audio-post/${HASH_ONE}.mp3`,
       mimeType: 'audio/mpeg',
       caption: 'Final mix'
     }]
@@ -113,8 +113,9 @@ ${VALID_BLOCK}`, {
 test('rejects author paths, unsupported casing, and MIME mismatches at render time', () => {
   for (const resolved of [
     { src: './audio/stay.mp3', mimeType: 'audio/mpeg' },
-    { src: `/audio/audio-post/${HASH_ONE}.FLAC`, mimeType: 'audio/flac' },
-    { src: `/audio/audio-post/${HASH_ONE}.flac`, mimeType: 'audio/mpeg' }
+    { src: `/audio/zh/audio-post/${HASH_ONE}.FLAC`, mimeType: 'audio/flac' },
+    { src: `/audio/zh/audio-post/${HASH_ONE}.flac`, mimeType: 'audio/mpeg' },
+    { src: `/audio/audio-post/${HASH_ONE}.mp3`, mimeType: 'audio/mpeg' }
   ]) {
     assert.throws(
       () => renderMarkdown(VALID_BLOCK, { resolvedAudioBlocks: [resolved] }),
@@ -135,7 +136,7 @@ test('derives typed sources for every registered article audio format', () => {
     .join('\n\n');
   const html = renderMarkdown(markdown, {
     resolvedAudioBlocks: formats.map(([extension, mimeType], index) => ({
-      src: `/audio/audio-post/${String(index + 1).repeat(64)}.${extension}`,
+      src: `/audio/zh/audio-post/${String(index + 1).repeat(64)}.${extension}`,
       mimeType
     }))
   });

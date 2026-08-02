@@ -9,8 +9,16 @@ uploads/temp/
 backups/
 public/images/*
 !public/images/.gitkeep
+public/audio/
+var/operations/
 articles/*
 !articles/.gitkeep
+!articles/zh/
+!articles/en/
+articles/zh/*
+!articles/zh/.gitkeep
+articles/en/*
+!articles/en/.gitkeep
 .codelf/
 .cursor/
 *.mmdb

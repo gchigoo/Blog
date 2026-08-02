@@ -3,16 +3,130 @@ const markdownItAnchor = /** @type {any} */ (require('markdown-it-anchor'));
 const matter = require('gray-matter');
 const slugify = require('slugify');
 const hljs = /** @type {any} */ (require('highlight.js'));
+const { isSupportedLocale, DEFAULT_LOCALE } = require('../i18n/config');
+const { isSafeSlug } = require('./path-security');
+const { SYSTEM_TAG_ID } = require('../taxonomy/catalog');
 const {
   collectArticleAudioBlocks,
   installArticleAudioMarkdown,
   renderArticleMarkdown
 } = require('../article-audio/markdown');
 
+const TAG_MAX_COUNT = 20;
+const TAG_MAX_LENGTH = 50;
+const FORBIDDEN_TAG_PATTERN = /[/\\?%#]/;
+
 class MarkdownMetadataError extends Error {}
 
 function invalidMetadata(message) {
   throw new MarkdownMetadataError(message);
+}
+
+function hasControlCharacters(value) {
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint < 0x20 || codePoint === 0x7f) return true;
+  }
+  return false;
+}
+
+/**
+ * Track whether a normalized value was explicitly supplied by the author.
+ * The flags stay non-enumerable so they never leak into serialized YAML or
+ * JSON output while remaining directly readable on the parsed data object.
+ */
+function definePresence(data, key, value) {
+  Object.defineProperty(data, key, {
+    value,
+    enumerable: false,
+    configurable: true,
+    writable: true
+  });
+}
+
+function normalizeMetadata(data) {
+  if (data.title !== undefined) {
+    if (typeof data.title !== 'string' || !data.title.trim() || data.title.length > 200) {
+      invalidMetadata('title 必须是 1 到 200 个字符的字符串');
+    }
+    data.title = data.title.trim();
+  }
+
+  if (!data.slug && data.title) {
+    data.slug = generateSlug(data.title);
+  }
+
+  if (data.locale === undefined) {
+    data.locale = DEFAULT_LOCALE;
+    definePresence(data, 'localeExplicit', false);
+  } else {
+    if (typeof data.locale !== 'string' || !isSupportedLocale(data.locale)) {
+      invalidMetadata('locale 必须是 zh 或 en');
+    }
+    definePresence(data, 'localeExplicit', true);
+  }
+
+  if (data.translationKey === undefined) {
+    if (data.slug !== undefined) data.translationKey = data.slug;
+    definePresence(data, 'translationKeyExplicit', false);
+  } else {
+    if (typeof data.translationKey !== 'string' || !isSafeSlug(data.translationKey)) {
+      invalidMetadata('translationKey 必须是不超过安全格式的 slug');
+    }
+    definePresence(data, 'translationKeyExplicit', true);
+  }
+
+  if (data.tags && typeof data.tags === 'string') {
+    data.tags = data.tags.split(',').map(tag => tag.trim()).filter(Boolean);
+  } else if (!data.tags) {
+    data.tags = [];
+  } else if (!Array.isArray(data.tags)) {
+    invalidMetadata('tags 必须是字符串或字符串数组');
+  }
+
+  if (data.tags.length > TAG_MAX_COUNT) {
+    invalidMetadata(`tags 最多 ${TAG_MAX_COUNT} 个`);
+  }
+  const normalizedTags = [];
+  for (const tag of data.tags) {
+    if (typeof tag !== 'string' || !tag.trim()) {
+      invalidMetadata(`每个标签必须是 1 到 ${TAG_MAX_LENGTH} 个字符的字符串`);
+    }
+    const value = tag.trim().normalize('NFKC');
+    if (
+      value.length > TAG_MAX_LENGTH
+      || hasControlCharacters(value)
+      || FORBIDDEN_TAG_PATTERN.test(value)
+    ) {
+      invalidMetadata(`每个标签必须是 1 到 ${TAG_MAX_LENGTH} 个字符的字符串`);
+    }
+    normalizedTags.push(value);
+  }
+  data.tags = [...new Set(normalizedTags)];
+  if (data.tags.length === 0) {
+    data.tags = [SYSTEM_TAG_ID];
+  }
+
+  if (data.description !== undefined
+    && (typeof data.description !== 'string' || data.description.trim().length > 300)) {
+    invalidMetadata('description 必须是不超过 300 个字符的字符串');
+  }
+  data.description = typeof data.description === 'string' ? data.description.trim() : '';
+
+  if (data.status === undefined) data.status = data.draft === true ? 'draft' : 'published';
+  if (!['draft', 'published'].includes(data.status)) {
+    invalidMetadata('status 必须是 draft 或 published');
+  }
+
+  if (data.date) {
+    const date = new Date(data.date);
+    if (Number.isNaN(date.getTime())) invalidMetadata('date 必须是有效日期');
+    data.date = date.toISOString();
+  } else {
+    data.date = new Date().toISOString();
+  }
+
+  return data;
 }
 
 /**
@@ -47,56 +161,27 @@ const md = new MarkdownIt({
   // })
 }).use(installArticleAudioMarkdown);
 
-function normalizeMetadata(data) {
-  if (data.title !== undefined) {
-    if (typeof data.title !== 'string' || !data.title.trim() || data.title.length > 200) {
-      invalidMetadata('title 必须是 1 到 200 个字符的字符串');
-    }
-    data.title = data.title.trim();
+/**
+ * External absolute http/https links receive `rel="noopener noreferrer"`.
+ * No `target="_blank"` is added: navigation stays same-tab and the rel keeps
+ * any future consumer safe from opener-based tabnabbing.
+ */
+md.renderer.rules.link_open = (tokens, index, options, env, renderer) => {
+  const token = tokens[index];
+  const href = token.attrGet('href');
+  if (typeof href === 'string' && /^https?:\/\//i.test(href)) {
+    token.attrSet('rel', 'noopener noreferrer');
   }
-
-  if (!data.slug && data.title) {
-    data.slug = generateSlug(data.title);
-  }
-
-  if (data.tags && typeof data.tags === 'string') {
-    data.tags = data.tags.split(',').map(tag => tag.trim()).filter(Boolean);
-  } else if (!data.tags) {
-    data.tags = [];
-  } else if (!Array.isArray(data.tags)) {
-    invalidMetadata('tags 必须是字符串或字符串数组');
-  }
-
-  if (data.tags.length > 20
-    || data.tags.some(tag => typeof tag !== 'string' || !tag.trim() || tag.length > 50)) {
-    invalidMetadata('tags 最多 20 个，每个标签必须是 1 到 50 个字符的字符串');
-  }
-  data.tags = [...new Set(data.tags.map(tag => tag.trim()))];
-
-  if (data.description !== undefined
-    && (typeof data.description !== 'string' || data.description.trim().length > 300)) {
-    invalidMetadata('description 必须是不超过 300 个字符的字符串');
-  }
-  data.description = typeof data.description === 'string' ? data.description.trim() : '';
-
-  if (data.status === undefined) data.status = data.draft === true ? 'draft' : 'published';
-  if (!['draft', 'published'].includes(data.status)) {
-    invalidMetadata('status 必须是 draft 或 published');
-  }
-
-  if (data.date) {
-    const date = new Date(data.date);
-    if (Number.isNaN(date.getTime())) invalidMetadata('date 必须是有效日期');
-    data.date = date.toISOString();
-  } else {
-    data.date = new Date().toISOString();
-  }
-
-  return data;
-}
+  return renderer.renderToken(tokens, index, options);
+};
 
 function parseMarkdownDocument(content) {
-  const { data, content: markdownContent } = matter(content);
+  // gray-matter caches parsed files by content string and returns a shallow
+  // copy whose `data` object is still shared across identical parses.
+  // Normalization mutates that object (defaults, presence flags), so clone
+  // it first to keep repeated parses of identical content independent.
+  const { data: cachedData, content: markdownContent } = matter(content);
+  const data = structuredClone(cachedData);
   normalizeMetadata(data);
 
   return {
@@ -106,8 +191,8 @@ function parseMarkdownDocument(content) {
   };
 }
 
-function renderMarkdown(markdownContent, { resolvedAudioBlocks = undefined } = {}) {
-  return renderArticleMarkdown(md, markdownContent, resolvedAudioBlocks);
+function renderMarkdown(markdownContent, { resolvedAudioBlocks = undefined, locale = DEFAULT_LOCALE } = {}) {
+  return renderArticleMarkdown(md, markdownContent, resolvedAudioBlocks, locale);
 }
 
 function serializeMarkdownDocument(markdownContent, metadata) {
@@ -121,7 +206,10 @@ function serializeMarkdownDocument(markdownContent, metadata) {
  */
 function parseMarkdown(content, options = {}) {
   const { data, content: markdownContent, audioBlocks } = parseMarkdownDocument(content);
-  const html = renderMarkdown(markdownContent, options);
+  const html = renderMarkdown(markdownContent, {
+    ...options,
+    locale: options.locale ?? data.locale
+  });
 
   return {
     data,

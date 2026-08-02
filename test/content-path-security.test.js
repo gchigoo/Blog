@@ -1,5 +1,7 @@
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
 const fs = require('node:fs/promises');
+const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 const AdmZip = require('adm-zip');
@@ -8,9 +10,13 @@ const jwt = require('jsonwebtoken');
 const {
   MarkdownMetadataError,
   parseMarkdown,
+  parseMarkdownDocument,
+  renderMarkdown,
   replaceHtmlImagePaths,
   serializeMarkdownDocument
 } = require('../server/utils/markdown');
+const { resolveLocalizedArticlePath } = require('../server/utils/path-security');
+const { messages } = require('../server/i18n/messages');
 const { createProjectFixture, runNode, startServer } = require('./helpers/project-fixture');
 
 const INITIAL_PASSWORD = 'S3cure!Node24';
@@ -250,7 +256,7 @@ test('image conversion failures are returned as explicit upload warnings', async
 test('normal ZIP upload preserves Markdown image conversion workflow', async t => {
   const { root, baseUrl } = await prepareServer(t);
   const zip = new AdmZip();
-  const markdown = `---\ntitle: Normal ZIP\nslug: normal-zip\ntags: [smoke]\n---\n\n![pixel](images/pixel.png)`;
+  const markdown = `---\ntitle: Normal ZIP\nslug: normal-zip\ntags: [other]\n---\n\n![pixel](images/pixel.png)`;
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
   zip.addFile('article.md', Buffer.from(markdown));
   zip.addFile('other/pixel.png', Buffer.from('not an image'));
@@ -262,6 +268,206 @@ test('normal ZIP upload preserves Markdown image conversion workflow', async t =
   assert.equal(response.status, 200, JSON.stringify(body));
   assert.equal(body.article.slug, 'normal-zip');
   assert.equal(body.article.imagesConverted, 1);
-  const saved = await fs.readFile(path.join(root, 'articles', 'normal-zip.md'), 'utf8');
+  const saved = await fs.readFile(path.join(root, 'articles', 'zh', 'normal-zip.md'), 'utf8');
   assert.match(saved, /\/images\/[a-f0-9]+\.webp/);
+});
+
+test('parses localized metadata with stable tag IDs and presence flags', () => {
+  const parsed = parseMarkdownDocument(`---
+title: 中文文章
+slug: example
+locale: en
+translationKey: example-post
+tags: [nodejs, tutorial]
+---
+body`);
+  assert.equal(parsed.data.locale, 'en');
+  assert.equal(parsed.data.translationKey, 'example-post');
+  assert.deepEqual(parsed.data.tags, ['nodejs', 'tutorial']);
+  assert.equal(parsed.data.localeExplicit, true);
+  assert.equal(parsed.data.translationKeyExplicit, true);
+});
+
+test('rejects unsupported locales, unsafe translation keys, and invalid taxonomy tags', () => {
+  assert.throws(
+    () => parseMarkdownDocument('---\ntitle: Bad Locale\nslug: bad-locale\nlocale: fr\n---\nbody'),
+    MarkdownMetadataError
+  );
+  for (const translationKey of ['../up', 'Has Space', 'double--dash', 'with_under', '']) {
+    assert.throws(
+      () => parseMarkdownDocument(
+        `---\ntitle: Bad Key\nslug: bad-key\ntranslationKey: ${JSON.stringify(translationKey)}\n---\nbody`
+      ),
+      MarkdownMetadataError,
+      `translationKey ${JSON.stringify(translationKey)} must be rejected`
+    );
+  }
+  for (const tags of [42, ['bad/name'], ['bad\\name'], ['has?query'], ['has#frag'], [' '], ['']]) {
+    assert.throws(
+      () => parseMarkdownDocument(`---\ntitle: Bad Tags\nslug: bad-tags\ntags: ${JSON.stringify(tags)}\n---\nbody`),
+      MarkdownMetadataError,
+      `tags ${JSON.stringify(tags)} must be rejected`
+    );
+  }
+  const tooMany = Array.from({ length: 21 }, (_, index) => `tag${index}`);
+  assert.throws(
+    () => parseMarkdownDocument(`---\ntitle: Too Many\nslug: too-many\ntags: [${tooMany.join(', ')}]\n---\nbody`),
+    MarkdownMetadataError
+  );
+});
+
+test('normalizes omitted locale, translation key, and empty tags while tracking presence', () => {
+  const parsed = parseMarkdownDocument(`---
+title: Defaulted Metadata
+---
+body`);
+  assert.equal(parsed.data.locale, 'zh');
+  assert.equal(parsed.data.localeExplicit, false);
+  assert.equal(parsed.data.translationKey, parsed.data.slug);
+  assert.equal(parsed.data.translationKeyExplicit, false);
+  assert.deepEqual(parsed.data.tags, ['other']);
+
+  const explicit = parseMarkdownDocument(`---
+title: Explicit Empty Tags
+locale: zh
+translationKey: explicit-post
+tags: []
+---
+body`);
+  assert.equal(explicit.data.localeExplicit, true);
+  assert.equal(explicit.data.translationKeyExplicit, true);
+  assert.deepEqual(explicit.data.tags, ['other']);
+
+  const mixed = parseMarkdownDocument(`---
+title: Mixed Presence
+locale: en
+---
+body`);
+  assert.equal(mixed.data.localeExplicit, true);
+  assert.equal(mixed.data.translationKeyExplicit, false);
+  assert.equal(mixed.data.translationKey, mixed.data.slug);
+});
+
+test('serialization preserves normalized fields without internal presence flags', () => {
+  const parsed = parseMarkdownDocument(`---
+title: 中文文章
+slug: example
+locale: en
+translationKey: example-post
+tags: [nodejs, tutorial]
+---
+body`);
+  const serialized = serializeMarkdownDocument('body\n', parsed.data);
+  const reparsed = matter(serialized);
+
+  assert.equal(reparsed.data.locale, 'en');
+  assert.equal(reparsed.data.translationKey, 'example-post');
+  assert.deepEqual(reparsed.data.tags, ['nodejs', 'tutorial']);
+  assert.equal('localeExplicit' in reparsed.data, false);
+  assert.equal('translationKeyExplicit' in reparsed.data, false);
+  assert.doesNotMatch(serialized, /localeExplicit|translationKeyExplicit/);
+  assert.equal(reparsed.content, 'body\n');
+});
+
+test('renders localized audio fallback labels for Chinese and English articles', () => {
+  const block = `:::audio
+title: Stay
+src: ./audio/final.mp3
+:::`;
+  const resolvedAudioBlocks = [{
+    title: 'Stay',
+    src: `/audio/zh/audio-post/${'a'.repeat(64)}.mp3`,
+    mimeType: 'audio/mpeg'
+  }];
+  const english = renderMarkdown(block, { resolvedAudioBlocks, locale: 'en' });
+  const chinese = renderMarkdown(block, { resolvedAudioBlocks, locale: 'zh' });
+  const defaulted = renderMarkdown(block, { resolvedAudioBlocks });
+
+  assert.match(english, new RegExp(messages.en.article.audioFallback.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.doesNotMatch(english, /无法播放时打开音频文件/);
+  assert.match(chinese, /无法播放时打开音频文件/);
+  assert.match(defaulted, /无法播放时打开音频文件/);
+});
+
+test('rejects legacy unlocalized audio URLs with no locale fallback', () => {
+  const block = `:::audio
+title: Stay
+src: ./audio/final.mp3
+:::`;
+  assert.throws(
+    () => renderMarkdown(block, {
+      resolvedAudioBlocks: [{
+        title: 'Stay',
+        src: `/audio/audio-post/${'a'.repeat(64)}.mp3`,
+        mimeType: 'audio/mpeg'
+      }]
+    }),
+    error => error.code === 'audio_publish_failed' && error.status === 500
+  );
+});
+
+test('resolves locale-scoped article paths without same-slug collisions', () => {
+  const root = path.resolve('fixture', 'articles');
+  assert.equal(
+    resolveLocalizedArticlePath(root, 'zh', 'same-slug'),
+    path.join(root, 'zh', 'same-slug.md')
+  );
+  assert.equal(
+    resolveLocalizedArticlePath(root, 'en', 'same-slug'),
+    path.join(root, 'en', 'same-slug.md')
+  );
+  assert.throws(() => resolveLocalizedArticlePath(root, 'fr', 'same-slug'));
+  assert.throws(() => resolveLocalizedArticlePath(root, 'ZH', 'same-slug'));
+  assert.throws(() => resolveLocalizedArticlePath(root, 'zh', '../up'));
+  assert.throws(() => resolveLocalizedArticlePath(root, 'zh', 'has space'));
+  assert.throws(() => resolveLocalizedArticlePath(root, 'zh', 'double--dash'));
+});
+
+test('localized article, audio, and operation artifacts follow the ignore contract', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'blog-gitignore-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const gitignore = await fs.readFile(path.join(__dirname, '..', '.gitignore'), 'utf8');
+  await fs.writeFile(path.join(root, '.gitignore'), gitignore);
+
+  const git = (args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+  assert.equal(git(['init', '-q']).status, 0);
+
+  const markdownBytes = Buffer.from('# article');
+  await fs.mkdir(path.join(root, 'articles', 'zh'), { recursive: true });
+  await fs.mkdir(path.join(root, 'articles', 'en'), { recursive: true });
+  await fs.writeFile(path.join(root, 'articles', 'zh', '.gitkeep'), '');
+  await fs.writeFile(path.join(root, 'articles', 'en', '.gitkeep'), '');
+  await fs.writeFile(path.join(root, 'articles', 'zh', 'published.md'), markdownBytes);
+  await fs.writeFile(path.join(root, 'articles', 'en', 'published.md'), markdownBytes);
+  await fs.mkdir(path.join(root, 'public', 'audio', 'zh', 'same-post'), { recursive: true });
+  await fs.writeFile(path.join(root, 'public', 'audio', 'zh', 'same-post', `${'a'.repeat(64)}.mp3`), Buffer.from('audio'));
+  await fs.mkdir(path.join(root, 'public', 'audio', 'en', 'same-post'), { recursive: true });
+  await fs.writeFile(path.join(root, 'public', 'audio', 'en', 'same-post', `${'b'.repeat(64)}.mp3`), Buffer.from('audio'));
+  await fs.mkdir(path.join(root, 'var', 'operations', 'operation-id'), { recursive: true });
+  await fs.writeFile(path.join(root, 'var', 'operations', 'operation-id', 'operation.json'), Buffer.from('{}'));
+  await fs.mkdir(path.join(root, 'var', 'operations', 'active.lock'), { recursive: true });
+  await fs.writeFile(path.join(root, 'var', 'operations', 'active.lock', 'owner.json'), Buffer.from('{}'));
+
+  const isIgnored = relative => git(['check-ignore', '-q', '--', relative]).status === 0;
+
+  assert.equal(isIgnored('articles/zh/.gitkeep'), false, 'zh .gitkeep must be trackable');
+  assert.equal(isIgnored('articles/en/.gitkeep'), false, 'en .gitkeep must be trackable');
+  assert.equal(isIgnored('articles/zh/published.md'), true, 'localized zh markdown must stay ignored');
+  assert.equal(isIgnored('articles/en/published.md'), true, 'localized en markdown must stay ignored');
+  assert.equal(
+    isIgnored(`public/audio/zh/same-post/${'a'.repeat(64)}.mp3`),
+    true,
+    'generated zh audio must be ignored'
+  );
+  assert.equal(
+    isIgnored(`public/audio/en/same-post/${'b'.repeat(64)}.mp3`),
+    true,
+    'generated en audio must be ignored'
+  );
+  assert.equal(
+    isIgnored('var/operations/operation-id/operation.json'),
+    true,
+    'operation manifests must be ignored'
+  );
+  assert.equal(isIgnored('var/operations/active.lock/owner.json'), true, 'operation locks must be ignored');
 });

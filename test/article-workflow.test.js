@@ -7,6 +7,7 @@ const path = require('node:path');
 const { performance } = require('node:perf_hooks');
 const test = require('node:test');
 const Database = require('better-sqlite3');
+const AdmZip = require('adm-zip');
 const jwt = require('jsonwebtoken');
 const { CommentStoreError, createCommentStore } = require('../server/comments/store');
 const { LATEST_SCHEMA_VERSION, migrateDatabase } = require('../server/migrations');
@@ -20,6 +21,7 @@ const {
 } = require('../server/articles/search-index');
 const { groupArticlesByMonth } = require('../server/utils/presentation');
 const { createProjectFixture, runNode, startServer } = require('./helpers/project-fixture');
+const { validMp3 } = require('./helpers/article-audio-fixtures');
 
 const INITIAL_PASSWORD = 'S3cure!Node24';
 const JWT_SECRET = 'test-only-jwt-secret-with-at-least-32-characters';
@@ -30,6 +32,38 @@ function cookie() {
 
 async function harness(t) {
   const root = await createProjectFixture(t);
+  const init = runNode(root, 'server/scripts/init-db.js', [], { INITIAL_ADMIN_PASSWORD: INITIAL_PASSWORD });
+  assert.equal(init.status, 0, init.stderr);
+  const server = await startServer(t, root, {
+    JWT_SECRET,
+    BLOG_PUBLIC_ORIGIN: 'https://blog.example.test'
+  });
+  return { root, ...server };
+}
+
+const TUTORIAL_TAG = Object.freeze({
+  id: 'tutorial',
+  sortOrder: 20,
+  labels: {
+    zh: { name: '教程', slug: '教程' },
+    en: { name: 'Tutorial', slug: 'tutorial' }
+  },
+  legacyNames: []
+});
+
+function seededCatalog() {
+  return baseCatalog({ extraTags: [TUTORIAL_TAG] });
+}
+
+function writeFixtureCatalog(root, catalog) {
+  const contentDir = path.join(root, 'content');
+  fsSync.mkdirSync(contentDir, { recursive: true });
+  fsSync.writeFileSync(path.join(contentDir, 'taxonomy.json'), JSON.stringify(catalog));
+}
+
+async function seededHarness(t) {
+  const root = await createProjectFixture(t);
+  writeFixtureCatalog(root, seededCatalog());
   const init = runNode(root, 'server/scripts/init-db.js', [], { INITIAL_ADMIN_PASSWORD: INITIAL_PASSWORD });
   assert.equal(init.status, 0, init.stderr);
   const server = await startServer(t, root, {
@@ -50,8 +84,19 @@ async function submit(baseUrl, endpoint, name, markdown, fields = {}) {
   });
 }
 
-function markdown({ title, slug, status = 'published', body = 'searchable body', description = 'summary', tags = '[node]' }) {
-  return `---\ntitle: ${title}\nslug: ${slug}\ndescription: ${description}\ntags: ${tags}\nstatus: ${status}\n---\n\n${body}\n`;
+function audioZip(markdownName, markdown, mp3) {
+  const zip = new AdmZip();
+  zip.addFile(markdownName, Buffer.from(markdown));
+  zip.addFile('audio/final.mp3', mp3);
+  return zip.toBuffer();
+}
+
+function markdown({ title, slug, status = 'published', body = 'searchable body', description = 'summary', tags = '[other]', locale, translationKey }) {
+  const extras = [
+    ...(locale ? [`locale: ${locale}`] : []),
+    ...(translationKey ? [`translationKey: ${translationKey}`] : [])
+  ].join('\n');
+  return `---\ntitle: ${title}\nslug: ${slug}\ndescription: ${description}\ntags: ${tags}\nstatus: ${status}${extras ? `\n${extras}` : ''}\n---\n\n${body}\n`;
 }
 
 function legacySchemaSql() {
@@ -528,9 +573,9 @@ test('concurrent Chinese uploads sharing a requested slug both succeed with seri
   const { root, baseUrl } = await harness(t);
   const [firstResponse, secondResponse] = await Promise.all([
     submit(baseUrl, '/api/admin/upload', 'first.md',
-      markdown({ title: 'Concurrent First', slug: 'concurrent-slug', tags: '[工具]' })),
+      markdown({ title: 'Concurrent First', slug: 'concurrent-slug', tags: '[other]' })),
     submit(baseUrl, '/api/admin/upload', 'second.md',
-      markdown({ title: 'Concurrent Second', slug: 'concurrent-slug', tags: '[生活]' }))
+      markdown({ title: 'Concurrent Second', slug: 'concurrent-slug', tags: '[other]' }))
   ]);
   const first = await firstResponse.json();
   const second = await secondResponse.json();
@@ -551,7 +596,7 @@ test('concurrent Chinese uploads sharing a requested slug both succeed with seri
 test('scripts/query-db.js reports normalized tags after migration', async t => {
   const { root, baseUrl } = await harness(t);
   const response = await submit(baseUrl, '/api/admin/upload', 'query-db.md',
-    markdown({ title: 'Query DB Article', slug: 'query-db-article', tags: '[工具]' }));
+    markdown({ title: 'Query DB Article', slug: 'query-db-article', tags: '[other]' }));
   const body = await response.json();
   assert.equal(response.status, 200, JSON.stringify(body));
 
@@ -566,11 +611,11 @@ test('scripts/query-db.js reports normalized tags after migration', async t => {
 test('admin delete reports failure and preserves files when the article row vanishes', async t => {
   const { root, baseUrl } = await harness(t);
   const uploadResponse = await submit(baseUrl, '/api/admin/upload', 'race.md',
-    markdown({ title: 'Delete Race', slug: 'delete-race', tags: '[工具]' }));
+    markdown({ title: 'Delete Race', slug: 'delete-race', tags: '[other]' }));
   const uploaded = await uploadResponse.json();
   assert.equal(uploadResponse.status, 200, JSON.stringify(uploaded));
 
-  const markdownPath = path.join(root, 'articles', 'delete-race.md');
+  const markdownPath = path.join(root, 'articles', 'zh', 'delete-race.md');
   const originalMarkdown = await fs.readFile(markdownPath, 'utf8');
   assert.ok(originalMarkdown.length > 0);
 
@@ -668,6 +713,238 @@ test('drafts stay private while search, feed, sitemap, replacement, and preview 
   assert.equal(db.prepare('SELECT title FROM articles WHERE id = ?').get(published.article.id).title, 'Updated Node Guide');
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM articles WHERE slug = ?').get('preview-only').count, 0);
   db.close();
-  const saved = await fs.readFile(path.join(root, 'articles', 'published-node.md'), 'utf8');
+  const saved = await fs.readFile(path.join(root, 'articles', 'zh', 'published-node.md'), 'utf8');
   assert.match(saved, /Updated Node Guide/);
+});
+
+test('explicit Chinese and English uploads share translationKey, slug, and locale-scoped files', async t => {
+  const { root, baseUrl } = await seededHarness(t);
+  const mp3 = validMp3();
+  const hash = createHash('sha256').update(mp3).digest('hex');
+  const zhMarkdown = `---
+title: 双语文章
+slug: dual-post
+locale: zh
+translationKey: dual-post
+tags: [nodejs, tutorial]
+---
+
+:::audio
+title: 中文音频
+src: ./audio/final.mp3
+:::`;
+  const enMarkdown = `---
+title: Bilingual Post
+slug: dual-post
+locale: en
+translationKey: dual-post
+tags: [nodejs, tutorial]
+---
+
+:::audio
+title: English Audio
+src: ./audio/final.mp3
+:::`;
+
+  const [zhResponse, enResponse] = await Promise.all([
+    submit(baseUrl, '/api/admin/upload', 'zh.zip', audioZip('zh.md', zhMarkdown, mp3)),
+    submit(baseUrl, '/api/admin/upload', 'en.zip', audioZip('en.md', enMarkdown, mp3))
+  ]);
+  const zhBody = await zhResponse.json();
+  const enBody = await enResponse.json();
+  assert.equal(zhResponse.status, 200, JSON.stringify(zhBody));
+  assert.equal(enResponse.status, 200, JSON.stringify(enBody));
+
+  const db = new Database(path.join(root, 'blog.db'));
+  const articles = db.prepare('SELECT id, locale, slug, post_id FROM articles WHERE slug = ? ORDER BY locale').all('dual-post');
+  assert.deepEqual(articles.map(article => article.locale), ['en', 'zh']);
+  assert.equal(articles.length, 2);
+  assert.equal(articles[0].post_id, articles[1].post_id);
+  assert.equal(
+    db.prepare('SELECT translation_key FROM posts WHERE id = ?').get(articles[0].post_id).translation_key,
+    'dual-post'
+  );
+  const tagRows = db.prepare(`
+    SELECT tag_id FROM article_tags WHERE article_id = ? ORDER BY tag_id
+  `).all(articles.find(article => article.locale === 'zh').id).map(row => row.tag_id);
+  assert.deepEqual(tagRows, ['nodejs', 'tutorial']);
+  db.close();
+
+  await assert.doesNotReject(() => fs.access(path.join(root, 'articles', 'zh', 'dual-post.md')));
+  await assert.doesNotReject(() => fs.access(path.join(root, 'articles', 'en', 'dual-post.md')));
+  await assert.doesNotReject(() => fs.access(path.join(root, 'public', 'audio', 'zh', 'dual-post', `${hash}.mp3`)));
+  await assert.doesNotReject(() => fs.access(path.join(root, 'public', 'audio', 'en', 'dual-post', `${hash}.mp3`)));
+
+  const zhFile = await fs.readFile(path.join(root, 'articles', 'zh', 'dual-post.md'), 'utf8');
+  const enFile = await fs.readFile(path.join(root, 'articles', 'en', 'dual-post.md'), 'utf8');
+  assert.match(zhFile, /locale: zh/);
+  assert.match(zhFile, /translationKey: dual-post/);
+  assert.match(enFile, /locale: en/);
+  assert.match(enFile, /translationKey: dual-post/);
+});
+
+test('same-locale explicit translationKey upload returns translation_locale_exists', async t => {
+  const { root, baseUrl } = await seededHarness(t);
+  const firstResponse = await submit(baseUrl, '/api/admin/upload', 'first.md',
+    markdown({ title: 'First Conflict', slug: 'conflict-post', locale: 'zh', translationKey: 'conflict-post', tags: '[nodejs]' }));
+  assert.equal(firstResponse.status, 200, await firstResponse.text());
+
+  const secondResponse = await submit(baseUrl, '/api/admin/upload', 'second.md',
+    markdown({ title: 'Second Conflict', slug: 'conflict-other', locale: 'zh', translationKey: 'conflict-post', tags: '[nodejs]' }));
+  const secondBody = await secondResponse.json();
+  assert.equal(secondResponse.status, 409, JSON.stringify(secondBody));
+  assert.equal(secondBody.code, 'translation_locale_exists');
+
+  const db = new Database(path.join(root, 'blog.db'));
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM articles').get().count, 1);
+  db.close();
+  await assert.rejects(fs.access(path.join(root, 'articles', 'zh', 'conflict-other.md')), { code: 'ENOENT' });
+});
+
+test('a locale slug belonging to another post returns locale_slug_exists', async t => {
+  const { root, baseUrl } = await seededHarness(t);
+  const firstResponse = await submit(baseUrl, '/api/admin/upload', 'first.md',
+    markdown({ title: 'First Owner', slug: 'shared-slug', locale: 'en', translationKey: 'owner-post', tags: '[nodejs]' }));
+  assert.equal(firstResponse.status, 200, await firstResponse.text());
+
+  const secondResponse = await submit(baseUrl, '/api/admin/upload', 'second.md',
+    markdown({ title: 'Second Owner', slug: 'shared-slug', locale: 'en', translationKey: 'other-post', tags: '[nodejs]' }));
+  const secondBody = await secondResponse.json();
+  assert.equal(secondResponse.status, 409, JSON.stringify(secondBody));
+  assert.equal(secondBody.code, 'locale_slug_exists');
+
+  const db = new Database(path.join(root, 'blog.db'));
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM articles').get().count, 1);
+  db.close();
+});
+
+test('rejects unknown stable tag IDs before staging any publication files', async t => {
+  const { root, baseUrl } = await seededHarness(t);
+  const response = await submit(baseUrl, '/api/admin/upload', 'unknown-tag.md',
+    markdown({ title: 'Unknown Tag', slug: 'unknown-tag', tags: '[not-a-stable-id]' }));
+  const body = await response.json();
+  assert.equal(response.status, 400, JSON.stringify(body));
+  assert.equal(body.code, 'unknown_taxonomy_tag');
+
+  const db = new Database(path.join(root, 'blog.db'));
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM articles').get().count, 0);
+  db.close();
+  await assert.rejects(fs.access(path.join(root, 'articles', 'zh', 'unknown-tag.md')), { code: 'ENOENT' });
+});
+
+test('English uploads cannot reference legacy-origin tags while Chinese uploads may', async t => {
+  const { root, baseUrl } = await seededHarness(t);
+
+  const db = new Database(path.join(root, 'blog.db'));
+  db.prepare(`
+    INSERT INTO tags (id, category_id, sort_order, origin, is_system)
+    VALUES ('legacy-old-label', 'uncategorized', 0, 'legacy', 0)
+  `).run();
+  db.prepare(`
+    INSERT INTO tag_labels (tag_id, locale, name, slug)
+    VALUES ('legacy-old-label', 'zh', '旧标签', 'legacy-old-label'),
+           ('legacy-old-label', 'en', '旧标签', 'legacy-old-label')
+  `).run();
+  db.close();
+
+  const zhResponse = await submit(baseUrl, '/api/admin/upload', 'zh-legacy.md',
+    markdown({ title: '中文旧标签', slug: 'zh-legacy', locale: 'zh', tags: '[legacy-old-label]' }));
+  assert.equal(zhResponse.status, 200, await zhResponse.text());
+
+  const enResponse = await submit(baseUrl, '/api/admin/upload', 'en-legacy.md',
+    markdown({ title: 'English Legacy', slug: 'en-legacy', locale: 'en', tags: '[legacy-old-label]' }));
+  const enBody = await enResponse.json();
+  assert.equal(enResponse.status, 400, JSON.stringify(enBody));
+  assert.equal(enBody.code, 'unlocalized_taxonomy_tag');
+
+  const verify = new Database(path.join(root, 'blog.db'));
+  assert.equal(verify.prepare("SELECT COUNT(*) AS count FROM articles WHERE locale = 'en'").get().count, 0);
+  verify.close();
+});
+
+test('omitted translationKey compatibility allocation attaches cross-locale to the logical post', async t => {
+  const { root, baseUrl } = await seededHarness(t);
+  const zhResponse = await submit(baseUrl, '/api/admin/upload', 'zh.md',
+    markdown({ title: '中文文章', slug: 'attach-post', tags: '[nodejs]' }));
+  assert.equal(zhResponse.status, 200, await zhResponse.text());
+
+  const enResponse = await submit(baseUrl, '/api/admin/upload', 'en.md',
+    markdown({ title: 'English Article', slug: 'attach-post', locale: 'en', tags: '[nodejs]' }));
+  const enBody = await enResponse.json();
+  assert.equal(enResponse.status, 200, JSON.stringify(enBody));
+
+  const db = new Database(path.join(root, 'blog.db'));
+  const articles = db.prepare('SELECT locale, slug, post_id FROM articles WHERE slug = ? ORDER BY locale').all('attach-post');
+  assert.deepEqual(articles.map(article => article.locale), ['en', 'zh']);
+  assert.equal(articles[0].post_id, articles[1].post_id);
+  assert.equal(
+    db.prepare('SELECT translation_key FROM posts WHERE id = ?').get(articles[0].post_id).translation_key,
+    'attach-post'
+  );
+  db.close();
+});
+
+test('replacement keeps locale, translationKey, and slug immutable', async t => {
+  const { root, baseUrl } = await seededHarness(t);
+  const uploadedResponse = await submit(baseUrl, '/api/admin/upload', 'immutable.md',
+    markdown({ title: 'Immutable Original', slug: 'immutable-post', locale: 'zh', translationKey: 'immutable-post', tags: '[nodejs]' }));
+  const uploaded = await uploadedResponse.json();
+  assert.equal(uploadedResponse.status, 200, JSON.stringify(uploaded));
+
+  const wrongLocaleResponse = await submit(baseUrl, '/api/admin/upload', 'wrong-locale.md',
+    markdown({ title: 'Wrong Locale', slug: 'immutable-post', locale: 'en', translationKey: 'immutable-post', tags: '[nodejs]' }),
+    { replaceId: String(uploaded.article.id) });
+  const wrongLocaleBody = await wrongLocaleResponse.json();
+  assert.equal(wrongLocaleResponse.status, 400, JSON.stringify(wrongLocaleBody));
+  assert.equal(wrongLocaleBody.code, 'article_replace_locale_mismatch');
+
+  const wrongKeyResponse = await submit(baseUrl, '/api/admin/upload', 'wrong-key.md',
+    markdown({ title: 'Wrong Key', slug: 'immutable-post', locale: 'zh', translationKey: 'other-key', tags: '[nodejs]' }),
+    { replaceId: String(uploaded.article.id) });
+  const wrongKeyBody = await wrongKeyResponse.json();
+  assert.equal(wrongKeyResponse.status, 400, JSON.stringify(wrongKeyBody));
+  assert.equal(wrongKeyBody.code, 'article_replace_translation_key_mismatch');
+
+  const db = new Database(path.join(root, 'blog.db'));
+  const article = db.prepare('SELECT locale, slug, title FROM articles WHERE id = ?').get(uploaded.article.id);
+  assert.equal(article.locale, 'zh');
+  assert.equal(article.slug, 'immutable-post');
+  assert.equal(article.title, 'Immutable Original');
+  db.close();
+});
+
+test('concurrent omitted-translationKey uploads keep distinct locale-scoped audio paths', async t => {
+  const { root, baseUrl } = await seededHarness(t);
+  const mp3 = validMp3();
+  const markdownBody = `---
+title: Concurrent Song
+slug: concurrent-song
+---
+
+:::audio
+title: Concurrent
+src: ./audio/final.mp3
+:::`;
+  const responses = await Promise.all([
+    submit(baseUrl, '/api/admin/upload', 'one.zip', audioZip('one.md', markdownBody, mp3)),
+    submit(baseUrl, '/api/admin/upload', 'two.zip', audioZip('two.md', markdownBody, mp3))
+  ]);
+  const bodies = await Promise.all(responses.map(response => response.json()));
+  assert.deepEqual(responses.map(response => response.status), [200, 200], JSON.stringify(bodies));
+
+  const slugs = bodies.map(body => body.article.slug).sort();
+  assert.equal(new Set(slugs).size, 2);
+  assert.ok(slugs.includes('concurrent-song'));
+  assert.ok(slugs.some(slug => /^concurrent-song-\d+$/.test(slug)));
+
+  const db = new Database(path.join(root, 'blog.db'));
+  const keys = db.prepare('SELECT translation_key FROM posts ORDER BY translation_key').all()
+    .map(row => row.translation_key);
+  assert.deepEqual(keys, slugs);
+  db.close();
+  for (const slug of slugs) {
+    await assert.doesNotReject(() => fs.access(path.join(root, 'articles', 'zh', `${slug}.md`)));
+    const audioFiles = await fs.readdir(path.join(root, 'public', 'audio', 'zh', slug));
+    assert.equal(audioFiles.length, 1);
+  }
 });

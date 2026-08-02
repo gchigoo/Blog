@@ -1,12 +1,16 @@
 const { articleAudioError } = require('./errors');
 const { AUDIO_FORMATS } = require('./formats');
 const { assetUrl } = require('../utils/presentation');
+const { SUPPORTED_LOCALES, DEFAULT_LOCALE, assertSupportedLocale } = require('../i18n/config');
+const { createTranslator } = require('../i18n/messages');
 
 const AUDIO_OPEN_MARKER = ':::audio';
 const AUDIO_CLOSE_MARKER = ':::';
 const AUDIO_FIELDS = new Set(['title', 'artist', 'src', 'caption']);
+// Published audio URLs are exactly /audio/<locale>/<safe-slug>/<64-hex><ext>
+// with the locale strictly allowlisted. There is no legacy fallback path.
 const PUBLISHED_AUDIO_PATH = new RegExp(
-  `^/audio/[a-z0-9]+(?:-[a-z0-9]+)*/[a-f0-9]{64}(${Object.keys(AUDIO_FORMATS)
+  `^/audio/(${SUPPORTED_LOCALES.join('|')})/[a-z0-9]+(?:-[a-z0-9]+)*/[a-f0-9]{64}(${Object.keys(AUDIO_FORMATS)
     .map(extension => extension.replace('.', '\\.'))
     .join('|')})$`
 );
@@ -106,11 +110,13 @@ function renderArticleAudio(tokens, index, _options, env, renderer) {
     throw articleAudioError(400, 'audio_archive_required', '包含音频块的文章必须使用 ZIP 上传');
   }
   const pathMatch = PUBLISHED_AUDIO_PATH.exec(resolved.src);
-  const format = pathMatch ? AUDIO_FORMATS[pathMatch[1]] : null;
+  const format = pathMatch ? AUDIO_FORMATS[pathMatch[2]] : null;
   if (!format || resolved.mimeType !== format.mimeType) {
     throw articleAudioError(500, 'audio_publish_failed', '音频发布路径无效');
   }
 
+  const locale = articleAudio.locale || DEFAULT_LOCALE;
+  const fallbackLabel = createTranslator(locale)('article.audioFallback');
   const escape = renderer.utils.escapeHtml;
   const titleId = `article-audio-title-${blockIndex + 1}`;
   const src = escape(resolved.src);
@@ -134,7 +140,7 @@ function renderArticleAudio(tokens, index, _options, env, renderer) {
   );
   parts.push(`<source src="${src}" type="${mimeType}">`);
   parts.push('</audio>');
-  parts.push(`<a class="article-audio__fallback" href="${src}">无法播放时打开音频文件</a>`);
+  parts.push(`<a class="article-audio__fallback" href="${src}">${escape(fallbackLabel)}</a>`);
   if (block.caption) {
     parts.push(`<p class="article-audio__caption">${escape(block.caption)}</p>`);
   }
@@ -157,12 +163,14 @@ function collectArticleAudioBlocks(md, markdownContent) {
   return env.articleAudio.blocks;
 }
 
-function renderArticleMarkdown(md, markdownContent, resolvedAudioBlocks) {
+function renderArticleMarkdown(md, markdownContent, resolvedAudioBlocks, locale = DEFAULT_LOCALE) {
+  assertSupportedLocale(locale);
   const env = {
     articleAudio: {
       blocks: [],
       resolvedAudioBlocks,
-      styleEmitted: false
+      styleEmitted: false,
+      locale
     }
   };
   return md.render(markdownContent, env);

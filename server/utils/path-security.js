@@ -1,4 +1,5 @@
 const path = require('path');
+const { isSupportedLocale } = require('../i18n/config');
 
 const SAFE_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -41,11 +42,33 @@ function resolveArticlePath(root, slug) {
   return resolveOwnedPath(root, `${slug}.md`);
 }
 
+/**
+ * Resolve an article archive path scoped by locale. Chinese and English
+ * versions of the same slug never collide because the locale is the first
+ * path segment, and both the locale and the slug are strictly validated
+ * before any path join.
+ *
+ * @param {string} root - articles root directory
+ * @param {'zh' | 'en'} locale - supported article locale
+ * @param {string} slug - safe lowercase kebab-case slug
+ * @returns {string}
+ */
+function resolveLocalizedArticlePath(root, locale, slug) {
+  if (!isSupportedLocale(locale)) {
+    throw new Error(`unsupported locale: ${locale}`);
+  }
+  if (!isSafeSlug(slug)) {
+    throw new Error('slug 格式不安全');
+  }
+  return resolveOwnedPath(root, path.join(locale, `${slug}.md`));
+}
+
 module.exports = {
   SAFE_SLUG_PATTERN,
   isSafeSlug,
   isSafeZipEntryName,
   resolveArticlePath,
+  resolveLocalizedArticlePath,
   resolveOwnedPath,
   resolveZipEntryPath
 };

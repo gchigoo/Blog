@@ -34,7 +34,6 @@ const {
   serializeArticlePublication
 } = require('../article-audio/publication');
 const config = require('../config');
-const { createTagResolver, SYSTEM_TAG_ID } = require('../articles/schema');
 const {
   deleteArticleSearchDocument,
   upsertArticleSearchDocument
@@ -155,7 +154,7 @@ router.post('/preview', authenticateToken, receiveArticleUpload, async (req, res
       title: data.title,
       description: data.description,
       status: data.status,
-      html: renderMarkdown(previewContent)
+      html: renderMarkdown(previewContent, { locale: data.locale })
     });
   } catch (error) {
     if (error instanceof MarkdownMetadataError) {
@@ -171,8 +170,8 @@ router.post('/preview', authenticateToken, receiveArticleUpload, async (req, res
   }
 });
 
-function selectAvailableArticleSlug(requestedSlug) {
-  if (!dbGet('SELECT id FROM articles WHERE slug = ? AND locale = ?', [requestedSlug, 'zh'])) {
+function selectAvailableArticleSlug(requestedSlug, locale) {
+  if (!dbGet('SELECT id FROM articles WHERE slug = ? AND locale = ?', [requestedSlug, locale])) {
     return requestedSlug;
   }
 
@@ -181,8 +180,75 @@ function selectAvailableArticleSlug(requestedSlug) {
   do {
     candidate = `${requestedSlug}-${suffix}`;
     suffix += 1;
-  } while (dbGet('SELECT id FROM articles WHERE slug = ? AND locale = ?', [candidate, 'zh']));
+  } while (dbGet('SELECT id FROM articles WHERE slug = ? AND locale = ?', [candidate, locale]));
   return candidate;
+}
+
+/**
+ * Validate every front matter tag as an existing stable taxonomy ID. No
+ * free-text labels, no legacy allocation, and no database writes here: the
+ * English locale additionally refuses legacy-origin tags that carry no
+ * localized content yet.
+ */
+function validateTaxonomyTags(db, locale, tags) {
+  const placeholders = tags.map(() => '?').join(', ');
+  const rows = dbAll(`SELECT id, origin FROM tags WHERE id IN (${placeholders})`, tags);
+  const byId = new Map(rows.map(row => [row.id, row]));
+  const missing = tags.filter(tag => !byId.has(tag));
+  if (missing.length > 0) {
+    throw articleAudioError(400, 'unknown_taxonomy_tag', `未知标签: ${missing.join(', ')}`);
+  }
+  if (locale === 'en') {
+    const unlocalized = tags.filter(tag => byId.get(tag).origin === 'legacy');
+    if (unlocalized.length > 0) {
+      throw articleAudioError(400, 'unlocalized_taxonomy_tag', '英文文章不能引用 legacy 标签');
+    }
+  }
+}
+
+/**
+ * Read-only publication identity planning. Explicit translation keys are used
+ * exactly as supplied (never suffixed); omitted keys keep the backward
+ * compatible serialized allocation where a same-locale conflict receives a
+ * numeric suffix and a free slug may attach to an existing logical post.
+ *
+ * @returns {{ finalSlug: string, finalTranslationKey: string, postId: number | null }}
+ */
+function planPublicationIdentity(db, data) {
+  const locale = data.locale;
+
+  if (data.translationKeyExplicit) {
+    const existingPost = dbGet('SELECT id FROM posts WHERE translation_key = ?', [data.translationKey]);
+    let postId = null;
+    if (existingPost) {
+      const sibling = dbGet('SELECT id FROM articles WHERE post_id = ? AND locale = ?', [existingPost.id, locale]);
+      if (sibling) {
+        throw articleAudioError(409, 'translation_locale_exists', '同语言下该翻译键已存在文章');
+      }
+      postId = existingPost.id;
+    }
+    const slugOwner = dbGet('SELECT id, post_id FROM articles WHERE slug = ? AND locale = ?', [data.slug, locale]);
+    if (slugOwner && (!postId || slugOwner.post_id !== postId)) {
+      throw articleAudioError(409, 'locale_slug_exists', '该 slug 已被其他文章占用');
+    }
+    return { finalSlug: data.slug, finalTranslationKey: data.translationKey, postId };
+  }
+
+  const slugOwner = dbGet('SELECT id FROM articles WHERE slug = ? AND locale = ?', [data.slug, locale]);
+  if (slugOwner) {
+    const finalSlug = selectAvailableArticleSlug(data.slug, locale);
+    return { finalSlug, finalTranslationKey: finalSlug, postId: null };
+  }
+  const existingPost = dbGet('SELECT id FROM posts WHERE translation_key = ?', [data.slug]);
+  if (existingPost) {
+    const sibling = dbGet('SELECT id FROM articles WHERE post_id = ? AND locale = ?', [existingPost.id, locale]);
+    if (sibling) {
+      const finalSlug = selectAvailableArticleSlug(data.slug, locale);
+      return { finalSlug, finalTranslationKey: finalSlug, postId: null };
+    }
+    return { finalSlug: data.slug, finalTranslationKey: data.slug, postId: existingPost.id };
+  }
+  return { finalSlug: data.slug, finalTranslationKey: data.slug, postId: null };
 }
 
 /**
@@ -280,25 +346,49 @@ router.post('/upload', authenticateToken, receiveArticleUpload, async (req, res)
     if (!isSafeSlug(data.slug)) {
       return res.status(400).json({ error: 'slug 格式不安全' });
     }
-    
+
+    validateTaxonomyTags(db, data.locale, data.tags);
+
     const publication = await serializeArticlePublication(async () => {
       let audioAssets = emptyAudioAssets();
       let publicationStarted = false;
       try {
         let replacementArticle = null;
+        let replacementPost = null;
+        let identity = null;
+        let locale;
         if (req.body.replaceId !== undefined && req.body.replaceId !== '') {
           if (typeof req.body.replaceId !== 'string' || !/^\d+$/.test(req.body.replaceId)) {
             return Promise.reject(articleAudioError(400, 'article_replace_invalid', '替换文章参数无效'));
           }
-          replacementArticle = dbGet('SELECT id, slug, post_id FROM articles WHERE id = ?', [req.body.replaceId]);
+          replacementArticle = dbGet('SELECT id, locale, slug, post_id FROM articles WHERE id = ?', [req.body.replaceId]);
           if (!replacementArticle) {
             return Promise.reject(articleAudioError(404, 'article_replace_not_found', '替换文章不存在'));
           }
           if (replacementArticle.slug !== data.slug) {
             return Promise.reject(articleAudioError(400, 'article_replace_slug_mismatch', '替换文章必须保持原 slug'));
           }
+          if (replacementArticle.locale !== data.locale) {
+            return Promise.reject(articleAudioError(400, 'article_replace_locale_mismatch', '替换文章必须保持原 locale'));
+          }
+          replacementPost = dbGet('SELECT id, translation_key FROM posts WHERE id = ?', [replacementArticle.post_id]);
+          if (!replacementPost || replacementPost.translation_key !== data.translationKey) {
+            return Promise.reject(
+              articleAudioError(400, 'article_replace_translation_key_mismatch', '替换文章必须保持原 translationKey')
+            );
+          }
+          articleSlug = replacementArticle.slug;
+          locale = replacementArticle.locale;
+        } else {
+          identity = planPublicationIdentity(db, data);
+          articleSlug = identity.finalSlug;
+          locale = data.locale;
         }
-        articleSlug = replacementArticle ? replacementArticle.slug : selectAvailableArticleSlug(data.slug);
+        const finalTranslationKey = replacementArticle
+          ? replacementPost.translation_key
+          : identity.finalTranslationKey;
+        const articlesRoot = path.join(config.articlesDir, locale);
+        const audioRoot = path.join(config.audioDir, locale);
         const publicationStage = path.join(
           config.uploadDir,
           `publish-${Date.now()}-${Math.round(Math.random() * 1E9)}`
@@ -307,6 +397,7 @@ router.post('/upload', authenticateToken, receiveArticleUpload, async (req, res)
 
         if (audioBlocks.length > 0) {
           audioAssets = await prepareArticleAudioAssets({
+            locale,
             articleSlug,
             markdownEntryName,
             audioBlocks,
@@ -342,29 +433,28 @@ router.post('/upload', authenticateToken, receiveArticleUpload, async (req, res)
         }
 
         // 图片路径先写回作者态 Markdown，再使用 resolved audio blocks 生成最终 HTML。
+        // The article locale drives the stored audio fallback label so persisted
+        // HTML is already localized for the language it was authored in.
         let updatedContent = content;
         if (Object.keys(imageMap).length > 0) {
           updatedContent = replaceImagePaths(content, imageMap);
         }
         const updatedHtml = renderMarkdown(updatedContent, {
-          resolvedAudioBlocks: audioAssets.resolvedBlocks
+          resolvedAudioBlocks: audioAssets.resolvedBlocks,
+          locale
         });
         const savedMarkdown = serializeMarkdownDocument(updatedContent, {
           title: data.title,
           slug: articleSlug,
+          locale,
+          translationKey: finalTranslationKey,
           tags: data.tags,
           date: data.date,
           description: data.description,
           status: data.status
         });
 
-        const resolveTagId = createTagResolver(db, { acceptTagIds: true });
         const insertArticleTag = db.prepare('INSERT OR IGNORE INTO article_tags (article_id, tag_id) VALUES (?, ?)');
-        const resolveTagIds = tags => {
-          const ids = tags.map(tag => resolveTagId(tag));
-          if (ids.length === 0) ids.push(SYSTEM_TAG_ID);
-          return [...new Set(ids)];
-        };
 
         const commitArticle = db.transaction(() => {
           const now = new Date().toISOString();
@@ -380,26 +470,49 @@ router.post('/upload', authenticateToken, receiveArticleUpload, async (req, res)
             db.prepare('UPDATE posts SET updated_at = ? WHERE id = ?')
               .run(now, replacementArticle.post_id);
             db.prepare('DELETE FROM article_tags WHERE article_id = ?').run(replacementArticle.id);
-            for (const tagId of resolveTagIds(data.tags)) {
+            for (const tagId of data.tags) {
               insertArticleTag.run(replacementArticle.id, tagId);
             }
             upsertArticleSearchDocument(db, replacementArticle.id);
             return { id: replacementArticle.id, changes: updateInfo.changes };
           }
-          const postInfo = db.prepare(`
-            INSERT INTO posts (translation_key, created_at, updated_at)
-            VALUES (?, ?, ?)
-          `).run(articleSlug, data.date, now);
+
+          // Recheck and allocate the logical post inside the final transaction.
+          // The publication serializer guarantees no other publication is
+          // mid-flight, so a planned post can only vanish if external tooling
+          // deleted it; every violation rolls the new post back with the
+          // transaction before any success is reported.
+          let postId = identity.postId;
+          if (!postId) {
+            const existingPost = dbGet('SELECT id FROM posts WHERE translation_key = ?', [finalTranslationKey]);
+            if (existingPost) {
+              const sibling = dbGet('SELECT id FROM articles WHERE post_id = ? AND locale = ?', [existingPost.id, locale]);
+              if (sibling) {
+                throw articleAudioError(409, 'translation_locale_exists', '同语言下该翻译键已存在文章');
+              }
+              postId = existingPost.id;
+            } else {
+              const postInfo = db.prepare(`
+                INSERT INTO posts (translation_key, created_at, updated_at)
+                VALUES (?, ?, ?)
+              `).run(finalTranslationKey, data.date, now);
+              postId = Number(postInfo.lastInsertRowid);
+            }
+          }
+          const slugOwner = dbGet('SELECT id FROM articles WHERE slug = ? AND locale = ?', [articleSlug, locale]);
+          if (slugOwner) {
+            throw articleAudioError(409, 'locale_slug_exists', '该 slug 已被其他文章占用');
+          }
           const articleInfo = db.prepare(`
             INSERT INTO articles
               (post_id, locale, title, slug, content, html, status, description, created_at, updated_at)
-            VALUES (?, 'zh', ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
-            postInfo.lastInsertRowid, data.title, articleSlug, updatedContent, updatedHtml,
+            postId, locale, data.title, articleSlug, updatedContent, updatedHtml,
             data.status, data.description || null, data.date, now
           );
           const articleId = Number(articleInfo.lastInsertRowid);
-          for (const tagId of resolveTagIds(data.tags)) {
+          for (const tagId of data.tags) {
             insertArticleTag.run(articleId, tagId);
           }
           upsertArticleSearchDocument(db, articleId);
@@ -411,14 +524,14 @@ router.post('/upload', authenticateToken, receiveArticleUpload, async (req, res)
           articleSlug,
           markdown: savedMarkdown,
           stagingRoot: publicationStage,
-          articlesRoot: config.articlesDir,
+          articlesRoot,
           audioAssets,
           commitDatabase: commitArticle
         };
         const result = replacementArticle
           ? await replaceArticlePublication({
             ...publicationOptions,
-            publicAudioRoot: config.audioDir
+            publicAudioRoot: audioRoot
           })
           : await publishArticle(publicationOptions);
         return {
@@ -519,14 +632,14 @@ router.delete('/articles/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const deletion = await serializeArticlePublication(async () => {
-      const article = dbGet('SELECT id, slug, post_id FROM articles WHERE id = ?', [id]);
+      const article = dbGet('SELECT id, locale, slug, post_id FROM articles WHERE id = ?', [id]);
       if (!article) return { status: 'not-found' };
       if (!isSafeSlug(article.slug)) return { status: 'unsafe-slug' };
 
       const result = await deleteArticlePublication({
         articleSlug: article.slug,
-        articlesRoot: config.articlesDir,
-        publicAudioRoot: config.audioDir,
+        articlesRoot: path.join(config.articlesDir, article.locale),
+        publicAudioRoot: path.join(config.audioDir, article.locale),
         commitDatabase: () => db.transaction(() => {
           deleteArticleSearchDocument(db, article.id);
           const deleted = dbRun('DELETE FROM articles WHERE id = ?', [article.id]);

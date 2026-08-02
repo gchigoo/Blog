@@ -7,6 +7,7 @@ const test = require('node:test');
 const AdmZip = require('adm-zip');
 const Database = require('better-sqlite3');
 const jwt = require('jsonwebtoken');
+const matter = require('gray-matter');
 const { createProjectFixture, runNode, startServer } = require('./helpers/project-fixture');
 const { validMp3 } = require('./helpers/article-audio-fixtures');
 
@@ -78,7 +79,7 @@ test('uploads an article ZIP with a hashed MP3 and resolved audio HTML', async t
   const markdown = `---
 title: AI Song Experiment
 slug: ai-song-experiment
-tags: [AI, music]
+tags: [other]
 ---
 
 # Making the song
@@ -105,18 +106,18 @@ caption: Final mix
   const article = db.prepare('SELECT content, html FROM articles WHERE slug = ?').get('ai-song-experiment');
   db.close();
   assert.match(article.content, /src: \.\/audio\/final\.mp3/);
-  assert.match(article.html, new RegExp(`/audio/ai-song-experiment/${hash}\\.mp3`));
+  assert.match(article.html, new RegExp(`/audio/zh/ai-song-experiment/${hash}\\.mp3`));
   assert.match(article.html, /<figure class="article-audio">/);
   assert.doesNotMatch(article.html, /src="\.\/audio\/final\.mp3"/);
 
-  const savedMarkdown = await fs.readFile(path.join(root, 'articles', 'ai-song-experiment.md'), 'utf8');
+  const savedMarkdown = await fs.readFile(path.join(root, 'articles', 'zh', 'ai-song-experiment.md'), 'utf8');
   assert.match(savedMarkdown, /src: \.\/audio\/final\.mp3/);
   assert.deepEqual(
-    await fs.readFile(path.join(root, 'public', 'audio', 'ai-song-experiment', `${hash}.mp3`)),
+    await fs.readFile(path.join(root, 'public', 'audio', 'zh', 'ai-song-experiment', `${hash}.mp3`)),
     mp3
   );
 
-  const audioUrl = `${baseUrl}/audio/ai-song-experiment/${hash}.mp3`;
+  const audioUrl = `${baseUrl}/audio/zh/ai-song-experiment/${hash}.mp3`;
   const getResponse = await fetch(audioUrl);
   assert.equal(getResponse.status, 200);
   assert.match(getResponse.headers.get('content-type'), /^audio\/mpeg\b/);
@@ -138,7 +139,7 @@ caption: Final mix
   });
   assert.equal(deleteResponse.status, 200, await deleteResponse.text());
   await assert.rejects(
-    fs.access(path.join(root, 'public', 'audio', 'ai-song-experiment')),
+    fs.access(path.join(root, 'public', 'audio', 'zh', 'ai-song-experiment')),
     { code: 'ENOENT' }
   );
   assert.equal((await fetch(audioUrl)).status, 404);
@@ -160,7 +161,7 @@ test('publishes, serves, and deletes one article containing all supported audio 
   const markdown = `---
 title: Multi Format Audio
 slug: multi-format-audio
-tags: [audio]
+tags: [other]
 ---
 
 ${formats.map(([extension], index) => `:::audio
@@ -186,11 +187,11 @@ src: ./audio/track.${extension}
   const urls = [];
   for (const [extension, mimeType, bytes] of formats) {
     const hash = crypto.createHash('sha256').update(bytes).digest('hex');
-    const url = `${baseUrl}/audio/multi-format-audio/${hash}.${extension}`;
+    const url = `${baseUrl}/audio/zh/multi-format-audio/${hash}.${extension}`;
     urls.push(url);
-    assert.match(article.html, new RegExp(`<source src="/audio/multi-format-audio/${hash}\\.${extension}" type="${mimeType}">`));
+    assert.match(article.html, new RegExp(`<source src="/audio/zh/multi-format-audio/${hash}\\.${extension}" type="${mimeType}">`));
     assert.deepEqual(
-      await fs.readFile(path.join(root, 'public', 'audio', 'multi-format-audio', `${hash}.${extension}`)),
+      await fs.readFile(path.join(root, 'public', 'audio', 'zh', 'multi-format-audio', `${hash}.${extension}`)),
       bytes
     );
     const audioResponse = await fetch(url);
@@ -226,7 +227,7 @@ test('allows a 100 MiB upload and rejects the next byte with a stable 413 code',
 test('/audio returns canonical MIME with exact HEAD, Range, and 416 semantics', async t => {
   const { root, baseUrl } = await prepareServer(t);
   const hash = 'c'.repeat(64);
-  const directory = path.join(root, 'public', 'audio', 'static-audio');
+  const directory = path.join(root, 'public', 'audio', 'zh', 'static-audio');
   await fs.mkdir(directory, { recursive: true });
   const formats = [
     ['mp3', 'audio/mpeg'],
@@ -238,7 +239,7 @@ test('/audio returns canonical MIME with exact HEAD, Range, and 416 semantics', 
   for (const [extension, mimeType] of formats) {
     const bytes = Buffer.from(`${extension}-audio-bytes`);
     await fs.writeFile(path.join(directory, `${hash}.${extension}`), bytes);
-    const url = `${baseUrl}/audio/static-audio/${hash}.${extension}`;
+    const url = `${baseUrl}/audio/zh/static-audio/${hash}.${extension}`;
 
     const getResponse = await fetch(url);
     assert.equal(getResponse.status, 200);
@@ -263,8 +264,8 @@ test('/audio returns canonical MIME with exact HEAD, Range, and 416 semantics', 
 
   await fs.writeFile(path.join(directory, `${hash}.wav`), Buffer.from('unsupported'));
   await fs.writeFile(path.join(directory, `${hash}.FLAC`), Buffer.from('wrong-case'));
-  assert.equal((await fetch(`${baseUrl}/audio/static-audio/${hash}.wav`)).status, 404);
-  assert.equal((await fetch(`${baseUrl}/audio/static-audio/${hash}.FLAC`)).status, 404);
+  assert.equal((await fetch(`${baseUrl}/audio/zh/static-audio/${hash}.wav`)).status, 404);
+  assert.equal((await fetch(`${baseUrl}/audio/zh/static-audio/${hash}.FLAC`)).status, 404);
 });
 
 test('rejects an audio block in a standalone Markdown upload without leaving state', async t => {
@@ -287,8 +288,8 @@ src: ./missing.mp3
   const db = new Database(path.join(root, 'blog.db'));
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM articles WHERE slug = ?').get('missing-archive').count, 0);
   db.close();
-  await assert.rejects(fs.access(path.join(root, 'articles', 'missing-archive.md')), { code: 'ENOENT' });
-  await assert.rejects(fs.access(path.join(root, 'public', 'audio', 'missing-archive')), { code: 'ENOENT' });
+  await assert.rejects(fs.access(path.join(root, 'articles', 'zh', 'missing-archive.md')), { code: 'ENOENT' });
+  await assert.rejects(fs.access(path.join(root, 'public', 'audio', 'zh', 'missing-archive')), { code: 'ENOENT' });
 });
 
 test('serializes concurrent uploads that request the same slug', async t => {
@@ -324,8 +325,8 @@ src: ./audio/final.mp3
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM articles WHERE title = ?').get('Concurrent Song').count, 2);
   db.close();
   for (const slug of slugs) {
-    await assert.doesNotReject(() => fs.access(path.join(root, 'articles', `${slug}.md`)));
-    const audioFiles = await fs.readdir(path.join(root, 'public', 'audio', slug));
+    await assert.doesNotReject(() => fs.access(path.join(root, 'articles', 'zh', `${slug}.md`)));
+    const audioFiles = await fs.readdir(path.join(root, 'public', 'audio', 'zh', slug));
     assert.equal(audioFiles.length, 1);
   }
 });
@@ -369,13 +370,83 @@ src: ./audio/final.mp3
   db.close();
   assert.equal(winner.slug, replacement.article.slug);
   assert.deepEqual(
-    await fs.readFile(path.join(root, 'public', 'audio', winner.slug, `${hash}.mp3`)),
+    await fs.readFile(path.join(root, 'public', 'audio', 'zh', winner.slug, `${hash}.mp3`)),
     mp3
   );
-  assert.equal((await fetch(`${baseUrl}/audio/${winner.slug}/${hash}.mp3`)).status, 200);
+  assert.equal((await fetch(`${baseUrl}/audio/zh/${winner.slug}/${hash}.mp3`)).status, 200);
 
-  const articleFiles = await fs.readdir(path.join(root, 'articles'));
+  const articleFiles = await fs.readdir(path.join(root, 'articles', 'zh'));
   const audioDirectories = await fs.readdir(path.join(root, 'public', 'audio'));
   assert.equal(articleFiles.some(name => name.startsWith('.deleting-')), false);
   assert.equal(audioDirectories.some(name => name.startsWith('.deleting-')), false);
+});
+
+test('publishes identical audio slugs independently under zh and en locale roots', async t => {
+  const { root, baseUrl } = await prepareServer(t);
+  const mp3 = validMp3();
+  const hash = crypto.createHash('sha256').update(mp3).digest('hex');
+  const zhMarkdown = `---
+title: 中文歌曲
+slug: same-song
+locale: zh
+translationKey: same-song
+---
+
+:::audio
+title: 中文音频
+src: ./audio/final.mp3
+:::`;
+  const enMarkdown = `---
+title: English Song
+slug: same-song
+locale: en
+translationKey: same-song
+---
+
+:::audio
+title: English Audio
+src: ./audio/final.mp3
+:::`;
+  const zhZip = new AdmZip();
+  zhZip.addFile('zh.md', Buffer.from(zhMarkdown));
+  zhZip.addFile('audio/final.mp3', mp3);
+  const enZip = new AdmZip();
+  enZip.addFile('en.md', Buffer.from(enMarkdown));
+  enZip.addFile('audio/final.mp3', mp3);
+
+  const [zhResponse, enResponse] = await Promise.all([
+    upload(baseUrl, 'zh.zip', zhZip.toBuffer()),
+    upload(baseUrl, 'en.zip', enZip.toBuffer())
+  ]);
+  const zhBody = await zhResponse.json();
+  const enBody = await enResponse.json();
+  assert.equal(zhResponse.status, 200, JSON.stringify(zhBody));
+  assert.equal(enResponse.status, 200, JSON.stringify(enBody));
+
+  await assert.doesNotReject(() => fs.access(path.join(root, 'articles', 'zh', 'same-song.md')));
+  await assert.doesNotReject(() => fs.access(path.join(root, 'articles', 'en', 'same-song.md')));
+  await assert.doesNotReject(() => fs.access(path.join(root, 'public', 'audio', 'zh', 'same-song', `${hash}.mp3`)));
+  await assert.doesNotReject(() => fs.access(path.join(root, 'public', 'audio', 'en', 'same-song', `${hash}.mp3`)));
+  assert.equal((await fetch(`${baseUrl}/audio/zh/same-song/${hash}.mp3`)).status, 200);
+  assert.equal((await fetch(`${baseUrl}/audio/en/same-song/${hash}.mp3`)).status, 200);
+  assert.equal((await fetch(`${baseUrl}/audio/same-song/${hash}.mp3`)).status, 404);
+
+  const db = new Database(path.join(root, 'blog.db'));
+  const articles = db.prepare('SELECT locale, slug, post_id FROM articles WHERE slug = ? ORDER BY locale').all('same-song');
+  assert.deepEqual(articles.map(article => article.locale), ['en', 'zh']);
+  assert.equal(articles[0].post_id, articles[1].post_id);
+  assert.equal(
+    db.prepare('SELECT translation_key FROM posts WHERE id = ?').get(articles[0].post_id).translation_key,
+    'same-song'
+  );
+  db.close();
+
+  const zhMarkdownFile = await fs.readFile(path.join(root, 'articles', 'zh', 'same-song.md'), 'utf8');
+  const enMarkdownFile = await fs.readFile(path.join(root, 'articles', 'en', 'same-song.md'), 'utf8');
+  assert.match(zhMarkdownFile, /locale: zh/);
+  assert.match(zhMarkdownFile, /translationKey: same-song/);
+  assert.match(enMarkdownFile, /locale: en/);
+  assert.match(enMarkdownFile, /translationKey: same-song/);
+  assert.deepEqual(matter(zhMarkdownFile).data.tags, ['other']);
+  assert.deepEqual(matter(enMarkdownFile).data.tags, ['other']);
 });
