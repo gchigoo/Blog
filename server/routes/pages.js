@@ -372,9 +372,12 @@ function createLocalizedPagesRouter({ config, articleService, commentsModule }) 
       return renderNotFound(req, res, config);
     }
     // A target-locale alternate/switch URL exists only when that locale also
-    // has page N under the same explicit pagination contract.
+    // has page N under the same explicit pagination contract. The other-locale
+    // query must use the real config.pageSize so totalPages reflects the
+    // locale's actual page count (page size 1 would overcount and advertise
+    // dead hreflang/switch targets).
     const other = otherLocaleOf(locale);
-    const otherResult = articleService.listPublished(other, 1, 1);
+    const otherResult = articleService.listPublished(other, 1, config.pageSize);
     const otherHasPage = page <= Math.max(1, otherResult.totalPages);
     const homePath = target => (page === 1 ? `/${target}/` : `/${target}/?page=${page}`);
     const seo = baseSeo(req, res, res.locals.site.title, res.locals.site.description, homePath(locale));

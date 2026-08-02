@@ -2168,6 +2168,58 @@ test('home pagination emits alternates only where the target locale page exists'
   assert.match(await zhOverflow.text(), /<html lang="zh-CN"/);
 });
 
+test('home pagination with a nonzero other locale keeps reciprocal alternates only for shared real pages', async t => {
+  const { baseUrl } = await seoSeededHarness(t, (db, created) => {
+    // zh: 41 posts -> 3 real pages at pageSize 20; en: 21 posts -> 2 real
+    // pages. Page 2 is shared; page 3 exists only in zh.
+    for (let index = 1; index <= 41; index += 1) {
+      insertLocalizedPost(db, {
+        translationKey: `zh-mid-${index}`, locale: 'zh', slug: `zh-mid-${index}`,
+        title: `中文文章 ${index}`, created: created(index)
+      });
+    }
+    for (let index = 1; index <= 21; index += 1) {
+      insertLocalizedPost(db, {
+        translationKey: `en-mid-${index}`, locale: 'en', slug: `en-mid-${index}`,
+        title: `English ${index}`, created: created(index + 100)
+      });
+    }
+  });
+
+  // Page 1 is shared: both locales keep reciprocal hreflang alternates.
+  const zhHome = await (await fetch(`${baseUrl}/zh/`)).text();
+  assert.match(zhHome, /hreflang="zh" href="https:\/\/blog\.example\.test\/zh\/"/);
+  assert.match(zhHome, /hreflang="en" href="https:\/\/blog\.example\.test\/en\/"/);
+  const enHome = await (await fetch(`${baseUrl}/en/`)).text();
+  assert.match(enHome, /hreflang="zh" href="https:\/\/blog\.example\.test\/zh\/"/);
+  assert.match(enHome, /hreflang="en" href="https:\/\/blog\.example\.test\/en\/"/);
+
+  // Page 2 is shared (zh 41 posts -> 3 pages, en 21 posts -> 2 pages).
+  const zhPage2 = await (await fetch(`${baseUrl}/zh/?page=2`)).text();
+  assert.match(zhPage2, /<link rel="canonical" href="https:\/\/blog\.example\.test\/zh\/\?page=2">/);
+  assert.match(zhPage2, /hreflang="zh" href="https:\/\/blog\.example\.test\/zh\/\?page=2"/);
+  assert.match(zhPage2, /hreflang="en" href="https:\/\/blog\.example\.test\/en\/\?page=2"/);
+  const enPage2 = await (await fetch(`${baseUrl}/en/?page=2`)).text();
+  assert.match(enPage2, /hreflang="zh" href="https:\/\/blog\.example\.test\/zh\/\?page=2"/);
+  assert.match(enPage2, /hreflang="en" href="https:\/\/blog\.example\.test\/en\/\?page=2"/);
+
+  // Page 3 exists only in zh: no dead English alternate/switch target.
+  const zhPage3 = await (await fetch(`${baseUrl}/zh/?page=3`)).text();
+  assert.match(zhPage3, /<link rel="canonical" href="https:\/\/blog\.example\.test\/zh\/\?page=3">/);
+  assert.match(zhPage3, /hreflang="zh" href="https:\/\/blog\.example\.test\/zh\/\?page=3"/);
+  assert.doesNotMatch(zhPage3, /hreflang="en"/);
+  assert.match(zhPage3, /hreflang="x-default" href="https:\/\/blog\.example\.test\/">/);
+
+  // The corresponding other-locale URL is a localized 404 under the Task 8
+  // contract, and zh page 4 is likewise out of range.
+  const enPage3 = await fetch(`${baseUrl}/en/?page=3`);
+  assert.equal(enPage3.status, 404);
+  assert.match(await enPage3.text(), /<html lang="en"/);
+  const zhPage4 = await fetch(`${baseUrl}/zh/?page=4`);
+  assert.equal(zhPage4.status, 404);
+  assert.match(await zhPage4.text(), /<html lang="zh-CN"/);
+});
+
 test('static pages always carry zh/en alternates and search stays noindex with a locale-prefixed canonical', async t => {
   const { baseUrl } = await seoSeededHarness(t, (db, created) => {
     insertLocalizedPost(db, { translationKey: 'dual-post', locale: 'zh', slug: 'dual-post', title: '双语', created: created(1) });
