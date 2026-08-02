@@ -2411,3 +2411,129 @@ test('root sitemap localizes static/article/taxonomy URLs with reciprocal altern
   assert.ok(locs.length >= 12, `expected a rich sitemap, got ${locs.length} URLs`);
   assert.equal(new Set(locs).size, locs.length);
 });
+
+// ---------------------------------------------------------------------------
+// Final review I-1: published legacy-origin DB tags absent from the catalog
+// ---------------------------------------------------------------------------
+
+test('published legacy-origin DB tags absent from the catalog resolve on localized tag pages, overview, chips, sitemap, and legacy redirects', async t => {
+  const root = await createProjectFixture(t);
+  // Release-shape fixture: the committed content/taxonomy.json has no fine
+  // tags beyond the system `other`, so a migration-created `origin='legacy'`
+  // tag seeded into the DB is absent from the catalog by construction.
+  const init = runNode(root, 'server/scripts/init-db.js', [], { INITIAL_ADMIN_PASSWORD: INITIAL_PASSWORD });
+  assert.equal(init.status, 0, init.stderr);
+  const db = new Database(path.join(root, 'blog.db'));
+  db.pragma('foreign_keys = ON');
+  const legacyTagId = `legacy-${createHash('sha256').update('效率工具').digest('hex').slice(0, 12)}`;
+  // allocateLegacyTag shape: legacy tag under the system uncategorized
+  // category, both locale labels sharing the deterministic slug.
+  db.prepare(`
+    INSERT INTO tags (id, category_id, sort_order, origin, is_system)
+    VALUES (?, 'uncategorized', 0, 'legacy', 0)
+  `).run(legacyTagId);
+  db.prepare(`
+    INSERT INTO tag_labels (tag_id, locale, name, slug) VALUES (?, 'zh', '效率工具', ?), (?, 'en', '效率工具', ?)
+  `).run(legacyTagId, legacyTagId, legacyTagId, legacyTagId);
+  const created = day => new Date(Date.UTC(2026, 0, day)).toISOString();
+  const zhPost = insertLocalizedPost(db, {
+    translationKey: 'legacy-tag-zh', locale: 'zh', slug: 'legacy-tag-zh',
+    title: '效率工具中文笔记', created: created(1)
+  });
+  attachTags(db, zhPost.articleId, [legacyTagId]);
+  const enPost = insertLocalizedPost(db, {
+    translationKey: 'legacy-tag-en', locale: 'en', slug: 'legacy-tag-en',
+    title: 'Efficiency Tool English Notes', created: created(2)
+  });
+  attachTags(db, enPost.articleId, [legacyTagId]);
+
+  // A zh-only legacy tag: the en endpoint must stay a localized 404 and the
+  // zh page must not pair an en alternate that has no published endpoint.
+  const zhOnlyTagId = `legacy-${createHash('sha256').update('旧笔记').digest('hex').slice(0, 12)}`;
+  db.prepare(`
+    INSERT INTO tags (id, category_id, sort_order, origin, is_system)
+    VALUES (?, 'uncategorized', 0, 'legacy', 0)
+  `).run(zhOnlyTagId);
+  db.prepare(`
+    INSERT INTO tag_labels (tag_id, locale, name, slug) VALUES (?, 'zh', '旧笔记', ?), (?, 'en', '旧笔记', ?)
+  `).run(zhOnlyTagId, zhOnlyTagId, zhOnlyTagId, zhOnlyTagId);
+  const zhOnlyPost = insertLocalizedPost(db, {
+    translationKey: 'legacy-zhonly', locale: 'zh', slug: 'legacy-zhonly',
+    title: '旧笔记归档', created: created(3)
+  });
+  attachTags(db, zhOnlyPost.articleId, [zhOnlyTagId]);
+
+  // A legacy tag with only a draft article: zero published count must 404.
+  const draftTagId = `legacy-${createHash('sha256').update('草稿标签').digest('hex').slice(0, 12)}`;
+  db.prepare(`
+    INSERT INTO tags (id, category_id, sort_order, origin, is_system)
+    VALUES (?, 'uncategorized', 0, 'legacy', 0)
+  `).run(draftTagId);
+  db.prepare(`
+    INSERT INTO tag_labels (tag_id, locale, name, slug) VALUES (?, 'zh', '草稿标签', ?), (?, 'en', '草稿标签', ?)
+  `).run(draftTagId, draftTagId, draftTagId, draftTagId);
+  const draftPost = insertLocalizedPost(db, {
+    translationKey: 'legacy-draft', locale: 'zh', slug: 'legacy-draft',
+    title: '未公开草稿', status: 'draft', created: created(4)
+  });
+  attachTags(db, draftPost.articleId, [draftTagId]);
+  db.close();
+
+  const server = await startServer(t, root, {
+    JWT_SECRET,
+    BLOG_PUBLIC_ORIGIN: 'https://blog.example.test'
+  });
+  const { baseUrl } = server;
+
+  // 1. Localized stored-slug endpoints resolve and render only that locale's
+  //    published articles.
+  const zhTag = await (await fetch(`${baseUrl}/zh/tag/${legacyTagId}`)).text();
+  assert.match(zhTag, /效率工具中文笔记/);
+  assert.doesNotMatch(zhTag, /Efficiency Tool English Notes/);
+  const enTag = await (await fetch(`${baseUrl}/en/tag/${legacyTagId}`)).text();
+  assert.match(enTag, /Efficiency Tool English Notes/);
+  assert.doesNotMatch(enTag, /效率工具中文笔记/);
+
+  // 2. Parent-category breadcrumb comes from the normalized DB category
+  //    labels (uncategorized zh = 其他).
+  assert.match(zhTag, /href="\/zh\/category\/%E5%85%B6%E4%BB%96"/);
+  assert.equal((await fetch(`${baseUrl}/zh/category/${encodeURIComponent('其他')}`)).status, 200);
+
+  // 3. Hreflang/language switch pairs by the stable tag id and only appears
+  //    when the other locale has a published endpoint (both do here).
+  assert.match(zhTag, /hreflang="en" href="https:\/\/blog\.example\.test\/en\/tag\/legacy-/);
+  assert.match(enTag, /hreflang="zh" href="https:\/\/blog\.example\.test\/zh\/tag\/legacy-/);
+
+  // 4. Overview, home chips, and sitemap all point at the 200 endpoint.
+  const overview = await (await fetch(`${baseUrl}/zh/tags`)).text();
+  assert.match(overview, new RegExp(`/zh/tag/${legacyTagId}`));
+  const home = await (await fetch(`${baseUrl}/zh/`)).text();
+  assert.match(home, new RegExp(`/zh/tag/${legacyTagId}`));
+  const sitemap = await (await fetch(`${baseUrl}/sitemap.xml`)).text();
+  assert.match(sitemap, new RegExp(`<loc>https://blog\\.example\\.test/zh/tag/${legacyTagId}</loc>`));
+  assert.match(sitemap, new RegExp(`<loc>https://blog\\.example\\.test/en/tag/${legacyTagId}</loc>`));
+
+  // 5. Legacy unprefixed paths 301 to the actual Chinese stored slug with the
+  //    raw query preserved (old display name and stored slug both work).
+  const byName = await fetch(`${baseUrl}/tag/${encodeURIComponent('效率工具')}?from=old`, { redirect: 'manual' });
+  assert.equal(byName.status, 301);
+  assert.equal(byName.headers.get('location'), `/zh/tag/${legacyTagId}?from=old`);
+  const bySlug = await fetch(`${baseUrl}/tag/${legacyTagId}?from=old`, { redirect: 'manual' });
+  assert.equal(bySlug.status, 301);
+  assert.equal(bySlug.headers.get('location'), `/zh/tag/${legacyTagId}?from=old`);
+
+  // 6. Unknown and zero-published-count tags stay localized 404.
+  assert.equal((await fetch(`${baseUrl}/zh/tag/unknown-tag`)).status, 404);
+  assert.equal((await fetch(`${baseUrl}/en/tag/unknown-tag`)).status, 404);
+  assert.equal((await fetch(`${baseUrl}/zh/tag/${draftTagId}`)).status, 404);
+  assert.equal((await fetch(`${baseUrl}/en/tag/${draftTagId}`)).status, 404);
+
+  // 7. A zh-only legacy tag stays a 200 in zh, renders only its own locale's
+  //    articles, offers no en alternate, and the en endpoint is a 404.
+  const zhOnly = await (await fetch(`${baseUrl}/zh/tag/${zhOnlyTagId}`)).text();
+  assert.match(zhOnly, /旧笔记归档/);
+  assert.doesNotMatch(zhOnly, /hreflang="en"/);
+  assert.equal((await fetch(`${baseUrl}/en/tag/${zhOnlyTagId}`)).status, 404);
+  // The sitemap only emits tags with a published count in that locale.
+  assert.doesNotMatch(sitemap, new RegExp(`/en/tag/${zhOnlyTagId}`));
+});

@@ -221,6 +221,53 @@ function createArticleService(db) {
   }
 
   /**
+   * Resolve a tag by its stored localized label (name or slug) in the
+   * normalized DB, regardless of origin. This is the fallback the public tag
+   * surfaces use for migration-created `origin='legacy'` tags the versioned
+   * catalog does not contain: the catalog keeps exact name/slug/legacyNames
+   * precedence, and the DB keeps the published runtime truth. Returns the
+   * stable tag identity with both locales' labels and the parent category
+   * labels, or null when no tag matches.
+   */
+  function findTag(locale, value) {
+    const normalized = String(value || '').normalize('NFKC').trim();
+    if (!normalized) return null;
+    const row = db.prepare(`
+      SELECT t.id AS id, t.category_id AS category_id, t.origin AS origin,
+             zh.name AS zh_name, zh.slug AS zh_slug,
+             en.name AS en_name, en.slug AS en_slug,
+             cz.name AS zh_category_name, cz.slug AS zh_category_slug,
+             ce.name AS en_category_name, ce.slug AS en_category_slug
+      FROM tag_labels tl
+      JOIN tags t ON t.id = tl.tag_id
+      JOIN tag_labels zh ON zh.tag_id = t.id AND zh.locale = 'zh'
+      JOIN tag_labels en ON en.tag_id = t.id AND en.locale = 'en'
+      JOIN category_labels cz ON cz.category_id = t.category_id AND cz.locale = 'zh'
+      JOIN category_labels ce ON ce.category_id = t.category_id AND ce.locale = 'en'
+      WHERE tl.locale = ? AND (tl.name = ? OR tl.slug = ?)
+      ORDER BY t.sort_order ASC, t.id ASC
+      LIMIT 1
+    `).get(locale, normalized, normalized);
+    if (!row) return null;
+    return {
+      id: row.id,
+      origin: row.origin,
+      categoryId: row.category_id,
+      labels: {
+        zh: { name: row.zh_name, slug: row.zh_slug },
+        en: { name: row.en_name, slug: row.en_slug }
+      },
+      category: {
+        id: row.category_id,
+        labels: {
+          zh: { name: row.zh_category_name, slug: row.zh_category_slug },
+          en: { name: row.en_category_name, slug: row.en_category_slug }
+        }
+      }
+    };
+  }
+
+  /**
    * Published articles in a category resolved by `(locale, category label slug)`.
    * An article with several tags in one category appears once (GROUP BY id).
    */
@@ -362,6 +409,7 @@ function createArticleService(db) {
 
   return Object.freeze({
     alternateFor,
+    findTag,
     getPublishedBySlug,
     listAdmin,
     listArchive,

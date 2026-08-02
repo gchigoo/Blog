@@ -116,7 +116,7 @@ app.use('/api', (req, res) => res.status(404).json({ error: '接口不存在' })
 app.use(createRootNegotiatorRouter());
 app.use('/zh', createSlashCanonicalizerRouter('zh'));
 app.use('/en', createSlashCanonicalizerRouter('en'));
-app.use(createLegacyRedirectRouter({ config }));
+app.use(createLegacyRedirectRouter({ config, articleService }));
 
 app.use(analyticsModule.collectorMiddleware);
 app.use('/audio', (req, res, next) => {

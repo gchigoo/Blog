@@ -182,12 +182,34 @@ function findLocalizedTaxonomyTag(catalog, locale, value) {
 }
 
 /**
+ * Resolve a tag for the public tag surface. The versioned catalog runs first
+ * so configured label names, slugs, and zh `legacyNames` keep exact
+ * compatibility; the DB fallback then covers published migration-created
+ * `origin='legacy'` tags the catalog does not contain. Both return the same
+ * stable shape `{ id, labels: {zh, en}, category: {id, labels} | null }`.
+ */
+function resolveLocalizedTag(catalog, articleService, locale, value) {
+  const catalogTag = findLocalizedTaxonomyTag(catalog, locale, value);
+  if (catalogTag) {
+    const parentCategory = catalog.categories.find(candidate => candidate.tags.includes(catalogTag));
+    return {
+      id: catalogTag.id,
+      labels: catalogTag.labels,
+      category: parentCategory
+        ? { id: parentCategory.id, labels: parentCategory.labels }
+        : null
+    };
+  }
+  return articleService.findTag(locale, value);
+}
+
+/**
  * Permanent 301s for the pre-i18n public paths. The raw query is appended
  * byte-for-byte. Unknown legacy tags render a localized 404 instead of
  * creating an open redirect. Mounted before the analytics collector so no
  * redirect hop can be counted.
  */
-function createLegacyRedirectRouter({ config }) {
+function createLegacyRedirectRouter({ config, articleService }) {
   const router = express.Router();
   const taxonomyPath = path.resolve(__dirname, '..', '..', config.taxonomyPath);
   let catalog = null;
@@ -203,8 +225,15 @@ function createLegacyRedirectRouter({ config }) {
   router.get('/tags', (req, res) => res.redirect(301, `/zh/tags${rawQuery(req)}`));
   router.get('/tag/:tag', (req, res) => {
     const slug = resolveLegacyTagSlug(ensureCatalog(), req.params.tag);
-    if (!slug) return renderNotFound(req, res, config);
-    return res.redirect(301, `/zh/tag/${encodePathSegment(slug)}${rawQuery(req)}`);
+    if (slug) {
+      return res.redirect(301, `/zh/tag/${encodePathSegment(slug)}${rawQuery(req)}`);
+    }
+    // Migration-created legacy tags absent from the catalog still redirect by
+    // their stored zh display name or stored zh slug to the actual zh stored
+    // slug, preserving the raw query byte-for-byte.
+    const dbTag = articleService.findTag('zh', req.params.tag);
+    if (!dbTag) return renderNotFound(req, res, config);
+    return res.redirect(301, `/zh/tag/${encodePathSegment(dbTag.labels.zh.slug)}${rawQuery(req)}`);
   });
   router.get('/search', (req, res) => res.redirect(301, `/zh/search${rawQuery(req)}`));
   router.get('/about', (req, res) => res.redirect(301, `/zh/about${rawQuery(req)}`));
@@ -464,32 +493,36 @@ function createLocalizedPagesRouter({ config, articleService, commentsModule }) 
 
   router.get('/tag/:tag', optionalAuth, (req, res) => {
     const locale = res.locals.locale;
-    const tag = findLocalizedTaxonomyTag(ensureCatalog(), locale, req.params.tag);
-    if (!tag) return renderNotFound(req, res, config);
-    const label = tag.labels[locale];
+    const resolved = resolveLocalizedTag(ensureCatalog(), articleService, locale, req.params.tag);
+    if (!resolved) return renderNotFound(req, res, config);
+    const label = resolved.labels[locale];
+    const articles = articleService.listByTag(locale, label.slug);
+    // The public surface only resolves tags with published articles in this
+    // locale: zero-count endpoints stay localized 404s (the sitemap and
+    // overview never emit them).
+    if (articles.length === 0) return renderNotFound(req, res, config);
     const tagPath = `/${locale}/tag/${encodePathSegment(label.slug)}`;
     const seo = baseSeo(req, res, res.locals.i18n('tags.tagTitle', { tag: label.name }), null, tagPath);
     addAlternate(seo, locale, canonical(tagPath));
-    // The target-locale tag alternate only exists when that locale has
-    // published articles under its own label slug.
+    // The target-locale tag alternate exists only when that locale has
+    // published articles under its own label slug (same stable tag id).
     const other = otherLocaleOf(locale);
-    const otherLabel = tag.labels[other];
+    const otherLabel = resolved.labels[other];
     if (articleService.listByTag(other, otherLabel.slug).length > 0) {
       addAlternate(seo, other, canonical(`/${other}/tag/${encodePathSegment(otherLabel.slug)}`));
     }
     syncLanguageSwitch(res, seo);
-    // The parent category breadcrumb: the catalog tag carries its single
-    // parent category, localized to the current surface locale. The parent
-    // page always resolves because a published tag implies a published
-    // category count.
-    const parentCategory = ensureCatalog().categories.find(candidate => candidate.tags.includes(tag));
-    const categoryLabel = parentCategory ? parentCategory.labels[locale] : null;
+    // The parent category breadcrumb: catalog tags carry their configured
+    // parent category; DB-resolved legacy tags carry the normalized DB
+    // category/category-label identity. The parent page always resolves
+    // because a published tag implies a published category count.
+    const categoryLabel = resolved.category ? resolved.category.labels[locale] : null;
     return res.render('tag', {
       tag: label.name,
       category: categoryLabel
         ? { name: categoryLabel.name, slug: categoryLabel.slug }
         : null,
-      articles: articleService.listByTag(locale, label.slug),
+      articles,
       user: req.user,
       seo: finalizeOgLocaleAlternates(seo, localeMetadata)
     });
