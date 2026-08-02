@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 const { cleanupAnalytics, initializeEventDetails } = require('./repository');
-const { formatAnalyticsPath } = require('./path-display');
+const { formatPresentationPath } = require('./path-display');
 const { getOverviewDimensions, parseAnalyticsDays } = require('./query/analytics-query');
 const { getCachedOverview, markOverviewDirty, setCachedOverview } = require('./overview-cache');
 const { migrateAnalyticsTrafficSchema } = require('./traffic-schema');
@@ -128,7 +128,7 @@ function getOverview(db, now = Date.now(), days = 7, retentionDays = RETENTION_D
     FROM access_metrics
     WHERE traffic_kind = 'human' AND bucket_utc >= ?
     GROUP BY path ORDER BY pageViews DESC, path ASC
-  `).all(since).map(row => ({ ...row, ...formatAnalyticsPath(row.path) }));
+  `).all(since).map(row => ({ ...row, ...formatPresentationPath(row.path) }));
   const detailsComplete = Boolean(detailsEnabled)
     && detail.humanDetailPageViews === total.humanPageViews;
   const overview = {

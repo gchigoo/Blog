@@ -1,6 +1,6 @@
 const net = require('node:net');
 const { domainToASCII } = require('node:url');
-const { formatAnalyticsPath } = require('../path-display');
+const { formatPresentationPath } = require('../path-display');
 const { presentEventPages } = require('../page-presentation');
 const { normalizeTrustedIp } = require('../request-security');
 
@@ -248,7 +248,7 @@ function sources(row) {
 }
 
 function mapListRow(row, page) {
-  const display = formatAnalyticsPath(row.request_path);
+  const display = formatPresentationPath(row.request_path);
   return {
     id: row.event_id,
     observedAtUtc: row.observed_at_utc,

@@ -761,5 +761,14 @@ test('stored localized paths with encoded query/fragment payloads keep clean lab
   for (const item of all.items) {
     assert.doesNotMatch(JSON.stringify(item.page), /[?#]|%E9%83%A8%E7%BD%B2/);
   }
+
+  // Item-level list and detail displayPath follow the same stripping contract.
+  assert.equal(byPath.get('/zh/search%3Fq%3D%E9%83%A8%E7%BD%B2').displayPath, '/zh/search');
+  assert.equal(byPath.get('/zh/tag/%E5%B7%A5%E5%85%B7%3Fpage%3D2').displayPath, '/zh/tag/工具');
+  assert.equal(byPath.get('/zh/category/%E6%8A%80%E6%9C%AF%23top').displayPath, '/zh/category/技术');
+  assert.equal(byPath.get('/zh/article/twin%3Futm_source%3Dfeed').displayPath, '/zh/article/twin');
+  const searchDetail = getEventDetail(db, byPath.get('/zh/search%3Fq%3D%E9%83%A8%E7%BD%B2').id);
+  assert.equal(searchDetail.displayPath, '/zh/search');
+  assert.equal(searchDetail.requestPath, '/zh/search%3Fq%3D%E9%83%A8%E7%BD%B2');
   db.close();
 });

@@ -792,6 +792,84 @@ test('admin analytics strips percent-encoded query/fragment payloads from stored
   assert.doesNotMatch(eventListHtml, /%E9%83%A8%E7%BD%B2|utm_source|page%3D2|sort%3Dnew|%23extra/);
 });
 
+test('admin analytics overview ranking and item API use query/fragment-free display paths', async t => {
+  const { baseUrl, adminCookie, db } = await createHarness(t);
+  const localizedEvent = (id, requestPath) => {
+    const observedAtUtc = new Date().toISOString();
+    return {
+      eventId: id.toString(16).padStart(32, '0'),
+      observedAtUtc,
+      bucketUtc: new Date(Math.floor(Date.parse(observedAtUtc) / 3_600_000) * 3_600_000).toISOString(),
+      path: requestPath,
+      visitorDayHmac: `visitor-${id}`,
+      deviceKind: 'desktop',
+      trafficKind: 'human',
+      botName: null,
+      method: 'GET',
+      requestPath,
+      queryString: null,
+      fullUrl: `https://blog.example.com${requestPath}`,
+      referrer: null,
+      referrerHost: null,
+      urlSanitizationStatus: 'ok',
+      referrerParseStatus: 'ok',
+      statusCode: 200,
+      durationMs: 10,
+      responseBytes: 1000,
+      ipAddress: `203.0.113.${id}`,
+      ipFamily: 4,
+      geo: { status: 'not_found', data: null, datasetDate: null },
+      requestClient: { userAgent: `Mozilla/${id}`, acceptLanguage: 'zh-CN', clientHints: {} },
+      client: {
+        status: 'parsed',
+        data: {
+          browserName: 'Chrome', browserVersion: '1', browserNameNormalized: 'chrome',
+          osName: 'Windows', osNameNormalized: 'windows',
+          deviceType: 'desktop', deviceTypeNormalized: 'desktop'
+        }
+      }
+    };
+  };
+
+  recordAccessEvent(db, localizedEvent(1, '/zh/search%3Fq%3D%E9%83%A8%E7%BD%B2'));
+  recordAccessEvent(db, localizedEvent(2, '/zh/article/twin%3Futm_source%3Dfeed'));
+  recordAccessEvent(db, localizedEvent(3, '/zh/tag/%E5%B7%A5%E5%85%B7%23extra'));
+
+  const overviewResponse = await fetch(`${baseUrl}/api/admin/analytics`, {
+    headers: { cookie: adminCookie }
+  });
+  assert.equal(overviewResponse.status, 200);
+  const overview = await overviewResponse.json();
+  const byPage = new Map(overview.byPage.map(row => [row.path, row]));
+  assert.equal(byPage.size, 3);
+  assert.equal(byPage.get('/zh/search%3Fq%3D%E9%83%A8%E7%BD%B2').pageViews, 1);
+  assert.equal(byPage.get('/zh/search%3Fq%3D%E9%83%A8%E7%BD%B2').displayPath, '/zh/search');
+  assert.equal(byPage.get('/zh/article/twin%3Futm_source%3Dfeed').displayPath, '/zh/article/twin');
+  assert.equal(byPage.get('/zh/tag/%E5%B7%A5%E5%85%B7%23extra').displayPath, '/zh/tag/工具');
+
+  const listResponse = await fetch(`${baseUrl}/api/admin/analytics/events`, {
+    headers: { cookie: adminCookie }
+  });
+  assert.equal(listResponse.status, 200);
+  const list = await listResponse.json();
+  const item = list.items.find(entry => entry.requestPath === '/zh/search%3Fq%3D%E9%83%A8%E7%BD%B2');
+  assert.ok(item);
+  assert.equal(item.displayPath, '/zh/search');
+  assert.equal(item.requestPath, '/zh/search%3Fq%3D%E9%83%A8%E7%BD%B2');
+
+  const page = await fetch(`${baseUrl}/admin/analytics`, { headers: { cookie: adminCookie } });
+  const html = await page.text();
+  assert.equal(page.status, 200);
+  // 页面排行 table lives inside the analytics-more details section.
+  const moreIndex = html.indexOf('id="analytics-more"');
+  const systemIndex = html.indexOf('id="analytics-system-status"');
+  const rankingHtml = html.slice(moreIndex, systemIndex);
+  assert.match(rankingHtml, /\/zh\/search/);
+  assert.match(rankingHtml, /\/zh\/article\/twin/);
+  assert.match(rankingHtml, /\/zh\/tag\/工具/);
+  assert.doesNotMatch(rankingHtml, /部署|utm_source|%23extra/);
+});
+
 test('admin analytics view pins all unique-IP output states and stable-hook uniqueness', async () => {
   const emptyDimension = { items: [], distinctCount: 0, truncated: false, otherPageViews: 0 };
   const baseOverview = {

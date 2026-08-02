@@ -1,4 +1,4 @@
-const { formatAnalyticsPath } = require('./path-display');
+const { formatPresentationPath, presentationPathname } = require('./path-display');
 
 const FIXED_PAGES = new Map([
   ['/', { kind: 'home', title: '首页' }],
@@ -31,26 +31,6 @@ function articleSlugForPath(rawPath) {
   if (typeof rawPath !== 'string') return null;
   const match = rawPath.match(/^\/article\/([^/]+)$/);
   return match ? safeDecode(match[1]) : null;
-}
-
-/**
- * The pathname used for label recognition and display. A stored path may
- * carry a query/fragment payload either literally (`?…`, `#…`) or
- * percent-encoded (`%3F…`, `%23…`); decodeURI preserves those reserved
- * bytes, so the boundary is found on the raw string first. Double-encoded
- * forms (`%253F`) represent literal `%3F` text and are not boundaries. The
- * payload is stripped before any decoding, then the remaining pathname is
- * decoded for recognition and display. Stored fields are never rewritten.
- */
-function presentationPathname(rawPath) {
-  if (typeof rawPath !== 'string') return null;
-  const boundary = rawPath.search(/[?#]|%3[fF]|%23/);
-  const withoutPayload = boundary === -1 ? rawPath : rawPath.slice(0, boundary);
-  try {
-    return decodeURI(withoutPayload);
-  } catch {
-    return withoutPayload;
-  }
 }
 
 /**
@@ -104,7 +84,7 @@ function localizedPresentation(parsed, titles, displayPath) {
 
 function pagePresentationForPath(rawPath, articleTitles = new Map()) {
   const pathname = presentationPathname(rawPath);
-  const displayPath = formatAnalyticsPath(pathname).displayPath;
+  const displayPath = formatPresentationPath(rawPath).displayPath;
   const fixed = FIXED_PAGES.get(pathname);
   if (fixed) return { ...fixed, displayPath };
 
