@@ -20,8 +20,12 @@
           <div class="moderation-meta">
             <strong><%= comment.displayName %></strong>
             <span>
-              文章：<a href="/article/<%= comment.articleSlug %>" target="_blank" rel="noopener"><%= comment.articleTitle %></a>
+              文章：<a href="/<%= comment.articleLocale === 'en' ? 'en' : 'zh' %>/article/<%= encodeURIComponent(comment.articleSlug) %>" target="_blank" rel="noopener"><%= comment.articleTitle %></a>
             </span>
+            <span class="moderation-locale">语言：<%= comment.articleLocale === 'en' ? '英文' : '中文' %></span>
+            <% if (typeof comment.translationKey === 'string' && comment.translationKey) { %>
+              <span class="moderation-translation-group">翻译组：<%= comment.translationKey %></span>
+            <% } %>
             <time datetime="<%= comment.createdAt %>">
               <%= typeof formatDate === 'function' ? formatDate(comment.createdAt, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) : comment.createdAt %>
             </time>

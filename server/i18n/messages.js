@@ -53,7 +53,15 @@ const messages = {
       contentLabel: '评论内容',
       contentHelp: '纯文本，去除首尾空白后最多 1000 个字符。',
       submit: '提交评论',
-      loginPrompt: '使用 Google 登录后评论'
+      loginPrompt: '使用 Google 登录后评论',
+      submitted: '评论已提交，等待审核',
+      loginRequired: '请先登录后再评论。',
+      invalidCsrf: '登录状态已过期，请重新登录。',
+      articleNotFound: '文章不存在或已删除。',
+      invalidContent: '评论内容无效，请检查后重试。',
+      rateLimited: '评论过于频繁，请稍后再试。',
+      serverError: '评论提交失败，请稍后重试。',
+      unknownError: '评论提交失败，请检查内容后重试。'
     },
     notFound: {
       title: '404 - 页面未找到',
@@ -147,7 +155,15 @@ const messages = {
       contentLabel: 'Comment',
       contentHelp: 'Plain text, up to 1000 characters after trimming.',
       submit: 'Submit Comment',
-      loginPrompt: 'Sign in with Google to comment'
+      loginPrompt: 'Sign in with Google to comment',
+      submitted: 'Comment submitted for review',
+      loginRequired: 'Please sign in before commenting.',
+      invalidCsrf: 'Your session expired. Please sign in again.',
+      articleNotFound: 'This article was not found or has been removed.',
+      invalidContent: 'Invalid comment content. Please check your comment and try again.',
+      rateLimited: 'You are commenting too quickly. Please try again later.',
+      serverError: 'Comment submission failed. Please try again later.',
+      unknownError: 'Comment submission failed. Please check your comment and try again.'
     },
     notFound: {
       title: '404 - Page Not Found',

@@ -49,10 +49,18 @@ function safeEqual(left, right) {
   return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
 }
 
+/**
+ * Accept only safe article paths: the two supported localized surfaces and
+ * the historical unprefixed Chinese article path. Queries, fragments, encoded
+ * separators/double encoding, unsupported locales, admin/API/static paths,
+ * unsafe slugs, and protocol-relative or absolute URLs all normalize to `/`.
+ */
 function sanitizeReturnPath(value) {
   if (typeof value !== 'string') return '/';
-  const match = value.match(/^\/article\/([^/?#]+)$/);
-  return match && isSafeSlug(match[1]) ? value : '/';
+  const localized = value.match(/^\/(zh|en)\/article\/([^/?#]+)$/);
+  if (localized && isSafeSlug(localized[2])) return value;
+  const legacy = value.match(/^\/article\/([^/?#]+)$/);
+  return legacy && isSafeSlug(legacy[1]) ? value : '/';
 }
 
 function createTokenService(secret, clock) {

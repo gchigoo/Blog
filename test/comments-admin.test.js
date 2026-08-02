@@ -8,6 +8,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const appConfig = require('../server/config');
 const { parseCommentsConfig } = require('../server/comments/config');
+const { createCommentStore } = require('../server/comments/store');
 const { createCommentsModule } = require('../server/comments/module');
 
 function getSetCookies(response) {
@@ -39,21 +40,35 @@ async function createHarness(t) {
   const db = new Database(':memory:');
   db.pragma('foreign_keys = ON');
   db.exec(`
+    CREATE TABLE posts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      translation_key TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
     CREATE TABLE articles (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+      locale TEXT NOT NULL CHECK (locale IN ('zh', 'en')),
       title TEXT NOT NULL,
-      slug TEXT NOT NULL UNIQUE,
+      slug TEXT NOT NULL,
       content TEXT NOT NULL,
       html TEXT NOT NULL,
       tags TEXT,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      UNIQUE(post_id, locale),
+      UNIQUE(locale, slug)
     );
     CREATE TABLE users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT NOT NULL UNIQUE
     );
-    INSERT INTO articles (title, slug, content, html, tags, created_at)
-    VALUES ('Article', 'article', 'body', '<p>body</p>', '[]', '2026-07-16T00:00:00.000Z');
+    INSERT INTO posts (translation_key, created_at, updated_at)
+    VALUES ('article-key', '2026-07-16T00:00:00.000Z', '2026-07-16T00:00:00.000Z');
+    INSERT INTO articles (post_id, locale, title, slug, content, html, tags, created_at)
+    VALUES (1, 'zh', 'Article', 'article', 'body', '<p>body</p>', '[]', '2026-07-16T00:00:00.000Z');
+    INSERT INTO articles (post_id, locale, title, slug, content, html, tags, created_at)
+    VALUES (1, 'en', 'English Article', 'article', 'body', '<p>body</p>', '[]', '2026-07-16T00:00:00.000Z');
     INSERT INTO users (username) VALUES ('admin-1'), ('admin-2');
   `);
   const clock = mutableClock();
@@ -278,10 +293,14 @@ test('article deletion cascades its comments while sibling article comments surv
     RETURNING id
   `).get();
   const targetId = seedComment(db, { content: 'deleted with article' });
+  const secondPostId = Number(db.prepare(`
+    INSERT INTO posts (translation_key, created_at, updated_at)
+    VALUES ('second-key', '2026-07-16T00:00:00.000Z', '2026-07-16T00:00:00.000Z')
+  `).run().lastInsertRowid);
   db.prepare(`
-    INSERT INTO articles (title, slug, content, html, tags, created_at)
-    VALUES ('Second Article', 'second', 'body', '<p>body</p>', '[]', '2026-07-16T00:00:00.000Z')
-  `).run();
+    INSERT INTO articles (post_id, locale, title, slug, content, html, tags, created_at)
+    VALUES (?, 'zh', 'Second Article', 'second', 'body', '<p>body</p>', '[]', '2026-07-16T00:00:00.000Z')
+  `).run(secondPostId);
   const siblingId = db.prepare(`
     INSERT INTO comments (article_id, comment_user_id, content, status, created_at)
     VALUES (2, ?, 'sibling survives', 'approved', '2026-07-16T00:00:00.000Z')
@@ -295,4 +314,74 @@ test('article deletion cascades its comments while sibling article comments surv
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM comments WHERE id = ?').get(targetId).count, 0);
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM comments WHERE id = ?').get(siblingId).count, 1);
   assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+});
+
+test('moderation rows expose article locale and translation key for zh and en siblings', async t => {
+  const { db } = await createHarness(t);
+  const commenter = db.prepare(`
+    INSERT INTO comment_users (google_sub, display_name, created_at, updated_at, last_login_at)
+    VALUES ('locale-subject', 'Locale Reader', '2026-07-16T00:00:00.000Z', '2026-07-16T00:00:00.000Z', '2026-07-16T00:00:00.000Z')
+    RETURNING id
+  `).get();
+  db.prepare(`
+    INSERT INTO comments (article_id, comment_user_id, content, status, created_at)
+    VALUES (1, ?, 'zh pending', 'pending', '2026-07-16T00:00:00.000Z')
+  `).run(commenter.id);
+  db.prepare(`
+    INSERT INTO comments (article_id, comment_user_id, content, status, created_at)
+    VALUES (2, ?, 'en pending', 'pending', '2026-07-16T00:00:00.500Z')
+  `).run(commenter.id);
+
+  const store = createCommentStore(db);
+  const moderation = store.listForModeration('pending');
+  assert.equal(moderation.length, 2);
+  const byLocale = new Map(moderation.map(comment => [comment.articleLocale, comment]));
+  assert.equal(byLocale.get('zh').translationKey, 'article-key');
+  assert.equal(byLocale.get('zh').articleSlug, 'article');
+  assert.equal(byLocale.get('zh').articleTitle, 'Article');
+  assert.equal(byLocale.get('en').translationKey, 'article-key');
+  assert.equal(byLocale.get('en').articleSlug, 'article');
+  assert.equal(byLocale.get('en').articleTitle, 'English Article');
+});
+
+test('moderation page visibly distinguishes 中文/英文 and the translation group while escaping values', async t => {
+  const { baseUrl, db } = await createHarness(t);
+  seedComment(db, { content: 'zh pending' });
+  const enCommenter = db.prepare(`
+    INSERT INTO comment_users (google_sub, display_name, created_at, updated_at, last_login_at)
+    VALUES ('en-subject', 'En Reader', '2026-07-16T00:00:00.000Z', '2026-07-16T00:00:00.000Z', '2026-07-16T00:00:00.000Z')
+    RETURNING id
+  `).get();
+  db.prepare(`
+    INSERT INTO comments (article_id, comment_user_id, content, status, created_at)
+    VALUES (2, ?, 'en pending', 'pending', '2026-07-16T00:00:01.000Z')
+  `).run(enCommenter.id);
+
+  const hostilePostId = Number(db.prepare(`
+    INSERT INTO posts (translation_key, created_at, updated_at)
+    VALUES ('"><svg data-translation-injected onload=alert(1)>', '2026-07-16T00:00:00.000Z', '2026-07-16T00:00:00.000Z')
+  `).run().lastInsertRowid);
+  db.prepare(`
+    INSERT INTO articles (post_id, locale, title, slug, content, html, tags, created_at)
+    VALUES (?, 'zh', 'Hostile <Title>', 'hostile', 'body', '<p>body</p>', '[]', '2026-07-16T00:00:00.000Z')
+  `).run(hostilePostId);
+  db.prepare(`
+    INSERT INTO comments (article_id, comment_user_id, content, status, created_at)
+    VALUES (?, ?, 'hostile translation comment', 'pending', '2026-07-16T00:00:02.000Z')
+  `).run(Number(db.prepare('SELECT id FROM articles WHERE slug = ?').get('hostile').id), enCommenter.id);
+
+  const response = await fetch(`${baseUrl}/admin/comments?status=pending`, {
+    headers: { cookie: adminCookie() }
+  });
+  const html = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(html, /语言：中文/);
+  assert.match(html, /语言：英文/);
+  assert.match(html, /翻译组：article-key/);
+  assert.match(html, /href="\/zh\/article\/article"/);
+  assert.match(html, /href="\/en\/article\/article"/);
+  assert.match(html, /&lt;svg data-translation-injected onload=alert\(1\)&gt;/);
+  assert.doesNotMatch(html, /<svg data-translation-injected/);
+  assert.match(html, /Hostile &lt;Title&gt;/);
+  assert.doesNotMatch(html, /<Title>/);
 });

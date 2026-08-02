@@ -154,17 +154,33 @@ function hasArticlesTable(db) {
   `).get());
 }
 
+/**
+ * Expand every article matching the free-text title search into its
+ * locale-prefixed path candidates, plus the historical unprefixed Chinese
+ * article path candidates for zh rows only. Raw and percent-encoded slug
+ * variants are both included so stored URLs in either form match.
+ */
 function articlePathsForSearch(db, search) {
   if (!search || !hasArticlesTable(db)) return [];
+  const articleColumns = new Set(
+    db.prepare('PRAGMA table_info(articles)').all().map(column => column.name)
+  );
+  const localeSelect = articleColumns.has('locale')
+    ? 'locale, slug'
+    : "'zh' AS locale, slug";
   const pattern = `%${escapeLike(search)}%`;
   const paths = new Set();
-  for (const { slug } of db.prepare(`
-    SELECT slug FROM articles
+  for (const { locale, slug } of db.prepare(`
+    SELECT ${localeSelect} FROM articles
     WHERE title LIKE ? ESCAPE '\\' COLLATE NOCASE
-    ORDER BY slug
+    ORDER BY locale, slug
   `).all(pattern)) {
-    paths.add(`/article/${slug}`);
-    paths.add(`/article/${encodeURIComponent(slug)}`);
+    paths.add(`/${locale}/article/${slug}`);
+    paths.add(`/${locale}/article/${encodeURIComponent(slug)}`);
+    if (locale === 'zh') {
+      paths.add(`/article/${slug}`);
+      paths.add(`/article/${encodeURIComponent(slug)}`);
+    }
   }
   return [...paths];
 }

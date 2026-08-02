@@ -9,6 +9,7 @@ const express = require('express');
 const ejs = require('ejs');
 const cookieParser = require('cookie-parser');
 const { createAnalyticsModule } = require('../server/analytics/module');
+const { recordAccessEvent } = require('../server/analytics/repository');
 const { validateClientContext } = require('../server/analytics/context-validator');
 const { createEventTokenSigner } = require('../server/analytics/event-token');
 const { generateToken } = require('../server/middleware/auth');
@@ -568,6 +569,115 @@ test('browser collector retries only 425 on immediate/1/2/4/8 second attempts', 
     'architecture', 'bitness', 'fullVersionList', 'model', 'platformVersion', 'wow64'
   ]);
   assert.doesNotThrow(() => validateClientContext(submitted));
+});
+
+test('admin analytics API and page present localized labels for article, taxonomy, static, and search paths', async t => {
+  const { baseUrl, adminCookie, db } = await createHarness(t);
+  db.exec(`
+    CREATE TABLE articles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      locale TEXT NOT NULL DEFAULT 'zh' CHECK (locale IN ('zh', 'en')),
+      status TEXT NOT NULL DEFAULT 'published',
+      UNIQUE(locale, slug)
+    );
+    CREATE TABLE tag_labels (
+      tag_id TEXT NOT NULL,
+      locale TEXT NOT NULL,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      PRIMARY KEY(tag_id, locale),
+      UNIQUE(locale, slug)
+    );
+    CREATE TABLE category_labels (
+      category_id TEXT NOT NULL,
+      locale TEXT NOT NULL,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      PRIMARY KEY(category_id, locale),
+      UNIQUE(locale, slug)
+    );
+  `);
+  db.prepare('INSERT INTO articles (title, slug, locale) VALUES (?, ?, ?)').run('中文标题', 'twin', 'zh');
+  db.prepare('INSERT INTO articles (title, slug, locale) VALUES (?, ?, ?)').run('English Title', 'twin', 'en');
+  db.prepare('INSERT INTO tag_labels (tag_id, locale, name, slug) VALUES (?, ?, ?, ?)').run('tools', 'zh', '工具', '工具');
+  db.prepare('INSERT INTO tag_labels (tag_id, locale, name, slug) VALUES (?, ?, ?, ?)').run('tools', 'en', 'Tools', 'tools');
+  db.prepare('INSERT INTO category_labels (category_id, locale, name, slug) VALUES (?, ?, ?, ?)').run('tech', 'zh', '技术', '技术');
+  db.prepare('INSERT INTO category_labels (category_id, locale, name, slug) VALUES (?, ?, ?, ?)').run('tech', 'en', 'Technology', 'technology');
+
+  const localizedEvent = (id, requestPath, overrides = {}) => {
+    const observedAtUtc = new Date().toISOString();
+    return {
+      eventId: id.toString(16).padStart(32, '0'),
+      observedAtUtc,
+      bucketUtc: new Date(Math.floor(Date.parse(observedAtUtc) / 3_600_000) * 3_600_000).toISOString(),
+      path: requestPath,
+      visitorDayHmac: `visitor-${id}`,
+      deviceKind: 'desktop',
+      trafficKind: 'human',
+      botName: null,
+      method: 'GET',
+      requestPath,
+      queryString: null,
+      fullUrl: `https://blog.example.com${requestPath}`,
+      referrer: null,
+      referrerHost: null,
+      urlSanitizationStatus: 'ok',
+      referrerParseStatus: 'ok',
+      statusCode: 200,
+      durationMs: 10,
+      responseBytes: 1000,
+      ipAddress: `203.0.113.${id}`,
+      ipFamily: 4,
+      geo: { status: 'not_found', data: null, datasetDate: null },
+      requestClient: { userAgent: `Mozilla/${id}`, acceptLanguage: 'zh-CN', clientHints: {} },
+      client: {
+        status: 'parsed',
+        data: {
+          browserName: 'Chrome', browserVersion: '1', browserNameNormalized: 'chrome',
+          osName: 'Windows', osNameNormalized: 'windows',
+          deviceType: 'desktop', deviceTypeNormalized: 'desktop'
+        }
+      },
+      ...overrides
+    };
+  };
+
+  recordAccessEvent(db, localizedEvent(1, '/zh/article/twin'));
+  recordAccessEvent(db, localizedEvent(2, '/en/article/twin'));
+  recordAccessEvent(db, localizedEvent(3, '/zh/tag/%E5%B7%A5%E5%85%B7'));
+  recordAccessEvent(db, localizedEvent(4, '/zh/category/%E6%8A%80%E6%9C%AF'));
+  recordAccessEvent(db, localizedEvent(5, '/zh/search', {
+    fullUrl: 'https://blog.example.com/zh/search?q=%E9%83%A8%E7%BD%B2'
+  }));
+  recordAccessEvent(db, localizedEvent(6, '/zh/article/unknown'));
+
+  const listResponse = await fetch(`${baseUrl}/api/admin/analytics/events`, {
+    headers: { cookie: adminCookie }
+  });
+  assert.equal(listResponse.status, 200);
+  const list = await listResponse.json();
+  const byPath = new Map(list.items.map(item => [item.requestPath, item]));
+  assert.equal(byPath.get('/zh/article/twin').page.title, '中文标题');
+  assert.equal(byPath.get('/en/article/twin').page.title, 'English Title');
+  assert.equal(byPath.get('/zh/tag/%E5%B7%A5%E5%85%B7').page.title, '标签：工具');
+  assert.equal(byPath.get('/zh/category/%E6%8A%80%E6%9C%AF').page.title, '分类：技术');
+  assert.equal(byPath.get('/zh/search').page.title, '搜索');
+  assert.doesNotMatch(JSON.stringify(byPath.get('/zh/search').page), /q=|%E9%83%A8%E7%BD%B2/);
+  assert.equal(byPath.get('/zh/article/unknown').page.title, '文章（已删除或未知）');
+
+  const page = await fetch(`${baseUrl}/admin/analytics`, { headers: { cookie: adminCookie } });
+  const html = await page.text();
+  assert.equal(page.status, 200);
+  assert.match(html, /中文标题/);
+  assert.match(html, /English Title/);
+  assert.match(html, /标签：工具/);
+  assert.match(html, /分类：技术/);
+  assert.match(html, /<strong>搜索<\/strong>\s*<code class="analytics-break">\/zh\/search<\/code>/);
+  assert.match(html, /文章（已删除或未知）/);
+  assert.match(html, /\/zh\/tag\/工具/);
+  assert.doesNotMatch(html, /q=%E9%83%A8%E7%BD%B2/);
 });
 
 test('admin analytics view pins all unique-IP output states and stable-hook uniqueness', async () => {

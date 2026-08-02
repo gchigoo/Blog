@@ -32,7 +32,23 @@ function createDb() {
       locale TEXT NOT NULL DEFAULT 'zh' CHECK (locale IN ('zh', 'en')),
       status TEXT NOT NULL CHECK (status IN ('draft', 'published')),
       UNIQUE(locale, slug)
-    )
+    );
+    CREATE TABLE tag_labels (
+      tag_id TEXT NOT NULL,
+      locale TEXT NOT NULL CHECK (locale IN ('zh', 'en')),
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      PRIMARY KEY(tag_id, locale),
+      UNIQUE(locale, slug)
+    );
+    CREATE TABLE category_labels (
+      category_id TEXT NOT NULL,
+      locale TEXT NOT NULL CHECK (locale IN ('zh', 'en')),
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      PRIMARY KEY(category_id, locale),
+      UNIQUE(locale, slug)
+    );
   `);
   return db;
 }
@@ -513,11 +529,158 @@ test('event list title resolution tolerates the same slug across article locales
 
   const all = listEvents(db, NOW, parseEventListQuery({}, 30));
   assert.equal(all.items.length, 1);
+  // The historical unprefixed article path was the Chinese article surface,
+  // so the zh sibling title wins even though an en sibling shares the slug.
   assert.deepEqual(all.items[0].page, {
-    kind: 'article', title: 'English Title', displayPath: '/article/twin-slug'
+    kind: 'article', title: '中文标题', displayPath: '/article/twin-slug'
   });
   const titleSearch = listEvents(db, NOW, parseEventListQuery({ search: '中文' }, 30));
   assert.equal(titleSearch.items.length, 1);
   assert.deepEqual(titleSearch.items[0].page.displayPath, '/article/twin-slug');
+  db.close();
+});
+
+test('localized paths resolve article titles and taxonomy names in one batch', () => {
+  const db = createDb();
+  db.prepare('INSERT INTO articles (title, slug, locale, status) VALUES (?, ?, ?, ?)')
+    .run('中文标题', 'twin', 'zh', 'published');
+  db.prepare('INSERT INTO articles (title, slug, locale, status) VALUES (?, ?, ?, ?)')
+    .run('English Title', 'twin', 'en', 'published');
+  db.prepare('INSERT INTO tag_labels (tag_id, locale, name, slug) VALUES (?, ?, ?, ?)')
+    .run('tools', 'zh', '工具', '工具');
+  db.prepare('INSERT INTO tag_labels (tag_id, locale, name, slug) VALUES (?, ?, ?, ?)')
+    .run('tools', 'en', 'Tools', 'tools');
+  db.prepare('INSERT INTO category_labels (category_id, locale, name, slug) VALUES (?, ?, ?, ?)')
+    .run('tech', 'zh', '技术', '技术');
+  db.prepare('INSERT INTO category_labels (category_id, locale, name, slug) VALUES (?, ?, ?, ?)')
+    .run('tech', 'en', 'Technology', 'technology');
+
+  const pageEvent = (id, requestPath, overrides = {}) => event(id, {
+    path: requestPath,
+    requestPath,
+    fullUrl: `https://blog.example.com${requestPath}`,
+    ...overrides
+  });
+  recordAccessEvent(db, pageEvent(1, '/zh/article/twin'));
+  recordAccessEvent(db, pageEvent(2, '/en/article/twin'));
+  recordAccessEvent(db, pageEvent(3, '/zh/tag/%E5%B7%A5%E5%85%B7'));
+  recordAccessEvent(db, pageEvent(4, '/en/tag/tools'));
+  recordAccessEvent(db, pageEvent(5, '/zh/category/%E6%8A%80%E6%9C%AF'));
+  recordAccessEvent(db, pageEvent(6, '/en/category/technology'));
+  recordAccessEvent(db, pageEvent(7, '/zh/search'));
+  recordAccessEvent(db, pageEvent(8, '/en/search', {
+    fullUrl: 'https://blog.example.com/en/search?q=%E9%83%A8%E7%BD%B2'
+  }));
+  recordAccessEvent(db, pageEvent(9, '/zh/about'));
+  recordAccessEvent(db, pageEvent(10, '/zh/archive'));
+  recordAccessEvent(db, pageEvent(11, '/zh/tags'));
+  recordAccessEvent(db, pageEvent(12, '/zh/'));
+  recordAccessEvent(db, pageEvent(13, '/zh/article/missing'));
+  recordAccessEvent(db, pageEvent(14, '/fr/article/twin'));
+
+  const all = listEvents(db, NOW, parseEventListQuery({}, 30));
+  const byPath = new Map(all.items.map(item => [item.requestPath, item]));
+  assert.deepEqual(byPath.get('/zh/article/twin').page, {
+    kind: 'article', title: '中文标题', displayPath: '/zh/article/twin'
+  });
+  assert.deepEqual(byPath.get('/en/article/twin').page, {
+    kind: 'article', title: 'English Title', displayPath: '/en/article/twin'
+  });
+  assert.deepEqual(byPath.get('/zh/tag/%E5%B7%A5%E5%85%B7').page, {
+    kind: 'tag', title: '标签：工具', displayPath: '/zh/tag/工具'
+  });
+  assert.deepEqual(byPath.get('/en/tag/tools').page, {
+    kind: 'tag', title: '标签：Tools', displayPath: '/en/tag/tools'
+  });
+  assert.deepEqual(byPath.get('/zh/category/%E6%8A%80%E6%9C%AF').page, {
+    kind: 'category', title: '分类：技术', displayPath: '/zh/category/技术'
+  });
+  assert.deepEqual(byPath.get('/en/category/technology').page, {
+    kind: 'category', title: '分类：Technology', displayPath: '/en/category/technology'
+  });
+  assert.deepEqual(byPath.get('/zh/search').page, {
+    kind: 'search', title: '搜索', displayPath: '/zh/search'
+  });
+  assert.deepEqual(byPath.get('/en/search').page, {
+    kind: 'search', title: '搜索', displayPath: '/en/search'
+  });
+  assert.deepEqual(byPath.get('/zh/about').page, {
+    kind: 'about', title: '关于', displayPath: '/zh/about'
+  });
+  assert.deepEqual(byPath.get('/zh/archive').page, {
+    kind: 'archive', title: '归档', displayPath: '/zh/archive'
+  });
+  assert.deepEqual(byPath.get('/zh/tags').page, {
+    kind: 'tag', title: '标签页', displayPath: '/zh/tags'
+  });
+  assert.deepEqual(byPath.get('/zh/').page, {
+    kind: 'home', title: '首页', displayPath: '/zh/'
+  });
+  assert.deepEqual(byPath.get('/zh/article/missing').page, {
+    kind: 'article', title: '文章（已删除或未知）', displayPath: '/zh/article/missing'
+  });
+  assert.deepEqual(byPath.get('/fr/article/twin').page, {
+    kind: 'other', title: '/fr/article/twin', displayPath: '/fr/article/twin'
+  });
+
+  // Labels never expose raw search query text even when the stored URL
+  // carries a query.
+  for (const [pathname, title] of [
+    ['/zh/search?q=%E9%83%A8%E7%BD%B2', '搜索'],
+    ['/en/search?q=%E9%83%A8%E7%BD%B2', '搜索']
+  ]) {
+    const page = pagePresentationForPath(pathname, new Map());
+    assert.equal(page.title, title);
+    assert.doesNotMatch(page.title, /q=|%E9%83%A8%E7%BD%B2/);
+  }
+  assert.deepEqual(
+    pagePresentationForPath('/zh/article/twin', new Map([['zh\u0000twin', '中文标题']])),
+    { kind: 'article', title: '中文标题', displayPath: '/zh/article/twin' }
+  );
+  db.close();
+});
+
+test('localized title search expands locale-prefixed and historical Chinese candidates only', () => {
+  const db = createDb();
+  db.prepare('INSERT INTO articles (title, slug, locale, status) VALUES (?, ?, ?, ?)')
+    .run('中文部署', 'deploy', 'zh', 'published');
+  db.prepare('INSERT INTO articles (title, slug, locale, status) VALUES (?, ?, ?, ?)')
+    .run('Deployment Guide', 'deploy', 'en', 'published');
+  db.prepare('INSERT INTO articles (title, slug, locale, status) VALUES (?, ?, ?, ?)')
+    .run('效率工具', '效率工具', 'zh', 'published');
+
+  const pageEvent = (id, requestPath) => event(id, {
+    path: requestPath,
+    requestPath,
+    fullUrl: `https://blog.example.com${requestPath}`
+  });
+  recordAccessEvent(db, pageEvent(1, '/zh/article/deploy'));
+  recordAccessEvent(db, pageEvent(2, '/en/article/deploy'));
+  recordAccessEvent(db, pageEvent(3, '/article/deploy'));
+  recordAccessEvent(db, pageEvent(4, '/zh/article/%E6%95%88%E7%8E%87%E5%B7%A5%E5%85%B7'));
+  recordAccessEvent(db, pageEvent(5, '/article/%E6%95%88%E7%8E%87%E5%B7%A5%E5%85%B7'));
+
+  // A Chinese match expands to both the locale-prefixed path and the
+  // historical unprefixed Chinese path, never the English sibling.
+  const zhSearch = listEvents(db, NOW, parseEventListQuery({ search: '中文' }, 30));
+  assert.deepEqual(
+    zhSearch.items.map(item => item.requestPath).sort(),
+    ['/article/deploy', '/zh/article/deploy']
+  );
+  assert.equal(zhSearch.items.length, 2);
+
+  // An English match expands only to the English locale-prefixed path.
+  const enSearch = listEvents(db, NOW, parseEventListQuery({ search: 'Deployment' }, 30));
+  assert.equal(enSearch.items.length, 1);
+  assert.equal(enSearch.items[0].requestPath, '/en/article/deploy');
+  assert.equal(enSearch.items[0].page.title, 'Deployment Guide');
+
+  // Encoded candidates remain supported for non-ASCII slugs.
+  const encodedSearch = listEvents(db, NOW, parseEventListQuery({ search: '效率' }, 30));
+  assert.deepEqual(
+    encodedSearch.items.map(item => item.requestPath).sort(),
+    ['/article/%E6%95%88%E7%8E%87%E5%B7%A5%E5%85%B7', '/zh/article/%E6%95%88%E7%8E%87%E5%B7%A5%E5%85%B7']
+  );
+  assert.equal(encodedSearch.items.length, 2);
   db.close();
 });

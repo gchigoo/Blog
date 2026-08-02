@@ -228,13 +228,14 @@ function createCommentsModule({ db, config, identityClient, clock = { now: () =>
         createdAt: clock.now().toISOString()
       });
       console.info(`[comments] submitted comment ${comment.id} as pending`);
+      // Stable machine code; the page supplies the localized success text.
       return res.status(201).json({
+        code: 'comment_submitted',
         comment: {
           id: comment.id,
           status: comment.status,
           createdAt: comment.createdAt
-        },
-        message: '评论已提交，等待审核'
+        }
       });
     } catch (error) {
       if (error instanceof CommentStoreError) {

@@ -27,7 +27,9 @@ function mapComment(row) {
     reviewedBy: row.reviewed_by,
     ...(row.display_name !== undefined ? { displayName: row.display_name } : {}),
     ...(row.article_title !== undefined ? { articleTitle: row.article_title } : {}),
-    ...(row.article_slug !== undefined ? { articleSlug: row.article_slug } : {})
+    ...(row.article_slug !== undefined ? { articleSlug: row.article_slug } : {}),
+    ...(row.article_locale != null ? { articleLocale: row.article_locale } : {}),
+    ...(row.translation_key != null ? { translationKey: row.translation_key } : {})
   };
 }
 
@@ -124,18 +126,46 @@ function createCommentStore(db, {
     WHERE comments.article_id = ? AND comments.status = 'approved'
     ORDER BY comments.created_at ASC, comments.id ASC
   `);
-  const listModeration = db.prepare(`
-    SELECT
-      comments.*,
-      comment_users.display_name,
-      articles.title AS article_title,
-      articles.slug AS article_slug
-    FROM comments
-    JOIN comment_users ON comment_users.id = comments.comment_user_id
-    JOIN articles ON articles.id = comments.article_id
-    WHERE comments.status = ?
-    ORDER BY comments.created_at ASC, comments.id ASC
-  `);
+
+  // Moderation SQL is prepared lazily so the module still constructs against
+  // minimal fixtures that lack the normalized `posts`/localized `articles`
+  // schema. When the normalized schema is present, each moderation row carries
+  // the article locale and the stable post translation key so sibling threads
+  // (same slug/title across locales) can be told apart in the admin UI.
+  let moderationStatement = null;
+  function moderationStatementFor(db) {
+    if (moderationStatement === null) {
+      const hasPosts = Boolean(db.prepare(`
+        SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'posts'
+      `).get());
+      const articleColumns = new Set(
+        db.prepare('PRAGMA table_info(articles)').all().map(column => column.name)
+      );
+      const localeSelect = articleColumns.has('locale')
+        ? 'articles.locale AS article_locale'
+        : 'NULL AS article_locale';
+      const translationJoin = hasPosts ? 'JOIN posts ON posts.id = articles.post_id' : '';
+      const translationSelect = hasPosts
+        ? 'posts.translation_key AS translation_key'
+        : 'NULL AS translation_key';
+      moderationStatement = db.prepare(`
+        SELECT
+          comments.*,
+          comment_users.display_name,
+          articles.title AS article_title,
+          articles.slug AS article_slug,
+          ${localeSelect},
+          ${translationSelect}
+        FROM comments
+        JOIN comment_users ON comment_users.id = comments.comment_user_id
+        JOIN articles ON articles.id = comments.article_id
+        ${translationJoin}
+        WHERE comments.status = ?
+        ORDER BY comments.created_at ASC, comments.id ASC
+      `);
+    }
+    return moderationStatement;
+  }
 
   const createPendingTransaction = db.transaction(({
     articleId,
@@ -198,7 +228,7 @@ function createCommentStore(db, {
       if (!COMMENT_STATUSES.has(status)) {
         throw new CommentStoreError('invalid_status');
       }
-      return listModeration.all(status).map(mapComment);
+      return moderationStatementFor(db).all(status).map(mapComment);
     },
 
     reviewComment({ commentId, targetStatus, reviewerId, reviewedAt }) {

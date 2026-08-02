@@ -4,6 +4,7 @@ const Database = require('better-sqlite3');
 const express = require('express');
 const { createProjectFixture, runNode, startServer } = require('./helpers/project-fixture');
 const { parseCommentsConfig } = require('../server/comments/config');
+const { createCommentStore } = require('../server/comments/store');
 const { createCommentsModule } = require('../server/comments/module');
 
 const CONFIG_KEYS = [
@@ -175,4 +176,99 @@ test('a complete fake configuration creates mountable module surfaces', () => {
   });
 
   db.close();
+});
+
+test('the minimal configuration still constructs while the normalized schema serves moderation locale and translation key', () => {
+  // Minimal fixture (legacy articles/users only): construction must not touch
+  // moderation SQL, which is prepared lazily only when the admin API is used.
+  const minimalDb = new Database(':memory:');
+  minimalDb.exec(`
+    CREATE TABLE articles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      slug TEXT NOT NULL UNIQUE
+    );
+    CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT);
+  `);
+  const config = parseCommentsConfig(commentsEnv());
+  const identityClient = {
+    createAuthorizationUrl: () => 'https://accounts.google.com/o/oauth2/v2/auth',
+    exchangeCode: async () => ({ subject: 'subject', displayName: 'Reader' })
+  };
+  const minimalComments = createCommentsModule({
+    db: minimalDb,
+    config,
+    identityClient,
+    clock: { now: () => new Date('2026-07-16T00:00:00.000Z') }
+  });
+  assert.equal(minimalComments.enabled, true);
+  assert.equal(typeof minimalComments.getArticleCommentsViewModel, 'function');
+  assert.deepEqual(minimalComments.getArticleCommentsViewModel(1, null), {
+    enabled: true,
+    comments: [],
+    commenter: null,
+    csrfToken: null
+  });
+  minimalDb.close();
+
+  // Normalized posts/localized-articles schema: moderation returns the
+  // localized article identity for each sibling thread.
+  const normalizedDb = new Database(':memory:');
+  normalizedDb.pragma('foreign_keys = ON');
+  normalizedDb.exec(`
+    CREATE TABLE posts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      translation_key TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE articles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+      locale TEXT NOT NULL CHECK (locale IN ('zh', 'en')),
+      title TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      content TEXT NOT NULL,
+      html TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'published',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(post_id, locale),
+      UNIQUE(locale, slug)
+    );
+    CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT);
+    INSERT INTO posts (translation_key, created_at, updated_at)
+    VALUES ('config-key', '2026-07-16T00:00:00.000Z', '2026-07-16T00:00:00.000Z');
+    INSERT INTO articles (post_id, locale, title, slug, content, html, status, created_at, updated_at)
+    VALUES (1, 'zh', '中文文章', 'zh-post', 'body', '<p>body</p>', 'published',
+            '2026-07-16T00:00:00.000Z', '2026-07-16T00:00:00.000Z');
+    INSERT INTO articles (post_id, locale, title, slug, content, html, status, created_at, updated_at)
+    VALUES (1, 'en', 'English Post', 'en-post', 'body', '<p>body</p>', 'published',
+            '2026-07-16T00:00:00.000Z', '2026-07-16T00:00:00.000Z');
+  `);
+  const store = createCommentStore(normalizedDb);
+  const commenter = store.upsertIdentity(
+    { subject: 'config-subject', displayName: 'Reader' },
+    '2026-07-16T00:00:00.000Z'
+  );
+  store.createPendingComment({
+    articleId: 1,
+    commenterId: commenter.id,
+    content: 'zh pending',
+    createdAt: '2026-07-16T00:00:00.000Z'
+  });
+  store.createPendingComment({
+    articleId: 2,
+    commenterId: commenter.id,
+    content: 'en pending',
+    createdAt: '2026-07-16T00:00:00.500Z'
+  });
+  const moderation = store.listForModeration('pending');
+  assert.equal(moderation.length, 2);
+  const byLocale = new Map(moderation.map(comment => [comment.articleLocale, comment]));
+  assert.equal(byLocale.get('zh').translationKey, 'config-key');
+  assert.equal(byLocale.get('zh').articleSlug, 'zh-post');
+  assert.equal(byLocale.get('en').translationKey, 'config-key');
+  assert.equal(byLocale.get('en').articleSlug, 'en-post');
+  normalizedDb.close();
 });

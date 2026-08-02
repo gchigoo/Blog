@@ -247,6 +247,45 @@ test('OAuth context rejects unsafe return paths, tampering, expiry, state mismat
   );
 });
 
+test('localized and legacy article return paths survive OAuth while unsafe paths normalize to /', async t => {
+  const harness = await createHarness(t);
+  for (const returnTo of ['/zh/article/safe-slug', '/en/article/safe-slug', '/article/safe-slug']) {
+    const login = await beginLogin(harness.baseUrl, returnTo);
+    const callback = await completeLogin(harness.baseUrl, login);
+    assert.equal(callback.status, 302, returnTo);
+    assert.equal(callback.headers.get('location'), returnTo, returnTo);
+    const sessionCookie = extractCookie(callback, 'comment_session');
+    assert.ok(sessionCookie.startsWith('comment_session='), returnTo);
+    const session = await (await fetch(`${harness.baseUrl}/_session`, {
+      headers: { cookie: sessionCookie }
+    })).json();
+    assert.equal(session.commenter.displayName, 'Reader Name', returnTo);
+  }
+
+  const unsafeReturnPaths = [
+    '/fr/article/safe-slug',
+    '/zh/article/safe%2Fslash',
+    '/zh/article/safe%5Cslash',
+    '/zh/article/safe%252Fslash',
+    '/zh/article/safe?query=1',
+    '/zh/article/safe#fragment',
+    '/zh/admin/comments',
+    '/zh/api/articles/1/comments',
+    '/zh/article/unsafe_slug',
+    '/zh/article/..%2F..',
+    'https://evil.example/steal',
+    '//evil.example/steal',
+    '/zh//article/foo',
+    '\\zh\\article\\foo'
+  ];
+  for (const returnTo of unsafeReturnPaths) {
+    const login = await beginLogin(harness.baseUrl, returnTo);
+    const callback = await completeLogin(harness.baseUrl, login);
+    assert.equal(callback.status, 302, returnTo);
+    assert.equal(callback.headers.get('location'), '/', returnTo);
+  }
+});
+
 test('OAuth provider and identity failures have stable status codes and never create users', async t => {
   const harness = await createHarness(t);
   const warnings = [];
