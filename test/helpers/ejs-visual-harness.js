@@ -88,9 +88,21 @@ caption: ${fixture.extension.toUpperCase()} synthesized audio playback verificat
 });
 
 db.pragma('foreign_keys = ON');
+// The harness uses the real normalized moderation path: `posts` plus the
+// localized `articles` (post_id, locale). The comments store's moderation
+// query joins these to supply `articleLocale` and `translationKey` on every
+// row, exactly as production does, so the admin moderation identity UI is
+// exercised with real store data rather than view-only fake fields.
 db.exec(`
+  CREATE TABLE posts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    translation_key TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
   CREATE TABLE articles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    post_id INTEGER NOT NULL,
     title TEXT NOT NULL,
     slug TEXT NOT NULL UNIQUE,
     locale TEXT NOT NULL DEFAULT 'zh',
@@ -107,9 +119,13 @@ db.exec(`
   INSERT INTO users (username) VALUES ('visual-admin');
 `);
 
+const insertPost = db.prepare(`
+  INSERT INTO posts (translation_key, created_at, updated_at) VALUES (?, ?, ?)
+`);
+
 const insertArticle = db.prepare(`
-  INSERT INTO articles (title, slug, locale, content, html, tags, comments_enabled, created_at)
-  VALUES (@title, @slug, @locale, @content, @html, @tags, @comments_enabled, @created_at)
+  INSERT INTO articles (post_id, title, slug, locale, content, html, tags, comments_enabled, created_at)
+  VALUES (@postId, @title, @slug, @locale, @content, @html, @tags, @comments_enabled, @created_at)
 `);
 
 const articleFixtures = [
@@ -117,6 +133,7 @@ const articleFixtures = [
     title: '从 EJS 3 升级到 EJS 6：保持页面像素级一致的实践记录',
     slug: 'comments-browser-smoke',
     locale: 'zh',
+    translationKey: 'comments-browser-smoke',
     content: 'visual fixture',
     html: '<h2>升级目标</h2><p>依赖升级前后保持完全一致的 HTML、布局和样式。</p><blockquote>先冻结行为，再替换依赖。</blockquote><h3>验证清单</h3><ul><li>HTML 快照</li><li>六档设备截图</li><li>人工目视确认</li></ul><pre><code>npm run test:visual</code></pre>',
     tags: JSON.stringify(['EJS', 'upgrade', '视觉回归']),
@@ -127,6 +144,7 @@ const articleFixtures = [
     title: 'A Comprehensive Practice Record of Upgrading Server-Side Template Rendering from EJS 3 to EJS 6 While Keeping the Rendered Pages Pixel-Level Identical on Every Device',
     slug: 'comments-browser-smoke-en',
     locale: 'en',
+    translationKey: 'comments-browser-smoke',
     content: 'visual fixture',
     html: '<h2>Upgrade Goals</h2><p>Keep the rendered HTML, layout, and computed styles byte-identical before and after the dependency upgrade.</p><blockquote>Freeze the behavior first, then replace the dependency.</blockquote><h3>Verification Checklist</h3><ul><li>HTML snapshots</li><li>Six device screenshot classes</li><li>Manual visual confirmation of every fixture</li></ul><pre><code>npm run test:visual</code></pre>',
     tags: JSON.stringify(['EJS', 'upgrade', 'Visual Regression']),
@@ -137,6 +155,7 @@ const articleFixtures = [
     title: '暂无评论的文章',
     slug: 'comments-empty',
     locale: 'zh',
+    translationKey: 'comments-empty',
     content: 'visual fixture',
     html: '<h2>空状态</h2><p>这个页面用于固定评论区尚无公开评论时的布局。</p>',
     tags: JSON.stringify(['测试']),
@@ -147,6 +166,7 @@ const articleFixtures = [
     title: '评论功能关闭时的文章详情',
     slug: 'comments-disabled',
     locale: 'zh',
+    translationKey: 'comments-disabled',
     content: 'visual fixture',
     html: '<h2>正文保持不变</h2><p>评论功能关闭时，文章页不渲染评论区域。</p><table><thead><tr><th>版本</th><th>状态</th></tr></thead><tbody><tr><td>EJS 3</td><td>基线</td></tr><tr><td>EJS 6</td><td>待验证</td></tr></tbody></table>',
     tags: JSON.stringify(['EJS', 'upgrade']),
@@ -157,6 +177,7 @@ const articleFixtures = [
     title: 'Node.js 24 下的服务端模板测试策略',
     slug: 'node-24-template-tests',
     locale: 'zh',
+    translationKey: 'node-24-template-tests',
     content: 'visual fixture',
     html: '<p>用于首页、归档和标签页面的固定数据。</p>',
     tags: JSON.stringify(['Node.js', '测试']),
@@ -167,6 +188,7 @@ const articleFixtures = [
     title: '把外部样式与字体固定到本地测试资源',
     slug: 'pin-browser-assets',
     locale: 'zh',
+    translationKey: 'pin-browser-assets',
     content: 'visual fixture',
     html: '<p>消除 CDN 和字体响应漂移。</p>',
     tags: JSON.stringify(['CSS', 'upgrade']),
@@ -177,6 +199,7 @@ const articleFixtures = [
     title: '业界新闻速览：2026 年前端工具链观察',
     slug: 'industry-news',
     locale: 'zh',
+    translationKey: 'industry-news',
     content: 'visual fixture',
     html: '<p>新闻分类下的固定数据，用于验证跨分类的标签/分类页面。</p>',
     tags: JSON.stringify(['业界新闻']),
@@ -187,6 +210,7 @@ const articleFixtures = [
     title: 'Frontend Toolchain Observations for 2026',
     slug: 'industry-news-en',
     locale: 'en',
+    translationKey: 'industry-news',
     content: 'visual fixture',
     html: '<p>Fixed news-category data used to verify taxonomy and category pages across locales.</p>',
     tags: JSON.stringify(['Industry News']),
@@ -197,6 +221,7 @@ const articleFixtures = [
     title: '早年技术笔记（Legacy 内容归档）',
     slug: 'legacy-notes',
     locale: 'zh',
+    translationKey: 'legacy-notes',
     content: 'visual fixture',
     html: '<p>归档到“其他”分类的旧内容，用于固定 legacy 分类的展示。</p>',
     tags: JSON.stringify(['旧内容']),
@@ -204,7 +229,28 @@ const articleFixtures = [
     created_at: '2024-03-02T09:00:00.000Z'
   }
 ];
-for (const article of articleFixtures) insertArticle.run(article);
+// Seed one post per logical article (bilingual pairs share a translation key),
+// then every localized article row referencing its post.
+const postIdByTranslationKey = new Map();
+for (const article of articleFixtures) {
+  if (!postIdByTranslationKey.has(article.translationKey)) {
+    const postId = Number(insertPost.run(article.translationKey, article.created_at, article.created_at).lastInsertRowid);
+    postIdByTranslationKey.set(article.translationKey, postId);
+  }
+}
+for (const article of articleFixtures) {
+  insertArticle.run({
+    postId: postIdByTranslationKey.get(article.translationKey),
+    title: article.title,
+    slug: article.slug,
+    locale: article.locale,
+    content: article.content,
+    html: article.html,
+    tags: article.tags,
+    comments_enabled: article.comments_enabled,
+    created_at: article.created_at
+  });
+}
 
 const commentsConfig = parseCommentsConfig({
   GOOGLE_CLIENT_ID: 'ejs-visual-client',
@@ -256,6 +302,20 @@ insertComment.run(
   '已经拒绝的评论，用于固定审核状态筛选。',
   'rejected',
   '2026-07-16T02:10:00.000Z'
+);
+
+// An English pending comment on the bilingual article's en row, so the admin
+// moderation list exercises both locale identities (语言：中文 / 语言：英文)
+// through the real store query.
+const insertEnglishComment = db.prepare(`
+  INSERT INTO comments (article_id, comment_user_id, content, status, created_at)
+  VALUES (2, ?, ?, ?, ?)
+`);
+insertEnglishComment.run(
+  commenter.id,
+  'An English pending comment exercising the localized moderation identity row.',
+  'pending',
+  '2026-07-16T02:15:00.000Z'
 );
 
 // The public templates render category badges and fine-tag links from the

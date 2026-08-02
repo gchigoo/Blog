@@ -279,21 +279,24 @@ pm2 delete blog       # 删除进程
 
 ### 配置步骤
 
-```bash
-# 1. 复制配置文件
-sudo cp nginx.conf.example /etc/nginx/sites-available/blog
+安装的是测试并锁定的生产契约 `deploy/nginx/blog.conf`（显式静态前缀缓存、精确 favicon、动态代理 catch-all）与两个必需片段，而不是仓库根目录的注释模板 `nginx.conf.example`：
 
-# 2. 编辑配置（修改域名）
-sudo nano /etc/nginx/sites-available/blog
+```bash
+# 1. 安装必需片段（Cloudflare real-IP 与公共维护门）
+sudo install -o root -g root -m 0644 deploy/nginx/cloudflare-real-ip.conf /etc/nginx/snippets/cloudflare-real-ip.conf
+sudo install -o root -g root -m 0644 deploy/nginx/blog-maintenance.conf /etc/nginx/snippets/blog-maintenance.conf
+
+# 2. 安装生产反代配置
+sudo install -o root -g root -m 0644 deploy/nginx/blog.conf /etc/nginx/sites-available/blog.conf
 
 # 3. 启用站点
-sudo ln -s /etc/nginx/sites-available/blog /etc/nginx/sites-enabled/
+sudo ln -sf /etc/nginx/sites-available/blog.conf /etc/nginx/sites-enabled/
 
-# 4. 测试配置
+# 4. 测试配置（每次 reload 前都必须执行）
 sudo nginx -t
 
-# 5. 重启 Nginx
-sudo systemctl restart nginx
+# 5. 重载 Nginx
+sudo systemctl reload nginx
 ```
 
 ### 配置说明
@@ -354,13 +357,18 @@ server {
 
 #### 公共维护门（cutover 期间 503）
 
-`deploy/nginx/blog-maintenance.conf` 是公共维护门。切换窗口期间把它从 blog server 块中启用（去掉 `blog.conf` 中对应的 include 注释）：
+`deploy/nginx/blog-maintenance.conf` 是公共维护门。`deploy/nginx/blog.conf` 的 **443 HTTPS server 块内** 带有一行默认注释（inert）的启用行；切换窗口期间在该 server 块内去掉 `#` 启用它（该行只在 443 块内有效，绝不能放在顶部或 port-80 跳转块中）：
 
 ```nginx
-include /etc/nginx/snippets/blog-maintenance.conf;
+server {
+    listen 443 ssl;
+    # ...
+    # Public maintenance gate（cutover 期间取消注释）
+    # include /etc/nginx/snippets/blog-maintenance.conf;
+}
 ```
 
-启用后，公共流量收到 `503`，而 loopback（`127.0.0.1`/`::1`）与文档化的操作员 allowlist（按客户端地址）仍可访问候选应用进行 smoke。**每次 reload 前必须先运行 `sudo nginx -t`**。切换完成并确认所有 smoke/审计通过后，移除该 include、再次 `sudo nginx -t`、`sudo systemctl reload nginx`，并记录切换时间。
+启用后，公共流量收到 `503`，而 loopback（`127.0.0.1`/`::1`）与文档化的操作员 allowlist（按客户端地址）仍可访问候选应用进行 smoke。**每次 reload 前必须先运行 `sudo nginx -t`**。切换完成并确认所有 smoke/审计通过后，把该行重新注释、再次 `sudo nginx -t`、`sudo systemctl reload nginx`，并记录切换时间。
 
 ### Nginx 常用命令
 

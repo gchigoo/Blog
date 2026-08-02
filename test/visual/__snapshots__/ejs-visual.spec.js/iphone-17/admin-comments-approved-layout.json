@@ -1394,19 +1394,19 @@
         "x": 24,
         "y": 154.188,
         "width": 354,
-        "height": 409,
+        "height": 467,
         "top": 154.188,
         "right": 378,
-        "bottom": 563.188,
+        "bottom": 621.188,
         "left": 24
       },
       "client": {
         "width": 354,
-        "height": 409
+        "height": 467
       },
       "scroll": {
         "width": 354,
-        "height": 409
+        "height": 467
       },
       "style": {
         "display": "block",
@@ -1420,7 +1420,7 @@
         "zIndex": "auto",
         "boxSizing": "content-box",
         "width": "354px",
-        "height": "409px",
+        "height": "467px",
         "minWidth": "0px",
         "maxWidth": "none",
         "minHeight": "0px",
@@ -1470,7 +1470,7 @@
         "overflowX": "visible",
         "overflowY": "visible",
         "transform": "none",
-        "transformOrigin": "177px 204.5px",
+        "transformOrigin": "177px 233.5px",
         "flexBasis": "auto",
         "flexDirection": "row",
         "flexGrow": "0",
@@ -2433,19 +2433,19 @@
         "x": 24,
         "y": 293.188,
         "width": 354,
-        "height": 270,
+        "height": 328,
         "top": 293.188,
         "right": 378,
-        "bottom": 563.188,
+        "bottom": 621.188,
         "left": 24
       },
       "client": {
         "width": 354,
-        "height": 270
+        "height": 328
       },
       "scroll": {
         "width": 354,
-        "height": 270
+        "height": 328
       },
       "style": {
         "display": "block",
@@ -2459,7 +2459,7 @@
         "zIndex": "auto",
         "boxSizing": "content-box",
         "width": "354px",
-        "height": "270px",
+        "height": "328px",
         "minWidth": "0px",
         "maxWidth": "none",
         "minHeight": "0px",
@@ -2509,7 +2509,7 @@
         "overflowX": "visible",
         "overflowY": "visible",
         "transform": "none",
-        "transformOrigin": "177px 135px",
+        "transformOrigin": "177px 164px",
         "flexBasis": "auto",
         "flexDirection": "row",
         "flexGrow": "0",
@@ -2550,19 +2550,19 @@
         "x": 24,
         "y": 293.188,
         "width": 354,
-        "height": 270,
+        "height": 328,
         "top": 293.188,
         "right": 378,
-        "bottom": 563.188,
+        "bottom": 621.188,
         "left": 24
       },
       "client": {
         "width": 352,
-        "height": 268
+        "height": 326
       },
       "scroll": {
         "width": 352,
-        "height": 268
+        "height": 326
       },
       "style": {
         "display": "list-item",
@@ -2576,7 +2576,7 @@
         "zIndex": "auto",
         "boxSizing": "content-box",
         "width": "320px",
-        "height": "236px",
+        "height": "294px",
         "minWidth": "0px",
         "maxWidth": "none",
         "minHeight": "0px",
@@ -2626,7 +2626,7 @@
         "overflowX": "visible",
         "overflowY": "visible",
         "transform": "none",
-        "transformOrigin": "177px 135px",
+        "transformOrigin": "177px 164px",
         "flexBasis": "auto",
         "flexDirection": "row",
         "flexGrow": "0",
@@ -2667,19 +2667,19 @@
         "x": 41,
         "y": 310.188,
         "width": 320,
-        "height": 100,
+        "height": 158,
         "top": 310.188,
         "right": 361,
-        "bottom": 410.188,
+        "bottom": 468.188,
         "left": 41
       },
       "client": {
         "width": 320,
-        "height": 100
+        "height": 158
       },
       "scroll": {
         "width": 320,
-        "height": 100
+        "height": 158
       },
       "style": {
         "display": "flex",
@@ -2693,7 +2693,7 @@
         "zIndex": "auto",
         "boxSizing": "content-box",
         "width": "320px",
-        "height": "100px",
+        "height": "158px",
         "minWidth": "0px",
         "maxWidth": "none",
         "minHeight": "0px",
@@ -2743,7 +2743,7 @@
         "overflowX": "visible",
         "overflowY": "visible",
         "transform": "none",
-        "transformOrigin": "160px 50px",
+        "transformOrigin": "160px 79px",
         "flexBasis": "auto",
         "flexDirection": "row",
         "flexGrow": "0",
@@ -3235,20 +3235,137 @@
       "after": null
     },
     {
-      "path": "body > main:nth-child(2) > section:nth-child(1) > ol:nth-child(5) > li:nth-child(1) > div:nth-child(1) > time:nth-child(4)",
+      "path": "body > main:nth-child(2) > section:nth-child(1) > ol:nth-child(5) > li:nth-child(1) > div:nth-child(1) > span:nth-child(4)",
+      "tag": "span",
+      "id": "",
+      "classes": [
+        "moderation-translation-group"
+      ],
+      "hidden": false,
+      "rect": {
+        "x": 41,
+        "y": 418.188,
+        "width": 242.422,
+        "height": 21,
+        "top": 418.188,
+        "right": 283.422,
+        "bottom": 439.188,
+        "left": 41
+      },
+      "client": {
+        "width": 242,
+        "height": 21
+      },
+      "scroll": {
+        "width": 242,
+        "height": 21
+      },
+      "style": {
+        "display": "block",
+        "visibility": "visible",
+        "opacity": "1",
+        "position": "static",
+        "top": "auto",
+        "right": "auto",
+        "bottom": "auto",
+        "left": "auto",
+        "zIndex": "auto",
+        "boxSizing": "content-box",
+        "width": "242.421875px",
+        "height": "21px",
+        "minWidth": "0px",
+        "maxWidth": "none",
+        "minHeight": "auto",
+        "maxHeight": "none",
+        "marginTop": "0px",
+        "marginRight": "0px",
+        "marginBottom": "0px",
+        "marginLeft": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderTopWidth": "0px",
+        "borderRightWidth": "0px",
+        "borderBottomWidth": "0px",
+        "borderLeftWidth": "0px",
+        "borderTopStyle": "none",
+        "borderRightStyle": "none",
+        "borderBottomStyle": "none",
+        "borderLeftStyle": "none",
+        "borderTopColor": "rgb(102, 102, 102)",
+        "borderRightColor": "rgb(102, 102, 102)",
+        "borderBottomColor": "rgb(102, 102, 102)",
+        "borderLeftColor": "rgb(102, 102, 102)",
+        "borderRadius": "0px",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "backgroundImage": "none",
+        "boxShadow": "none",
+        "color": "rgb(102, 102, 102)",
+        "fontFamily": "Inter, -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, Oxygen, Ubuntu, Cantarell, \"Open Sans\", \"Helvetica Neue\", sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\"",
+        "fontSize": "14.4px",
+        "fontStyle": "normal",
+        "fontWeight": "400",
+        "fontStretch": "100%",
+        "fontVariant": "normal",
+        "lineHeight": "21.6px",
+        "letterSpacing": "normal",
+        "wordSpacing": "0px",
+        "textAlign": "left",
+        "textDecorationLine": "none",
+        "textTransform": "none",
+        "textIndent": "0px",
+        "textRendering": "auto",
+        "whiteSpace": "normal",
+        "wordBreak": "break-word",
+        "overflowWrap": "anywhere",
+        "overflowX": "visible",
+        "overflowY": "visible",
+        "transform": "none",
+        "transformOrigin": "121.210938px 10.5px",
+        "flexBasis": "auto",
+        "flexDirection": "row",
+        "flexGrow": "0",
+        "flexShrink": "1",
+        "flexWrap": "nowrap",
+        "alignContent": "normal",
+        "alignItems": "normal",
+        "alignSelf": "auto",
+        "justifyContent": "normal",
+        "justifyItems": "normal",
+        "justifySelf": "auto",
+        "columnGap": "normal",
+        "rowGap": "normal",
+        "gridAutoColumns": "auto",
+        "gridAutoFlow": "normal",
+        "gridAutoRows": "auto",
+        "gridTemplateColumns": "none",
+        "gridTemplateRows": "none",
+        "objectFit": "fill",
+        "objectPosition": "50% 50%",
+        "listStylePosition": "outside",
+        "listStyleType": "none",
+        "tableLayout": "auto",
+        "borderCollapse": "separate"
+      },
+      "before": null,
+      "after": null
+    },
+    {
+      "path": "body > main:nth-child(2) > section:nth-child(1) > ol:nth-child(5) > li:nth-child(1) > div:nth-child(1) > time:nth-child(5)",
       "tag": "time",
       "id": "",
       "classes": [],
       "hidden": false,
       "rect": {
-        "x": 138.453,
-        "y": 389.188,
+        "x": 41,
+        "y": 447.188,
         "width": 120,
         "height": 21,
-        "top": 389.188,
-        "right": 258.453,
-        "bottom": 410.188,
-        "left": 138.453
+        "top": 447.188,
+        "right": 161,
+        "bottom": 468.188,
+        "left": 41
       },
       "client": {
         "width": 120,
@@ -3359,12 +3476,12 @@
       "hidden": false,
       "rect": {
         "x": 41,
-        "y": 426.188,
+        "y": 484.188,
         "width": 320,
         "height": 72,
-        "top": 426.188,
+        "top": 484.188,
         "right": 361,
-        "bottom": 498.188,
+        "bottom": 556.188,
         "left": 41
       },
       "client": {
@@ -3476,12 +3593,12 @@
       "hidden": false,
       "rect": {
         "x": 41,
-        "y": 514.188,
+        "y": 572.188,
         "width": 320,
         "height": 32,
-        "top": 514.188,
+        "top": 572.188,
         "right": 361,
-        "bottom": 546.188,
+        "bottom": 604.188,
         "left": 41
       },
       "client": {
@@ -3593,12 +3710,12 @@
       "hidden": false,
       "rect": {
         "x": 41,
-        "y": 514.188,
+        "y": 572.188,
         "width": 56.641,
         "height": 32,
-        "top": 514.188,
+        "top": 572.188,
         "right": 97.641,
-        "bottom": 546.188,
+        "bottom": 604.188,
         "left": 41
       },
       "client": {
@@ -3710,12 +3827,12 @@
       "hidden": false,
       "rect": {
         "x": 109.641,
-        "y": 514.188,
+        "y": 572.188,
         "width": 56.641,
         "height": 32,
-        "top": 514.188,
+        "top": 572.188,
         "right": 166.281,
-        "bottom": 546.188,
+        "bottom": 604.188,
         "left": 109.641
       },
       "client": {

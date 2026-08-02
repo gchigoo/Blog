@@ -135,9 +135,59 @@ test('Nginx caches static assets only by explicit prefixes and gates public traf
   assert.match(maintenance, /127\.0\.0\.1/, 'loopback bypass missing');
   assert.match(maintenance, /::1/, 'IPv6 loopback bypass missing');
   assert.match(maintenance, /allowlist/i, 'operator allowlist must be documented');
-  assert.match(nginx, /blog-maintenance\.conf/, 'server block must document the maintenance gate include');
   assert.match(nginx, /nginx -t/, 'nginx -t before reload must be documented');
+
+  // The enable include must be pinned as an inert, commented line INSIDE the
+  // HTTPS server block: uncommenting it gates the 443 listener. It must never
+  // be a top-level line (invalid nginx) or a line inside the port-80 redirect
+  // block (which would leave HTTPS ungated), and it must ship commented so
+  // public traffic is open by default.
+  const blocks = extractServerBlocks(nginx);
+  assert.equal(blocks.length, 2, `expected HTTP redirect + HTTPS server blocks, got ${blocks.length}`);
+  const redirectBlock = blocks.find(block => /listen\s+80/.test(block));
+  const httpsBlock = blocks.find(block => /listen\s+443\s+ssl/.test(block));
+  assert.ok(redirectBlock, 'port-80 redirect server block missing');
+  assert.ok(httpsBlock, '443 ssl server block missing');
+
+  const commentedInclude = /^\s*#\s*include\s+\S*blog-maintenance\.conf\s*;?\s*$/m;
+  const activeInclude = /^\s*include\s+\S*blog-maintenance\.conf\s*;?\s*$/m;
+  assert.match(httpsBlock, commentedInclude, 'maintenance gate include must be a commented line inside the 443 server block');
+  assert.doesNotMatch(httpsBlock, activeInclude, 'maintenance gate include must ship inert (commented)');
+  assert.doesNotMatch(redirectBlock, /blog-maintenance\.conf/, 'maintenance gate must not be referenced in the port-80 redirect block');
+  const topLevel = nginx.slice(0, nginx.indexOf('server {'));
+  assert.doesNotMatch(
+    topLevel,
+    /^\s*(#\s*)?include\s+\S*blog-maintenance\.conf\s*;?\s*$/m,
+    'maintenance gate include line must not appear at the top level outside server blocks'
+  );
 });
+
+// Split a server block out of the config by brace matching so placement
+// assertions are structural rather than a bare filename search.
+function extractServerBlocks(nginx) {
+  const blocks = [];
+  let cursor = 0;
+  while (true) {
+    const start = nginx.indexOf('server {', cursor);
+    if (start === -1) break;
+    let depth = 0;
+    let end = -1;
+    for (let index = start; index < nginx.length; index += 1) {
+      if (nginx[index] === '{') depth += 1;
+      else if (nginx[index] === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          end = index;
+          break;
+        }
+      }
+    }
+    if (end === -1) throw new Error('unbalanced server block in blog.conf');
+    blocks.push(nginx.slice(start, end + 1));
+    cursor = end + 1;
+  }
+  return blocks;
+}
 
 test('Linux updater covers lock, bootstrap, no-op, failure preservation, promotion, and rollback', {
   skip: process.platform !== 'linux' ? 'Linux + flock integration only' : false
