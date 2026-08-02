@@ -3,6 +3,22 @@ const { validateSegment } = require('../taxonomy/catalog');
 
 const QUALITY_PATTERN = /^q\s*=\s*([0-9]*\.?[0-9]+)$/;
 
+// The public locale preference cookie: one year, HttpOnly, SameSite=Lax,
+// Path=/, and Secure in production. It is only written by strict localized
+// routes; root negotiation never sets it.
+const LOCALE_COOKIE = 'blog_locale';
+const LOCALE_COOKIE_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000;
+
+function localeCookieOptions(secure = false) {
+  return {
+    httpOnly: true,
+    sameSite: 'lax',
+    path: '/',
+    secure: Boolean(secure),
+    maxAge: LOCALE_COOKIE_MAX_AGE_MS
+  };
+}
+
 function parseAcceptLanguageHeader(header) {
   if (typeof header !== 'string' || header.trim() === '') return [];
   const accepted = [];
@@ -81,8 +97,10 @@ function encodePathSegment(rawSlug) {
 module.exports = {
   SUPPORTED_LOCALES,
   DEFAULT_LOCALE,
+  LOCALE_COOKIE,
   parseAcceptLanguageHeader,
   negotiateLocale,
   localizedPath,
-  encodePathSegment
+  encodePathSegment,
+  localeCookieOptions
 };

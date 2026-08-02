@@ -103,7 +103,6 @@ test('runtime config wires locale, taxonomy, and about contracts', () => {
   assert.equal(configFixture.supportedLocales, SUPPORTED_LOCALES);
   assert.equal(configFixture.defaultLocale, DEFAULT_LOCALE);
   assert.deepEqual(configFixture.aboutPaths, { zh: 'content/zh/about.md', en: 'content/en/about.md' });
-  assert.equal(configFixture.aboutPath, 'content/about.md');
   assert.equal(configFixture.taxonomyPath, 'content/taxonomy.json');
   assert.equal(configFixture.operationsDir, 'var/operations');
   assert.equal(Object.isFrozen(configFixture.site), true);

@@ -50,6 +50,9 @@ async function createHarness(t, overrides = {}) {
   app.use('/api/admin/analytics', analytics.adminApiRouter);
   app.use(analytics.adminPageRouter);
   app.use(analytics.collectorMiddleware);
+  // A redirect route deliberately mounted AFTER the collector: the hardened
+  // middleware must never persist it regardless of future mount-order changes.
+  app.get('/redirect-fixture', (req, res) => res.redirect(302, '/about'));
   app.get('/about', (req, res) => res.render('about', { user: null }));
   app.get('/auth/google/callback', (req, res) => res.type('html').send('<p>callback</p>'));
   app.use((req, res) => res.status(404).render('404', { user: null }));
@@ -147,6 +150,22 @@ test('tracked public HTML is no-store and client context is idempotently attache
   const stored = db.prepare('SELECT context_hash, viewport_width FROM access_event_details').get();
   assert.equal(stored.context_hash.length, 64);
   assert.equal(stored.viewport_width, 1280);
+});
+
+test('collector never records redirects even when mounted before the redirect route', async t => {
+  const { baseUrl, db } = await createHarness(t);
+  const headers = { 'user-agent': 'Mozilla/5.0', 'x-forwarded-for': '203.0.113.66' };
+  const hop = await fetch(`${baseUrl}/redirect-fixture?utm=hop`, { redirect: 'manual', headers });
+  assert.equal(hop.status, 302);
+  await fetch(`${baseUrl}/about`, { headers });
+  assert.equal((await fetch(`${baseUrl}/missing-page`, { headers })).status, 404);
+
+  assert.deepEqual(
+    db.prepare('SELECT path FROM access_metrics ORDER BY id').all().map(row => row.path),
+    ['/about'],
+    'the 302 hop and the 404 must not create metrics'
+  );
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM access_event_details').get().count, 1);
 });
 
 test('bot public HTML is stored without a browser context token or script', async t => {

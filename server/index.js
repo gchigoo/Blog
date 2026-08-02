@@ -6,10 +6,18 @@ const config = require('./config').loadRuntimeConfig(process.env);
 const { createAnalyticsModule } = require('./analytics/module');
 const { AUDIO_FORMATS } = require('./article-audio/formats');
 const { db } = require('./db');
-const { createPagesRouter } = require('./routes/pages');
+const {
+  createRootMetadataRouter,
+  createRootNegotiatorRouter,
+  createSlashCanonicalizerRouter,
+  createLegacyRedirectRouter,
+  createLocalizedPagesRouter,
+  setLocaleLocals
+} = require('./routes/pages');
+const { createAdminPagesRouter } = require('./routes/admin-pages');
 const { createArticleService } = require('./services/articles');
 const { assetUrl, formatDate, formatYear } = require('./utils/presentation');
-const { SUPPORTED_LOCALES } = require('./i18n/config');
+const { DEFAULT_LOCALE, SUPPORTED_LOCALES, isSupportedLocale } = require('./i18n/config');
 const { validateRuntimePaths } = require('./utils/runtime-paths');
 
 validateRuntimePaths(config);
@@ -24,7 +32,6 @@ app.locals.analyticsDetailsEnabled = config.analytics.detailsEnabled;
 app.locals.assetUrl = assetUrl;
 app.locals.formatDate = formatDate;
 app.locals.formatYear = formatYear;
-app.locals.site = config.site;
 
 const articleService = createArticleService(db);
 const analyticsModule = createAnalyticsModule({ db, config: config.analytics });
@@ -98,6 +105,13 @@ app.use('/api/:locale/articles', (req, res, next) => {
   next();
 }, require('./routes/articles').createLocalizedArticlesRouter({ articleService }));
 
+// Root negotiation, slash canonicalizers, and legacy redirects mount before
+// the Analytics collector so no redirect hop can ever be counted.
+app.use(createRootNegotiatorRouter());
+app.use('/zh', createSlashCanonicalizerRouter('zh'));
+app.use('/en', createSlashCanonicalizerRouter('en'));
+app.use(createLegacyRedirectRouter({ config }));
+
 app.use(analyticsModule.collectorMiddleware);
 app.use('/audio', (req, res, next) => {
   const match = articleAudioPath.exec(req.path);
@@ -109,10 +123,16 @@ app.use('/audio', (req, res, next) => {
 });
 app.use(express.static(path.join(__dirname, '..', 'public')));
 app.use(analyticsModule.adminPageRouter);
-app.use(createPagesRouter({ config, articleService, commentsModule }));
+app.use(createRootMetadataRouter({ config, articleService }));
+app.use('/admin', createAdminPagesRouter({ articleService }));
+// Strict localized public pages: admin, APIs, root sitemap/robots, and
+// static/audio resources are all mounted before this, so `/:locale` cannot
+// capture them.
+app.use('/:locale', createLocalizedPagesRouter({ config, articleService, commentsModule }));
 
 app.use((req, res) => {
   if (req.originalUrl.startsWith('/api/')) return res.status(404).json({ error: '接口不存在' });
+  if (!isSupportedLocale(req.locale)) setLocaleLocals(req, res, config, DEFAULT_LOCALE);
   return res.status(404).render('404', { user: req.user || null, seo: null });
 });
 
@@ -125,7 +145,11 @@ app.use((error, req, res, next) => {
   if (req.originalUrl.startsWith('/api/')) {
     return res.status(status).json({ error: status >= 500 ? '服务器错误' : '请求无效' });
   }
-  return res.status(status).type('text/plain').send(status >= 500 ? '服务器错误' : '请求无效');
+  const locale = isSupportedLocale(req.locale) ? req.locale : DEFAULT_LOCALE;
+  const message = status >= 500
+    ? (locale === 'en' ? 'Server error' : '服务器错误')
+    : (locale === 'en' ? 'Invalid request' : '请求无效');
+  return res.status(status).type('text/plain').send(message);
 });
 
 let server = null;

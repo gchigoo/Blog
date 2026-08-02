@@ -91,7 +91,6 @@ function createBaseConfig(env) {
     }),
     supportedLocales: SUPPORTED_LOCALES,
     defaultLocale: DEFAULT_LOCALE,
-    aboutPath: 'content/about.md',
     aboutPaths: Object.freeze({
       zh: 'content/zh/about.md',
       en: 'content/en/about.md'

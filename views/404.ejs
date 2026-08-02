@@ -1,10 +1,10 @@
-<%- include('partials/header', { title: '404 - 页面未找到', user }) %>
+<%- include('partials/header', { title: typeof i18n === 'function' ? i18n('notFound.title') : '404 - 页面未找到', user }) %>
 
 <div style="text-align: center; padding: 4em 0;">
   <h1 style="font-size: 4em; margin: 0;">404</h1>
-  <p style="font-size: 1.5em; margin: 1em 0;">页面未找到</p>
+  <p style="font-size: 1.5em; margin: 1em 0;"><%= typeof i18n === 'function' ? i18n('notFound.message') : '页面未找到' %></p>
   <p>
-    <a href="/">返回首页</a>
+    <a href="<%= typeof localizedPath === 'function' ? localizedPath('/') : '/' %>"><%= typeof i18n === 'function' ? i18n('notFound.backHome') : '返回首页' %></a>
   </p>
 </div>
 

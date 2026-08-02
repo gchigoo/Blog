@@ -77,7 +77,11 @@ function createAnalyticsMiddleware({
     }
 
     res.on('finish', () => {
-      if (res.statusCode < 200 || res.statusCode >= 400) return;
+      // Only completed 2xx HTML responses are persisted. Redirects (3xx),
+      // client errors, and server errors never become metrics, so mounting
+      // order relative to redirect-producing routers cannot cause
+      // double-counting of hops.
+      if (res.statusCode < 200 || res.statusCode >= 300) return;
       const contentType = String(res.getHeader?.('content-type') || '');
       if (!/^text\/html(?:;|$)/i.test(contentType)) return;
 

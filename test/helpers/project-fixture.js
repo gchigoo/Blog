@@ -59,6 +59,13 @@ async function createProjectFixture(t) {
   await fs.mkdir(path.join(root, 'uploads', 'temp'), { recursive: true });
   await fs.mkdir(path.join(root, 'public', 'images'), { recursive: true });
   await fs.mkdir(path.join(root, 'public', 'audio'), { recursive: true });
+  // Locale-scoped data directories and the durable operations registry mirror
+  // the layout the server's runtime path validation guarantees at startup.
+  for (const locale of ['zh', 'en']) {
+    await fs.mkdir(path.join(root, 'articles', locale), { recursive: true });
+    await fs.mkdir(path.join(root, 'public', 'audio', locale), { recursive: true });
+  }
+  await fs.mkdir(path.join(root, 'var', 'operations'), { recursive: true });
   registerCleanup(t, async () => {
     await fs.rm(root, { recursive: true, force: true });
   });

@@ -1,4 +1,4 @@
-<%- include('partials/header', { title: '关于', user, seo: typeof seo !== 'undefined' ? seo : null }) %>
+<%- include('partials/header', { title: typeof title !== 'undefined' ? title : '关于', user, seo: typeof seo !== 'undefined' ? seo : null }) %>
 
 <article class="about-content">
   <% if (typeof aboutHtml !== 'undefined') { %><%- aboutHtml %><% } else { %><h1>关于我</h1><p>欢迎来到这个极简博客。</p><% } %>

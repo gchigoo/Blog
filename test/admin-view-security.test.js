@@ -41,8 +41,7 @@ test('admin upload feedback does not inject article metadata through innerHTML',
   assert.match(html, /preview\.categories/);
 });
 
-test('admin article list escapes locale, translation group, categories, and tags', async () => {
-  const template = path.join(REPO_ROOT, 'views', 'admin', 'articles.ejs');
+test('admin article list escapes locale, translation group, categories, and tags', async () => {  const template = path.join(REPO_ROOT, 'views', 'admin', 'articles.ejs');
   const hostile = `"><script>alert(1)</script>`;
   const html = await ejs.renderFile(template, {
     articles: [{
@@ -79,4 +78,13 @@ test('admin article list escapes locale, translation group, categories, and tags
   assert.match(html, /shared-key/);
   assert.match(html, /Technology/);
   assert.match(html, /Tutorial/);
+});
+
+test('admin header public links point directly at the Chinese site without negotiator or legacy hops', async () => {
+  const template = path.join(REPO_ROOT, 'views', 'partials', 'admin-header.ejs');
+  const html = await ejs.renderFile(template, {});
+
+  assert.match(html, /href="\/zh\/"/);
+  assert.match(html, /href="\/zh\/about"/);
+  assert.doesNotMatch(html, /href="\/">首页|href="\/about">关于|href="\/en\//);
 });

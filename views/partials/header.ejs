@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="<%= typeof localeMeta !== 'undefined' && localeMeta ? localeMeta.htmlLang : 'zh-CN' %>">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -17,7 +17,7 @@
     <meta property="og:url" content="<%= seo.canonical %>">
     <% if (seo.noindex) { %><meta name="robots" content="noindex,follow"><% } %>
   <% } %>
-  <link rel="alternate" type="application/rss+xml" title="RSS" href="/feed.xml">
+  <link rel="alternate" type="application/rss+xml" title="RSS" href="<%= typeof localizedPath === 'function' ? localizedPath('/feed.xml') : '/feed.xml' %>">
   <link rel="stylesheet" href="<%= typeof assetUrl === 'function' ? assetUrl('/vendor/inter.css') : '/vendor/inter.css' %>">
   <link rel="stylesheet" href="<%= typeof assetUrl === 'function' ? assetUrl('/vendor/new.css/new.min.css') : '/vendor/new.css/new.min.css' %>">
   <link rel="stylesheet" href="<%= typeof assetUrl === 'function' ? assetUrl('/css/highlight.css') : '/css/highlight.css' %>">

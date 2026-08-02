@@ -51,8 +51,21 @@ const TUTORIAL_TAG = Object.freeze({
   legacyNames: []
 });
 
+// The zh display name and legacy names deliberately differ from the safe zh
+// slug so legacy /tag/ resolution proves it maps through the catalog instead
+// of echoing the incoming display string.
+const DESIGN_TAG = Object.freeze({
+  id: 'design',
+  sortOrder: 25,
+  labels: {
+    zh: { name: '界面设计', slug: 'ui-zh' },
+    en: { name: 'UI Design', slug: 'ui-design' }
+  },
+  legacyNames: ['design', 'UI设计']
+});
+
 function seededCatalog() {
-  return baseCatalog({ extraTags: [TUTORIAL_TAG] });
+  return baseCatalog({ extraTags: [TUTORIAL_TAG, DESIGN_TAG] });
 }
 
 function writeFixtureCatalog(root, catalog) {
@@ -1824,4 +1837,199 @@ test('localized and legacy article JSON APIs isolate locale, taxonomy, and publi
   const legacyTagRoute = await (await fetch(`${baseUrl}/api/articles/tag/Node.js`)).json();
   assert.deepEqual(legacyTagRoute.articles.map(article => article.slug).sort(), ['dual-api', 'twin-api']);
   assert.equal((await fetch(`${baseUrl}/api/articles/en-only`)).status, 404);
+});
+
+// ---------------------------------------------------------------------------
+// Task 8: public locale routing, legacy redirects, cookies, About, analytics
+// ---------------------------------------------------------------------------
+
+test('root negotiation, slash canonicalization, and legacy redirects follow the routing matrix', async t => {
+  const { baseUrl } = await seededHarness(t);
+
+  const negotiationCases = [
+    { name: 'default zh', headers: {}, location: '/zh/' },
+    { name: 'cookie zh', headers: { cookie: 'blog_locale=zh' }, location: '/zh/' },
+    { name: 'cookie en', headers: { cookie: 'blog_locale=en' }, location: '/en/' },
+    { name: 'accept-language en', headers: { 'accept-language': 'en-US,en;q=0.9' }, location: '/en/' },
+    { name: 'unsupported fr header', headers: { 'accept-language': 'fr-FR,fr;q=0.9' }, location: '/zh/' },
+    { name: 'page query preserved', path: '/?page=2', headers: { 'accept-language': 'en' }, location: '/en/?page=2' }
+  ];
+  for (const fixture of negotiationCases) {
+    const response = await fetch(`${baseUrl}${fixture.path || '/'}`, {
+      redirect: 'manual',
+      headers: fixture.headers
+    });
+    assert.equal(response.status, 302, fixture.name);
+    assert.equal(response.headers.get('location'), fixture.location, fixture.name);
+    assert.match(response.headers.get('vary') || '', /Cookie/, fixture.name);
+    assert.match(response.headers.get('vary') || '', /Accept-Language/, fixture.name);
+    assert.equal(response.headers.get('set-cookie'), null, 'negotiation must not set the locale cookie');
+  }
+
+  const canonicalCases = [
+    { path: '/zh', location: '/zh/' },
+    { path: '/en', location: '/en/' },
+    { path: '/zh?page=2', location: '/zh/?page=2' },
+    { path: '/en?q=sqlite%20fts', location: '/en/?q=sqlite%20fts' }
+  ];
+  for (const fixture of canonicalCases) {
+    const response = await fetch(`${baseUrl}${fixture.path}`, { redirect: 'manual' });
+    assert.equal(response.status, 308, fixture.path);
+    assert.equal(response.headers.get('location'), fixture.location, fixture.path);
+  }
+
+  const legacyCases = [
+    { path: '/article/example?ref=old', location: '/zh/article/example?ref=old' },
+    { path: '/archive?year=2026', location: '/zh/archive?year=2026' },
+    { path: '/tags', location: '/zh/tags' },
+    { path: '/tag/Node.js?from=old', location: '/zh/tag/Node.js?from=old' },
+    { path: '/tag/界面设计?from=old', location: '/zh/tag/ui-zh?from=old' },
+    { path: '/tag/design?from=old', location: '/zh/tag/ui-zh?from=old' },
+    { path: '/tag/UI设计?from=old', location: '/zh/tag/ui-zh?from=old' },
+    { path: '/search?q=sqlite%20fts&mode=all', location: '/zh/search?q=sqlite%20fts&mode=all' },
+    { path: '/about', location: '/zh/about' },
+    { path: '/feed.xml', location: '/zh/feed.xml' }
+  ];
+  for (const fixture of legacyCases) {
+    const response = await fetch(`${baseUrl}${fixture.path}`, { redirect: 'manual' });
+    assert.equal(response.status, 301, fixture.path);
+    assert.equal(response.headers.get('location'), fixture.location, fixture.path);
+  }
+
+  const unknownTag = await fetch(`${baseUrl}/tag/unknown-tag`, { redirect: 'manual' });
+  assert.equal(unknownTag.status, 404, 'unknown legacy tags must 404 instead of opening a redirect');
+});
+
+test('localized pages set the one-year blog_locale cookie and never vary by language headers', async t => {
+  const { baseUrl } = await seededHarness(t);
+
+  for (const [pathname, locale] of [['/zh/', 'zh'], ['/en/', 'en']]) {
+    const response = await fetch(`${baseUrl}${pathname}`, {
+      headers: { 'accept-language': locale === 'zh' ? 'en-US,en;q=0.9' : 'zh-CN,zh;q=0.9' }
+    });
+    assert.equal(response.status, 200, pathname);
+    const setCookie = response.headers.get('set-cookie') || '';
+    assert.match(setCookie, new RegExp(`blog_locale=${locale}`), pathname);
+    assert.match(setCookie, /Max-Age=31536000/, pathname);
+    assert.match(setCookie, /HttpOnly/, pathname);
+    assert.match(setCookie, /SameSite=Lax/, pathname);
+    assert.match(setCookie, /Path=\//, pathname);
+    assert.doesNotMatch(setCookie, /Secure/, 'non-production must not set a Secure cookie');
+    const vary = response.headers.get('vary');
+    assert.equal(vary === null || !/Accept-Language|Cookie/i.test(vary), true,
+      `localized page must not vary by language: ${vary}`);
+  }
+});
+
+test('production locale cookie adds Secure', async t => {
+  const root = await createProjectFixture(t);
+  const init = runNode(root, 'server/scripts/init-db.js', [], { INITIAL_ADMIN_PASSWORD: INITIAL_PASSWORD });
+  assert.equal(init.status, 0, init.stderr);
+  const server = await startServer(t, root, {
+    NODE_ENV: 'production',
+    BLOG_PUBLIC_ORIGIN: 'https://blog.example.test'
+  });
+  const response = await fetch(`${server.baseUrl}/zh/`);
+  assert.equal(response.status, 200);
+  const setCookie = response.headers.get('set-cookie') || '';
+  assert.match(setCookie, /blog_locale=zh/);
+  assert.match(setCookie, /Secure/);
+});
+
+test('localized pagination and missing content return localized 404 pages while API errors stay JSON', async t => {
+  const { baseUrl } = await seededHarness(t);
+
+  const emptyHome = await fetch(`${baseUrl}/en/`);
+  assert.equal(emptyHome.status, 200, 'locale page 1 stays 200 with zero posts');
+  assert.equal((await fetch(`${baseUrl}/zh/`)).status, 200, 'zh page 1 stays 200 with zero posts');
+
+  const enOverflow = await fetch(`${baseUrl}/en/?page=99`);
+  assert.equal(enOverflow.status, 404);
+  assert.match(await enOverflow.text(), /<html lang="en"/);
+
+  const zhOverflow = await fetch(`${baseUrl}/zh/?page=2`);
+  assert.equal(zhOverflow.status, 404);
+  assert.match(await zhOverflow.text(), /<html lang="zh-CN"/);
+
+  const missingEnglish = await fetch(`${baseUrl}/en/article/chinese-only`);
+  assert.equal(missingEnglish.status, 404);
+  assert.match(await missingEnglish.text(), /<html lang="en"/);
+
+  const unsupported = await fetch(`${baseUrl}/fr/`);
+  assert.equal(unsupported.status, 404);
+  const unsupportedBody = await unsupported.text();
+  assert.match(unsupportedBody, /<html lang="zh-CN"/);
+  assert.doesNotMatch(unsupportedBody, /hljs-keyword/, 'unsupported locale must not reach article routes');
+  assert.equal((await fetch(`${baseUrl}/fr/article/chinese-only`)).status, 404);
+
+  const enBadPage = await fetch(`${baseUrl}/en/?page=abc`);
+  assert.equal(enBadPage.status, 400);
+  assert.match(await enBadPage.text(), /Invalid page format/);
+
+  const zhBadPage = await fetch(`${baseUrl}/zh/?page=abc`);
+  assert.equal(zhBadPage.status, 400);
+  assert.match(await zhBadPage.text(), /页码格式无效/);
+
+  const api = await fetch(`${baseUrl}/api/fr/articles`);
+  assert.equal(api.status, 404);
+  assert.deepEqual(await api.json(), { error: '接口不存在' });
+});
+
+test('bilingual About pages render the exact brief content with safe external links', async t => {
+  const { baseUrl } = await seededHarness(t);
+
+  const zhAbout = await (await fetch(`${baseUrl}/zh/about`)).text();
+  assert.match(zhAbout, /<h1[^>]*>关于我<\/h1>/);
+  assert.match(zhAbout, /href="https:\/\/github\.com\/gchigoo" rel="noopener noreferrer"/);
+  assert.match(zhAbout, /href="https:\/\/x\.com\/Sugar_Haaaat" rel="noopener noreferrer"/);
+  assert.match(zhAbout, /href="https:\/\/cokedaily\.space" rel="noopener noreferrer"/);
+  assert.match(zhAbout, /Keep it simple, keep it meaningful\./);
+  assert.doesNotMatch(zhAbout, /About Me/);
+
+  const enAbout = await (await fetch(`${baseUrl}/en/about`)).text();
+  assert.match(enAbout, /<html lang="en"/);
+  assert.match(enAbout, /<h1[^>]*>About Me<\/h1>/);
+  assert.match(enAbout, /href="https:\/\/x\.com\/Sugar_Haaaat" rel="noopener noreferrer"/);
+  assert.match(enAbout, /href="https:\/\/github\.com\/gchigoo" rel="noopener noreferrer"/);
+  assert.match(enAbout, /href="https:\/\/cokedaily\.space" rel="noopener noreferrer"/);
+  assert.match(enAbout, /Keep it simple, keep it meaningful\./);
+  assert.doesNotMatch(enAbout, /关于我/);
+
+  const legacy = await fetch(`${baseUrl}/about`, { redirect: 'manual' });
+  assert.equal(legacy.status, 301);
+  assert.equal(legacy.headers.get('location'), '/zh/about');
+});
+
+test('admin header links point directly at the Chinese site regardless of the locale cookie', async t => {
+  const { baseUrl } = await harness(t);
+  const response = await fetch(`${baseUrl}/admin/articles`, {
+    headers: { cookie: `${cookie()}; blog_locale=en` }
+  });
+  const html = await response.text();
+  assert.equal(response.status, 200, html);
+  assert.match(html, /href="\/zh\/"/);
+  assert.match(html, /href="\/zh\/about"/);
+  assert.doesNotMatch(html, /href="\/en\//);
+});
+
+test('analytics records only completed localized 2xx HTML after negotiation and legacy redirects', async t => {
+  const { root, baseUrl } = await seededHarness(t);
+  const uploaded = await submit(baseUrl, '/api/admin/upload', 'tracked.md',
+    markdown({ title: 'Tracked Target', slug: 'tracked-target', tags: '[other]' }));
+  assert.equal(uploaded.status, 200, await uploaded.text());
+
+  const headers = { 'user-agent': 'Mozilla/5.0', 'x-forwarded-for': '203.0.113.77' };
+  const rootHop = await fetch(`${baseUrl}/?ref=old`, { redirect: 'manual', headers });
+  assert.equal(rootHop.status, 302);
+  const legacyHop = await fetch(`${baseUrl}/article/tracked-target?ref=old`, { redirect: 'manual', headers });
+  assert.equal(legacyHop.status, 301);
+  await fetch(`${baseUrl}/zh/article/tracked-target?ref=old`, { headers });
+  await fetch(`${baseUrl}/zh/`, { headers });
+  assert.equal((await fetch(`${baseUrl}/en/article/nope`, { headers })).status, 404);
+
+  const db = new Database(path.join(root, 'blog.db'), { readonly: true });
+  const paths = db.prepare('SELECT path FROM access_metrics ORDER BY path').all().map(row => row.path);
+  assert.deepEqual(paths, ['/zh/', '/zh/article/tracked-target'],
+    'redirect hops and 404s must not create metrics');
+  db.close();
 });

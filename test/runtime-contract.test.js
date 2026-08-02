@@ -101,19 +101,59 @@ test('database migration applies analytics traffic schema version 2 and articles
   db.close();
 });
 
-test('runtime path validation creates writable data directories and requires About content', t => {
+test('runtime path validation creates locale data directories and requires localized About + taxonomy', t => {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'blog-runtime-paths-'));
   t.after(() => fs.rmSync(fixture, { recursive: true, force: true }));
-  fs.mkdirSync(path.join(fixture, 'content'));
-  fs.writeFileSync(path.join(fixture, 'content/about.md'), '# About');
+  fs.mkdirSync(path.join(fixture, 'content', 'zh'), { recursive: true });
+  fs.mkdirSync(path.join(fixture, 'content', 'en'), { recursive: true });
+  fs.writeFileSync(path.join(fixture, 'content', 'zh', 'about.md'), '# 关于我');
+  fs.writeFileSync(path.join(fixture, 'content', 'en', 'about.md'), '# About Me');
+  fs.writeFileSync(path.join(fixture, 'content', 'taxonomy.json'), JSON.stringify({ version: 1, categories: [] }));
   const config = {
     uploadDir: 'uploads/temp', imagesDir: 'public/images', audioDir: 'public/audio',
-    articlesDir: 'articles', aboutPath: 'content/about.md'
+    articlesDir: 'articles', operationsDir: 'var/operations',
+    aboutPaths: { zh: 'content/zh/about.md', en: 'content/en/about.md' },
+    taxonomyPath: 'content/taxonomy.json'
   };
   assert.equal(validateRuntimePaths(config, fixture), true);
-  for (const directory of ['uploads/temp', 'public/images', 'public/audio', 'articles']) {
-    assert.equal(fs.statSync(path.join(fixture, directory)).isDirectory(), true);
+  for (const directory of [
+    'uploads/temp', 'public/images', 'public/audio', 'articles',
+    'articles/zh', 'articles/en', 'public/audio/zh', 'public/audio/en', 'var/operations'
+  ]) {
+    assert.equal(fs.statSync(path.join(fixture, directory)).isDirectory(), true, directory);
   }
-  fs.rmSync(path.join(fixture, 'content/about.md'));
+
+  fs.rmSync(path.join(fixture, 'content', 'zh', 'about.md'));
   assert.throws(() => validateRuntimePaths(config, fixture), /ENOENT/);
+
+  fs.writeFileSync(path.join(fixture, 'content', 'zh', 'about.md'), '# 关于我');
+  fs.rmSync(path.join(fixture, 'content', 'en', 'about.md'));
+  assert.throws(() => validateRuntimePaths(config, fixture), /ENOENT/);
+
+  fs.writeFileSync(path.join(fixture, 'content', 'en', 'about.md'), '# About Me');
+  fs.rmSync(path.join(fixture, 'content', 'taxonomy.json'));
+  assert.throws(() => validateRuntimePaths(config, fixture), /ENOENT/);
+});
+
+test('runtime path validation rejects an unwritable locale data directory', t => {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'blog-runtime-paths-'));
+  t.after(() => fs.rmSync(fixture, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(fixture, 'content', 'zh'), { recursive: true });
+  fs.mkdirSync(path.join(fixture, 'content', 'en'), { recursive: true });
+  fs.writeFileSync(path.join(fixture, 'content', 'zh', 'about.md'), '# 关于我');
+  fs.writeFileSync(path.join(fixture, 'content', 'en', 'about.md'), '# About Me');
+  fs.writeFileSync(path.join(fixture, 'content', 'taxonomy.json'), '{"version":1,"categories":[]}');
+  const config = {
+    uploadDir: 'uploads/temp', imagesDir: 'public/images', audioDir: 'public/audio',
+    articlesDir: 'articles', operationsDir: 'var/operations',
+    aboutPaths: { zh: 'content/zh/about.md', en: 'content/en/about.md' },
+    taxonomyPath: 'content/taxonomy.json'
+  };
+  fs.mkdirSync(path.join(fixture, 'articles', 'zh'), { recursive: true });
+  fs.chmodSync(path.join(fixture, 'articles', 'zh'), 0o500);
+  try {
+    assert.throws(() => validateRuntimePaths(config, fixture), /EACCES|EPERM/);
+  } finally {
+    fs.chmodSync(path.join(fixture, 'articles', 'zh'), 0o700);
+  }
 });

@@ -5,6 +5,7 @@
 ## 联系方式
 
 - [GitHub：@gchigoo](https://github.com/gchigoo)
+- [X：@Sugar_Haaaat](https://x.com/Sugar_Haaaat)
 - [个人网站：cokedaily.space](https://cokedaily.space)
 
 ## 关于本站
