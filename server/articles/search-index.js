@@ -49,6 +49,20 @@ function upsertArticleSearchDocument(db, articleId) {
 }
 
 /**
+ * Refresh exactly the given article ids' FTS rows. Unchanged articles are
+ * rewritten from their current normalized tables, so this is idempotent.
+ * The caller owns the enclosing transaction.
+ *
+ * @param {import('better-sqlite3').Database} db
+ * @param {number[]} articleIds
+ */
+function upsertArticleSearchDocuments(db, articleIds) {
+  for (const articleId of articleIds) {
+    upsertArticleSearchDocument(db, articleId);
+  }
+}
+
+/**
  * Remove one article's FTS row.
  *
  * @param {import('better-sqlite3').Database} db
@@ -99,5 +113,6 @@ module.exports = {
   deleteArticleSearchDocument,
   rebuildArticleSearchIndex,
   searchArticleIds,
-  upsertArticleSearchDocument
+  upsertArticleSearchDocument,
+  upsertArticleSearchDocuments
 };

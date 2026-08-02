@@ -153,6 +153,56 @@ function generateSlug(title) {
 }
 
 /**
+ * Replace the `tags` key of a document's YAML front matter with a stable tag-ID
+ * flow array while leaving the body and every other front matter key
+ * byte-for-byte untouched. Handles both block-sequence (`tags:\n  - a`) and
+ * inline (`tags: [a]`) source forms. The tags key must exist.
+ *
+ * @param {string} source - full Markdown document
+ * @param {string[]} tagIds - normalized stable tag IDs to serialize
+ * @returns {string}
+ */
+function rewriteMarkdownTags(source, tagIds) {
+  const opening = /^---[ \t]*\r?\n/.exec(source);
+  if (!opening) {
+    throw new MarkdownMetadataError('markdown file has no front matter');
+  }
+  const frontMatterStart = opening.index + opening[0].length;
+  const closing = /\r?\n---[ \t]*(?:\r?\n|$)/.exec(source.slice(frontMatterStart));
+  if (!closing) {
+    throw new MarkdownMetadataError('markdown front matter is not closed');
+  }
+  const frontMatterEnd = frontMatterStart + closing.index;
+  const frontMatter = source.slice(0, frontMatterEnd);
+  const remainder = source.slice(frontMatterEnd);
+
+  const lines = frontMatter.split('\n');
+  let keyIndex = -1;
+  for (let index = 0; index < lines.length; index += 1) {
+    if (/^[ \t]*tags[ \t]*:/.test(lines[index])) {
+      keyIndex = index;
+      break;
+    }
+  }
+  if (keyIndex === -1) {
+    throw new MarkdownMetadataError('markdown front matter has no tags key');
+  }
+  const indent = /^[ \t]*/.exec(lines[keyIndex])[0];
+  let endIndex = keyIndex + 1;
+  while (endIndex < lines.length && /^[ \t]+/.test(lines[endIndex]) && lines[endIndex].trim() !== '') {
+    endIndex += 1;
+  }
+  const renderedTags = tagIds.map(tagId => JSON.stringify(tagId)).join(', ');
+  const replacement = `${indent}tags: [${renderedTags}]`;
+  const rewrittenFrontMatter = [
+    ...lines.slice(0, keyIndex),
+    replacement,
+    ...lines.slice(endIndex)
+  ].join('\n');
+  return rewrittenFrontMatter + remainder;
+}
+
+/**
  * 提取 Markdown 中的图片引用
  * @param {string} content - Markdown 内容
  * @returns {Array} - 图片路径数组
@@ -217,6 +267,7 @@ module.exports = {
   renderMarkdown,
   serializeMarkdownDocument,
   generateSlug,
+  rewriteMarkdownTags,
   extractImages,
   replaceImagePaths,
   replaceHtmlImagePaths

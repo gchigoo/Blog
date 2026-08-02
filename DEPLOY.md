@@ -91,6 +91,15 @@ pm2 restart blog --update-env
 
 回滚到不认识 `status` 的旧版本前必须恢复升级前备份，或先删除/发布所有草稿；否则旧版本可能把草稿当作普通文章公开。开始采集爬虫后，回滚到不认识 `traffic_kind` 的发布前应用代码还必须恢复发布前数据库备份，或者部署显式过滤 `traffic_kind` 的兼容补丁；仅回退代码和 lockfile 不足以保证旧查询口径正确。
 
+### 分类目录同步（维护窗口）
+
+`content/taxonomy.json` 是分类维护源，SQLite 规范化分类是运行时真相，两者通过 `sync-taxonomy` 事务性同步。执行前后必须停写并做协调备份：
+
+1. 进入维护窗口：停止应用写入（停止发布流程/后台任务），并执行 `npm run backup-db` 创建同一时点的协调备份。
+2. 预览：`npm run sync-taxonomy -- --dry-run`。干跑严格零写入，只读打开 SQLite；输出精确排序的计划（新增/更新/删除的分类与标签、`legacyNames` 重映射、Markdown 改写、被阻止的 slug 变更/删除、冲突、受影响文章），存在冲突或阻止项时以非零退出。schema v2 下干跑输出迁移前审计（直接 legacyNames 匹配与迁移 3 将创建的确定性 legacy ID）。
+3. 应用：`npm run sync-taxonomy`。先原子获取 `var/operations/active.lock` 独占锁，再在同一事务中应用分类行、重接线 `article_tags`、仅删除已无引用的非系统行，并精确刷新受影响文章的 FTS 行；Markdown `tags` 改写在文件层面按阶段（`lock-acquired → prepared → files-promoted → db-committed → cleanup-complete`）落盘，任何被捕获的提交前失败都会回滚 SQLite 并按逆序恢复原文件。
+4. 进程被终止时，普通 apply/dry-run 会拒绝继续，直到 `npm run sync-taxonomy -- --recover <operation-id>` 按清单中的前后哈希恢复原状或完成已提交状态；任何第三状态或哈希不一致都会拒绝自动化恢复并要求恢复完整的同时点备份。`var/operations` 是持久的操作登记处，通用 `uploads/temp` 清理不得触碰；分类同步与后续内容迁移共享同一把锁与登记处，同一时刻只有一个 apply/recovery 持有它。
+
 ## Google 登录评论配置
 
 ### 配置契约
