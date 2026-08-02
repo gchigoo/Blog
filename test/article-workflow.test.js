@@ -948,3 +948,44 @@ src: ./audio/final.mp3
     assert.equal(audioFiles.length, 1);
   }
 });
+
+test('content migration leaves localized publications alone and the page serves localized audio with ranges', async t => {
+  const { root, baseUrl } = await seededHarness(t);
+  const mp3 = validMp3();
+  const hash = createHash('sha256').update(mp3).digest('hex');
+  const markdownBody = `---
+title: Range Song
+slug: range-song
+tags: [nodejs]
+---
+
+:::audio
+title: Range
+src: ./audio/final.mp3
+:::`;
+  const zip = new AdmZip();
+  zip.addFile('article.md', Buffer.from(markdownBody));
+  zip.addFile('audio/final.mp3', mp3);
+
+  const response = await submit(baseUrl, '/api/admin/upload', 'range-song.zip', zip.toBuffer());
+  const body = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(body));
+
+  const result = runNode(root, 'scripts/migrate-localized-content.js');
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.applied, true);
+  assert.deepEqual(output.plan.markdownMoves, []);
+  assert.deepEqual(output.plan.audioMoves, []);
+  assert.deepEqual(output.plan.metadataRewrites, []);
+
+  const page = await (await fetch(`${baseUrl}/article/range-song`)).text();
+  assert.match(page, new RegExp(`/audio/zh/range-song/${hash}\\.mp3`));
+  assert.doesNotMatch(page, /\/audio\/range-song\//, 'page must not contain legacy audio URLs');
+
+  const audioUrl = `${baseUrl}/audio/zh/range-song/${hash}.mp3`;
+  const rangeResponse = await fetch(audioUrl, { headers: { range: 'bytes=0-3' } });
+  assert.equal(rangeResponse.status, 206);
+  assert.equal(rangeResponse.headers.get('content-range'), `bytes 0-3/${mp3.length}`);
+  assert.deepEqual(Buffer.from(await rangeResponse.arrayBuffer()), mp3.subarray(0, 4));
+});

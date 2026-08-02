@@ -10,6 +10,11 @@ const jwt = require('jsonwebtoken');
 const matter = require('gray-matter');
 const { createProjectFixture, runNode, startServer } = require('./helpers/project-fixture');
 const { validMp3 } = require('./helpers/article-audio-fixtures');
+const {
+  classifyAudioUrl,
+  rewriteLegacyAudioUrls,
+  scanAudioUrlReferences
+} = require('../server/utils/markdown');
 
 const INITIAL_PASSWORD = 'S3cure!Node24';
 const JWT_SECRET = 'test-only-jwt-secret-with-at-least-32-characters';
@@ -449,4 +454,52 @@ src: ./audio/final.mp3
   assert.match(enMarkdownFile, /translationKey: same-song/);
   assert.deepEqual(matter(zhMarkdownFile).data.tags, ['other']);
   assert.deepEqual(matter(enMarkdownFile).data.tags, ['other']);
+});
+
+test('legacy audio URL rewriting is exact and rejects foreign, missing, and malformed references', () => {
+  const hash = 'a'.repeat(64);
+  const html = `<audio controls><source src="/audio/example/${hash}.mp3" type="audio/mpeg"></audio>\n<a class="article-audio__fallback" href="/audio/example/${hash}.mp3">fallback</a>`;
+  const moves = new Map([[`${hash}.mp3`, true]]);
+  const result = rewriteLegacyAudioUrls(html, { slug: 'example', locale: 'zh', moves });
+  assert.equal(result.rewrites.length, 2);
+  assert.deepEqual(result.rewrites, [
+    { from: `/audio/example/${hash}.mp3`, to: `/audio/zh/example/${hash}.mp3` },
+    { from: `/audio/example/${hash}.mp3`, to: `/audio/zh/example/${hash}.mp3` }
+  ]);
+  assert.match(result.html, new RegExp(`/audio/zh/example/${hash}\\.mp3`));
+  assert.doesNotMatch(result.html, /\/audio\/example\//);
+  assert.match(result.html, /class="article-audio__fallback"/);
+
+  // A foreign-slug legacy URL is rejected instead of rewritten.
+  const foreign = `<a href="/audio/other-post/${hash}.mp3">x</a>`;
+  assert.throws(
+    () => rewriteLegacyAudioUrls(foreign, { slug: 'example', locale: 'zh', moves }),
+    /cross-article/
+  );
+
+  // A same-article URL whose audio file is not planned is rejected.
+  const missing = `<a href="/audio/example/${'b'.repeat(64)}.mp3">x</a>`;
+  assert.throws(
+    () => rewriteLegacyAudioUrls(missing, { slug: 'example', locale: 'zh', moves }),
+    /missing/
+  );
+
+  // A malformed own-slug audio URL is rejected.
+  const malformed = `<a href="/audio/example/${hash}.wav">x</a>`;
+  assert.throws(
+    () => rewriteLegacyAudioUrls(malformed, { slug: 'example', locale: 'zh', moves }),
+    /malformed/
+  );
+
+  // Published URLs and unrelated audio paths stay untouched.
+  const published = `<a href="/audio/zh/example/${hash}.mp3">x</a><a href="/audio/static/bg.mp3">y</a>`;
+  const unchanged = rewriteLegacyAudioUrls(published, { slug: 'example', locale: 'zh', moves });
+  assert.equal(unchanged.rewrites.length, 0);
+  assert.equal(unchanged.html, published);
+
+  // The scanner and classifier expose deterministic references.
+  const refs = scanAudioUrlReferences(html);
+  assert.equal(refs.length, 2);
+  assert.equal(classifyAudioUrl(refs[0].path).kind, 'legacy');
+  assert.equal(classifyAudioUrl(`/audio/zh/example/${hash}.mp3`).kind, 'published');
 });

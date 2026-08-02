@@ -22,6 +22,8 @@
     "query-db": "node scripts/query-db.js",
     "backup-db": "node scripts/backup-db.js",
     "sync-taxonomy": "node scripts/sync-taxonomy.js",
+    "migrate-localized-content": "node scripts/migrate-localized-content.js",
+    "audit-localized-content": "node scripts/audit-localized-content.js",
     "change-password": "node scripts/change-password.js"
   },
   "engines": {

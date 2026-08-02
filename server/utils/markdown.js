@@ -6,6 +6,7 @@ const hljs = /** @type {any} */ (require('highlight.js'));
 const { isSupportedLocale, DEFAULT_LOCALE } = require('../i18n/config');
 const { isSafeSlug } = require('./path-security');
 const { SYSTEM_TAG_ID } = require('../taxonomy/catalog');
+const { AUDIO_FORMATS } = require('../article-audio/formats');
 const {
   collectArticleAudioBlocks,
   installArticleAudioMarkdown,
@@ -348,6 +349,154 @@ function replaceHtmlImagePaths(html, imageMap) {
   return newHtml;
 }
 
+// ---------------------------------------------------------------------------
+// Published audio URL scanning and exact legacy-URL rewriting
+// ---------------------------------------------------------------------------
+
+const AUDIO_URL_EXTENSIONS = Object.freeze(Object.keys(AUDIO_FORMATS).map(extension => extension.slice(1)));
+const AUDIO_EXTENSION_PATTERN = AUDIO_URL_EXTENSIONS.map(extension => extension.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+const AUDIO_HASH_PATTERN = '[a-f0-9]{64}';
+const AUDIO_SLUG_PATTERN = '[a-z0-9]+(?:-[a-z0-9]+)*';
+
+// Legacy (transitional) audio URLs carry no locale segment.
+const LEGACY_AUDIO_URL_PATTERN = new RegExp(
+  `^/audio/(${AUDIO_SLUG_PATTERN})/(${AUDIO_HASH_PATTERN})\\.(${AUDIO_EXTENSION_PATTERN})$`
+);
+// Localized published audio URLs carry the locale segment.
+const PUBLISHED_AUDIO_URL_PATTERN = new RegExp(
+  `^/audio/(zh|en)/(${AUDIO_SLUG_PATTERN})/(${AUDIO_HASH_PATTERN})\\.(${AUDIO_EXTENSION_PATTERN})$`
+);
+
+/**
+ * Scan a document for every `/audio/...` path reference, returning
+ * deterministic `{ path, index, end }` occurrences in document order.
+ * Paths are delimited by whitespace, quotes, angle brackets, and closing
+ * parens (Markdown link destinations terminate at `)`).
+ */
+function scanAudioUrlReferences(html) {
+  const references = [];
+  const pattern = /\/audio\/[^"'<>\s)]+/g;
+  for (const match of html.matchAll(pattern)) {
+    references.push({ path: match[0], index: match.index, end: match.index + match[0].length });
+  }
+  return references;
+}
+
+/**
+ * Classify one `/audio/...` path.
+ *
+ * @returns {{ kind: 'legacy'|'published'|'other', slug: string } & Record<string, string>}
+ *   legacy: `{ kind, slug, hash, extension, file }` without a locale segment;
+ *   published: `{ kind, locale, slug, hash, extension, file }` with one;
+ *   other: `{ kind, slug }` where slug is the first path segment.
+ */
+function classifyAudioUrl(audioPath) {
+  const legacy = LEGACY_AUDIO_URL_PATTERN.exec(audioPath);
+  if (legacy) {
+    return { kind: 'legacy', slug: legacy[1], hash: legacy[2], extension: legacy[3], file: `${legacy[2]}.${legacy[3]}` };
+  }
+  const published = PUBLISHED_AUDIO_URL_PATTERN.exec(audioPath);
+  if (published) {
+    return { kind: 'published', locale: published[1], slug: published[2], hash: published[3], extension: published[4], file: `${published[3]}.${published[4]}` };
+  }
+  const firstSegment = audioPath.slice('/audio/'.length);
+  const slash = firstSegment.indexOf('/');
+  return { kind: 'other', slug: slash === -1 ? firstSegment : firstSegment.slice(0, slash) };
+}
+
+/**
+ * Rewrite every exact same-article legacy audio URL to its localized form.
+ *
+ * `moves` maps a `'<64-hex>.<ext>'` file key to a truthy value only when that
+ * file is planned for localization for this article. Legacy URLs for a foreign
+ * slug, legacy URLs whose source file is not planned, and malformed URLs that
+ * still carry the article's own slug are rejected with `MarkdownMetadataError`
+ * instead of being silently rewritten. Localized URLs and unrelated `/audio/`
+ * paths are left byte-for-byte untouched.
+ *
+ * @returns {{ html: string, rewrites: Array<{from: string, to: string}> }}
+ */
+function rewriteLegacyAudioUrls(html, { slug, locale, moves }) {
+  const parts = [];
+  let cursor = 0;
+  const rewrites = [];
+  for (const reference of scanAudioUrlReferences(html)) {
+    const classified = classifyAudioUrl(reference.path);
+    if (classified.kind === 'published') continue;
+    let replacement = null;
+    if (classified.kind === 'legacy') {
+      if (classified.slug !== slug) {
+        throw new MarkdownMetadataError(`cross-article legacy audio URL: ${reference.path}`);
+      }
+      if (!moves.has(classified.file)) {
+        throw new MarkdownMetadataError(`legacy audio reference missing its source file: ${reference.path}`);
+      }
+      replacement = `/audio/${locale}/${slug}/${classified.file}`;
+    } else if (classified.slug === slug) {
+      throw new MarkdownMetadataError(`malformed audio URL for article slug: ${reference.path}`);
+    }
+    if (replacement === null) continue;
+    parts.push(html.slice(cursor, reference.index), replacement);
+    cursor = reference.end;
+    rewrites.push({ from: reference.path, to: replacement });
+  }
+  parts.push(html.slice(cursor));
+  return { html: parts.join(''), rewrites };
+}
+
+/**
+ * Replace or insert exact front matter keys without touching any other line.
+ * `entries` is `[{ key, value }]`; an existing key keeps its own indentation
+ * and is replaced in place, while missing keys are inserted directly after the
+ * opening `---` line. The body and every unrelated key stay byte-for-byte.
+ */
+function setFrontMatterKeys(source, entries) {
+  const opening = /^---[ \t]*\r?\n/.exec(source);
+  if (!opening) {
+    throw new MarkdownMetadataError('markdown file has no front matter');
+  }
+  const frontMatterStart = opening.index + opening[0].length;
+  const closing = /\r?\n---[ \t]*(?:\r?\n|$)/.exec(source.slice(frontMatterStart));
+  if (!closing) {
+    throw new MarkdownMetadataError('markdown front matter is not closed');
+  }
+  const frontMatterEnd = frontMatterStart + closing.index;
+  const frontMatter = source.slice(0, frontMatterEnd);
+  const remainder = source.slice(frontMatterEnd);
+  const lines = frontMatter.split('\n');
+  const next = [];
+  const seen = new Set();
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const matched = entries.find(entry => new RegExp(`^[ \\t]*${entry.key}[ \\t]*:`).test(line));
+    if (matched && !seen.has(matched.key)) {
+      next.push(`${/^[ \t]*/.exec(line)[0]}${matched.key}: ${matched.value}`);
+      seen.add(matched.key);
+      continue;
+    }
+    next.push(line);
+  }
+  const missing = entries.filter(entry => !seen.has(entry.key));
+  if (missing.length > 0) {
+    next.splice(1, 0, ...missing.map(entry => `${entry.key}: ${entry.value}`));
+  }
+  return `${next.join('\n')}${remainder}`;
+}
+
+/**
+ * Rewrite a transitional (pre-migration) Markdown document into its localized
+ * form: stable tag IDs in the tags block, explicit `locale` and
+ * `translationKey` front matter keys, and every other line preserved exactly.
+ * The tags key must exist.
+ */
+function rewriteTransitionalMarkdown(source, { locale, translationKey, tagIds }) {
+  const withTags = rewriteMarkdownTags(source, tagIds);
+  return setFrontMatterKeys(withTags, [
+    { key: 'locale', value: locale },
+    { key: 'translationKey', value: translationKey }
+  ]);
+}
+
 module.exports = {
   MarkdownMetadataError,
   parseMarkdown,
@@ -358,5 +507,9 @@ module.exports = {
   rewriteMarkdownTags,
   extractImages,
   replaceImagePaths,
-  replaceHtmlImagePaths
+  replaceHtmlImagePaths,
+  classifyAudioUrl,
+  rewriteLegacyAudioUrls,
+  rewriteTransitionalMarkdown,
+  scanAudioUrlReferences
 };
