@@ -12,7 +12,7 @@ const {
   createSlashCanonicalizerRouter,
   createLegacyRedirectRouter,
   createLocalizedPagesRouter,
-  setLocaleLocals
+  renderNotFound
 } = require('./routes/pages');
 const { createAdminPagesRouter } = require('./routes/admin-pages');
 const { createArticleService } = require('./services/articles');
@@ -136,10 +136,15 @@ app.use('/admin', createAdminPagesRouter({ articleService }));
 // capture them.
 app.use('/:locale', createLocalizedPagesRouter({ config, articleService, commentsModule }));
 
+// App-level catch-all for HTML paths the localized router could not resolve
+// (for example an unknown /zh/<path> or /en/<path>). Routing it through the
+// exported renderNotFound contract keeps the localized status/lang/copy and
+// overrides languageSwitch to the always-valid /zh/ and /en/ roots, so a 404
+// never links to the same unknown path in the other locale. Unmatched /api/*
+// requests keep their JSON 404 fallback and never reach the HTML 404.
 app.use((req, res) => {
   if (req.originalUrl.startsWith('/api/')) return res.status(404).json({ error: '接口不存在' });
-  if (!isSupportedLocale(req.locale)) setLocaleLocals(req, res, config, DEFAULT_LOCALE);
-  return res.status(404).render('404', { user: req.user || null, seo: null });
+  return renderNotFound(req, res, config);
 });
 
 app.use((error, req, res, next) => {

@@ -1998,6 +1998,41 @@ test('localized pagination and missing content return localized 404 pages while 
   assert.deepEqual(await api.json(), { error: '接口不存在' });
 });
 
+test('app-level catch-all localized 404s never render dead language-switch targets', async t => {
+  const { baseUrl } = await seededHarness(t);
+
+  for (const [pathname, htmlLang, currentLabel] of [
+    ['/zh/does-not-exist', 'zh-CN', '中文'],
+    ['/en/does-not-exist', 'en', 'English']
+  ]) {
+    const response = await fetch(`${baseUrl}${pathname}`);
+    assert.equal(response.status, 404, pathname);
+    const html = await response.text();
+    assert.match(html, new RegExp(`<html lang="${htmlLang}"`), pathname);
+    assert.match(html, new RegExp(`language-switcher-current[^>]*aria-current="true"[^>]*>${currentLabel}<`), pathname);
+    // The only switch anchors point at the always-valid locale roots.
+    assert.match(html, /href="\/zh\/"/, pathname);
+    assert.match(html, /href="\/en\/"/, pathname);
+    // No dead target mirroring the unknown path in the other locale.
+    assert.doesNotMatch(html, /href="\/en\/does-not-exist"/, pathname);
+    assert.doesNotMatch(html, /href="\/zh\/does-not-exist"/, pathname);
+  }
+
+  // Unsupported locales keep their localized 404 without dead switch targets.
+  const unsupported = await fetch(`${baseUrl}/fr/whatever`);
+  assert.equal(unsupported.status, 404);
+  const unsupportedHtml = await unsupported.text();
+  assert.match(unsupportedHtml, /<html lang="zh-CN"/);
+  assert.doesNotMatch(unsupportedHtml, /href="\/en\/whatever"/);
+  assert.doesNotMatch(unsupportedHtml, /href="\/zh\/whatever"/);
+
+  // API 404 behavior stays JSON and untouched.
+  const api = await fetch(`${baseUrl}/api/zh/foo`);
+  assert.equal(api.status, 404);
+  assert.match(api.headers.get('content-type') || '', /application\/json/);
+  assert.deepEqual(await api.json(), { error: '接口不存在' });
+});
+
 test('unmatched API paths return JSON 404s and never reach the localized HTML router', async t => {
   const { baseUrl } = await seededHarness(t);
 
