@@ -529,12 +529,12 @@ router.delete('/articles/:id', authenticateToken, async (req, res) => {
         publicAudioRoot: config.audioDir,
         commitDatabase: () => db.transaction(() => {
           deleteArticleSearchDocument(db, article.id);
-          dbRun('DELETE FROM articles WHERE id = ?', [article.id]);
+          const deleted = dbRun('DELETE FROM articles WHERE id = ?', [article.id]);
           const remaining = dbGet('SELECT COUNT(*) AS count FROM articles WHERE post_id = ?', [article.post_id]);
           if (remaining.count === 0) {
             dbRun('DELETE FROM posts WHERE id = ?', [article.post_id]);
           }
-          return { id: article.id, changes: 1 };
+          return { id: article.id, changes: deleted.changes };
         })()
       });
       return {

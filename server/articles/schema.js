@@ -47,6 +47,17 @@ function seedCatalog(db, catalog) {
 }
 
 /**
+ * True when a legacy tag's stored zh visible label is equivalent to the
+ * incoming normalized label (NFKC + trim on both sides). Only such a tag may
+ * be adopted by a later resolver run; a different label that happens to share
+ * the digest prefix must extend the digest instead.
+ */
+function equivalentLegacyLabel(row, normalizedLabel) {
+  if (!row) return false;
+  return String(row.name).trim().normalize('NFKC') === normalizedLabel;
+}
+
+/**
  * Allocate a deterministic `legacy-<sha256>` tag for an unknown label.
  * The base uses the first 12 hex characters of sha256(normalizedLabel); on a
  * collision with a different catalog id or any localized slug the same digest
@@ -57,7 +68,7 @@ function seedCatalog(db, catalog) {
  */
 function allocateLegacyTag(db, normalizedLabel, displayName, allocated, statements) {
   const digest = createHash('sha256').update(normalizedLabel).digest('hex');
-  const { findTag, findSlug, insertTag, insertTagLabel } = statements;
+  const { findTag, findLegacyLabel, findSlug, insertTag, insertTagLabel } = statements;
   let length = INITIAL_DIGEST_LENGTH;
   for (;;) {
     const candidate = `${LEGACY_ID_PREFIX}${digest.slice(0, length)}`;
@@ -65,9 +76,14 @@ function allocateLegacyTag(db, normalizedLabel, displayName, allocated, statemen
     if (previousLabel === normalizedLabel) return candidate;
     const existing = findTag.get(candidate);
     if (existing) {
-      // A pre-existing legacy tag id is the label digest, so it belongs to
-      // this same label; any other origin is a deliberate config collision.
-      if (existing.origin === 'legacy' && previousLabel === undefined) {
+      // A pre-existing legacy tag may only be adopted when its stored visible
+      // label is equivalent to this label; otherwise this is a cross-run
+      // digest-prefix collision with a distinct label and we must extend.
+      if (
+        existing.origin === 'legacy'
+        && previousLabel === undefined
+        && equivalentLegacyLabel(findLegacyLabel.get(candidate), normalizedLabel)
+      ) {
         allocated.set(candidate, normalizedLabel);
         return candidate;
       }
@@ -139,6 +155,7 @@ function createTagResolver(db, options = {}) {
 
   const statements = Object.freeze({
     findTag: db.prepare('SELECT id, origin FROM tags WHERE id = ?'),
+    findLegacyLabel: db.prepare("SELECT name FROM tag_labels WHERE tag_id = ? AND locale = 'zh'"),
     findSlug: db.prepare('SELECT 1 FROM tag_labels WHERE slug = ? LIMIT 1'),
     insertTag: db.prepare(`
       INSERT INTO tags (id, category_id, sort_order, origin, is_system)

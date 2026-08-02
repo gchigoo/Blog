@@ -337,6 +337,63 @@ test('schema v3 migration resolves ID and slug prefix collisions deterministical
   db.close();
 });
 
+test('legacy resolver adopts a cross-run tag only when the stored label is equivalent', () => {
+  const db = new Database(':memory:');
+  db.pragma('foreign_keys = ON');
+  migrateDatabase(db);
+  const digest = value => createHash('sha256').update(value).digest('hex');
+  const { createTagResolver } = require('../server/articles/schema');
+
+  // Simulate a previous resolver run: a legacy tag whose id equals another
+  // label's base digest prefix but whose stored visible label differs. A fresh
+  // resolver run must not adopt it for the distinct label.
+  const collisionLabel = '教程';
+  const collisionId = `legacy-${digest(collisionLabel).slice(0, 12)}`;
+  const extendedId = `legacy-${digest(collisionLabel).slice(0, 20)}`;
+  db.prepare(`
+    INSERT INTO tags (id, category_id, sort_order, origin, is_system)
+    VALUES (?, 'uncategorized', 0, 'legacy', 0)
+  `).run(collisionId);
+  db.prepare(`
+    INSERT INTO tag_labels (tag_id, locale, name, slug) VALUES (?, 'zh', ?, ?), (?, 'en', ?, ?)
+  `).run(collisionId, '别的标签', collisionId, collisionId, 'Another Label', collisionId);
+
+  // A pre-existing legacy tag whose stored label IS equivalent to an incoming
+  // NFKC variant must be adopted (cross-run dedupe).
+  const nodeLabel = 'NodeJs';
+  const nodeId = `legacy-${digest(nodeLabel).slice(0, 12)}`;
+  db.prepare(`
+    INSERT INTO tags (id, category_id, sort_order, origin, is_system)
+    VALUES (?, 'uncategorized', 0, 'legacy', 0)
+  `).run(nodeId);
+  db.prepare(`
+    INSERT INTO tag_labels (tag_id, locale, name, slug) VALUES (?, 'zh', ?, ?), (?, 'en', ?, ?)
+  `).run(nodeId, 'NodeJs', nodeId, nodeId, 'NodeJs', nodeId);
+
+  const resolveTagId = createTagResolver(db, { acceptTagIds: true });
+
+  // The distinct incoming label extends the digest instead of adopting the
+  // pre-existing tag, and the pre-existing tag stays untouched.
+  assert.equal(resolveTagId(collisionLabel), extendedId);
+  assert.equal(
+    db.prepare("SELECT name FROM tag_labels WHERE tag_id = ? AND locale = 'zh'").get(extendedId).name,
+    collisionLabel
+  );
+  assert.equal(
+    db.prepare("SELECT name FROM tag_labels WHERE tag_id = ? AND locale = 'zh'").get(collisionId).name,
+    '别的标签'
+  );
+  assert.equal(db.prepare("SELECT origin FROM tags WHERE id = ?").get(collisionId).origin, 'legacy');
+
+  // An equivalent (NFKC) incoming label is adopted from the previous run.
+  assert.equal(resolveTagId('ＮｏｄｅＪｓ'), nodeId);
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM tags WHERE id = ?').get(nodeId).count, 1);
+
+  // After the extended allocation, the same label dedupes to the extended tag.
+  assert.equal(resolveTagId(' 教程 '), extendedId);
+  db.close();
+});
+
 test('search index documents are locale-scoped and stay fresh on update and delete', t => {
   const taxonomyPath = writeTaxonomyCatalog(baseCatalog());
   t.after(() => fsSync.rmSync(path.dirname(taxonomyPath), { recursive: true, force: true }));
@@ -504,6 +561,40 @@ test('scripts/query-db.js reports normalized tags after migration', async t => {
   assert.match(result.stdout, /query-db-article/);
   assert.match(result.stdout, /工具/);
   assert.match(result.stdout, /文章总数: 1/);
+});
+
+test('admin delete reports failure and preserves files when the article row vanishes', async t => {
+  const { root, baseUrl } = await harness(t);
+  const uploadResponse = await submit(baseUrl, '/api/admin/upload', 'race.md',
+    markdown({ title: 'Delete Race', slug: 'delete-race', tags: '[工具]' }));
+  const uploaded = await uploadResponse.json();
+  assert.equal(uploadResponse.status, 200, JSON.stringify(uploaded));
+
+  const markdownPath = path.join(root, 'articles', 'delete-race.md');
+  const originalMarkdown = await fs.readFile(markdownPath, 'utf8');
+  assert.ok(originalMarkdown.length > 0);
+
+  // Simulate the row disappearing between the route's lookup and its commit:
+  // a BEFORE DELETE trigger makes the DELETE match zero rows.
+  const raceDb = new Database(path.join(root, 'blog.db'));
+  raceDb.exec('CREATE TRIGGER block_delete BEFORE DELETE ON articles BEGIN SELECT RAISE(IGNORE); END;');
+  raceDb.close();
+
+  const response = await fetch(`${baseUrl}/api/admin/articles/${uploaded.article.id}`, {
+    method: 'DELETE',
+    headers: { cookie: cookie() }
+  });
+
+  // No silent success: the publication helper sees changes === 0 and restores
+  // the tombstones, so the route reports a server error.
+  assert.equal(response.status, 500, await response.text());
+  assert.equal(await fs.readFile(markdownPath, 'utf8'), originalMarkdown);
+
+  const verify = new Database(path.join(root, 'blog.db'));
+  const surviving = verify.prepare('SELECT id, post_id FROM articles WHERE id = ?').get(uploaded.article.id);
+  assert.ok(surviving);
+  assert.ok(verify.prepare('SELECT id FROM posts WHERE id = ?').get(surviving.post_id));
+  verify.close();
 });
 
 test('drafts stay private while search, feed, sitemap, replacement, and preview work', async t => {

@@ -353,6 +353,32 @@ test('restores article paths when the database delete fails', async t => {
   assert.equal(await fs.readFile(path.join(fixture.audioDirectory, 'track.aac'), 'utf8'), 'audio');
 });
 
+test('zero-change database delete restores article paths and reports failure instead of success', async t => {
+  const fixture = await createFixture(t);
+  const markdownPath = path.join(fixture.articlesRoot, 'example-song.md');
+  await fs.mkdir(fixture.articlesRoot, { recursive: true });
+  await fs.writeFile(markdownPath, 'article');
+  await fs.mkdir(fixture.audioDirectory, { recursive: true });
+  await fs.writeFile(path.join(fixture.audioDirectory, 'track.aac'), 'audio');
+
+  await assert.rejects(
+    deleteArticlePublication({
+      articleSlug: 'example-song',
+      articlesRoot: fixture.articlesRoot,
+      publicAudioRoot: path.dirname(fixture.audioDirectory),
+      tombstoneId: 'zero-change',
+      commitDatabase: () => ({ changes: 0 })
+    }),
+    error => error.code === 'article_delete_failed'
+  );
+
+  // The tombstones are renamed back; nothing is finalized and no success is
+  // reported for a deletion that never touched a database row.
+  assert.equal(await fs.readFile(markdownPath, 'utf8'), 'article');
+  assert.equal(await fs.readFile(path.join(fixture.audioDirectory, 'track.aac'), 'utf8'), 'audio');
+  assert.deepEqual(await fs.readdir(fixture.articlesRoot), ['example-song.md']);
+});
+
 test('does not delete the database when moving a public path fails', async t => {
   const fixture = await createFixture(t);
   const markdownPath = path.join(fixture.articlesRoot, 'example-song.md');
