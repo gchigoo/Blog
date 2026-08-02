@@ -14,29 +14,8 @@ let db;
 try {
   db = new Database(DB_PATH);
 
-  // 文章表
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS articles (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT NOT NULL,
-      slug TEXT UNIQUE NOT NULL,
-      content TEXT NOT NULL,
-      html TEXT NOT NULL,
-      tags TEXT,
-      status TEXT NOT NULL DEFAULT 'published' CHECK (status IN ('draft', 'published')),
-      description TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-  console.log('✓ articles 表创建成功');
-
-  // 创建索引
-  db.exec('CREATE INDEX IF NOT EXISTS idx_created_at ON articles(created_at DESC)');
-  db.exec('CREATE INDEX IF NOT EXISTS idx_slug ON articles(slug)');
-  console.log('✓ 索引创建成功');
-
-  // 管理员用户表
+  // 版本化迁移负责文章表等业务表的创建（server/migrations.js 会创建旧版
+  // articles 基础表并依次应用 v1 → v2 → v3）。这里只创建管理员用户表。
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

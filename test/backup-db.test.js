@@ -18,10 +18,15 @@ test('backup includes committed WAL data and passes integrity verification', asy
   try {
     source.pragma('journal_mode = WAL');
     source.pragma('wal_autocheckpoint = 0');
+    const postId = Number(source.prepare(`
+      INSERT INTO posts (translation_key, created_at, updated_at)
+      VALUES ('wal-article', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')
+    `).run().lastInsertRowid);
     source.prepare(`
-      INSERT INTO articles (title, slug, content, html, tags)
-      VALUES (?, ?, ?, ?, ?)
-    `).run('WAL article', 'wal-article', 'body', '<p>body</p>', '[]');
+      INSERT INTO articles (post_id, locale, title, slug, content, html, status, created_at, updated_at)
+      VALUES (?, 'zh', 'WAL article', 'wal-article', 'body', '<p>body</p>', 'published',
+              '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')
+    `).run(postId);
 
     const result = runNode(root, 'scripts/backup-db.js');
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);

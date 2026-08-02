@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const Database = require('better-sqlite3');
+const { migrateDatabase } = require('../server/migrations');
 const { CommentStoreError, createCommentStore } = require('../server/comments/store');
 
 function createFixture(t) {
@@ -238,6 +239,47 @@ test('rate-limit check and pending insert share one transaction', t => {
     error => error instanceof CommentStoreError && error.code === 'article_not_found'
   );
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM comments').get().count, 6);
+});
+
+test('comment store works against the normalized v3 schema after migration', () => {
+  const db = new Database(':memory:');
+  db.pragma('foreign_keys = ON');
+  db.exec(`
+    CREATE TABLE articles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      slug TEXT NOT NULL UNIQUE,
+      content TEXT NOT NULL,
+      html TEXT NOT NULL,
+      tags TEXT,
+      created_at TEXT,
+      updated_at TEXT
+    );
+    CREATE TABLE users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE
+    );
+    INSERT INTO articles (title, slug, content, html, tags, created_at, updated_at)
+    VALUES ('First', 'first', 'body', '<p>body</p>', '[]',
+            '2026-07-16T00:00:00.000Z', '2026-07-16T00:00:00.000Z');
+  `);
+  migrateDatabase(db);
+  const store = createCommentStore(db);
+  const commenter = store.upsertIdentity(
+    { provider: 'google', subject: 'v3-commenter', displayName: 'V3 Reader' },
+    '2026-07-16T00:00:00.000Z'
+  );
+  const comment = store.createPendingComment({
+    articleId: 1,
+    commenterId: commenter.id,
+    content: 'v3 comment',
+    createdAt: '2026-07-16T00:00:00.000Z'
+  });
+  assert.equal(comment.articleId, 1);
+  assert.equal(store.listForModeration('pending').length, 1);
+  db.prepare('DELETE FROM articles WHERE id = 1').run();
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM comments').get().count, 0);
+  db.close();
 });
 
 test('hard deletion is irreversible and article deletion cascades while commenter deletion is restricted', t => {

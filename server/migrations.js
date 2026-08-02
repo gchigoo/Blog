@@ -1,6 +1,7 @@
 const { migrateAnalyticsTrafficSchema } = require('./analytics/traffic-schema');
+const { migrateLocalizedArticleSchema } = require('./articles/schema');
 
-const LATEST_SCHEMA_VERSION = 2;
+const LATEST_SCHEMA_VERSION = 3;
 
 function columnNames(db, table) {
   return new Set(db.prepare(`PRAGMA table_info(${table})`).all().map(column => column.name));
@@ -73,29 +74,76 @@ function applyArticleSearchMigration(db) {
   `);
 }
 
-function migrateDatabase(db) {
+/**
+ * Schema v3 rebuilds tables behind foreign keys. SQLite requires foreign keys
+ * to be disabled before the DDL (the legacy articles table is dropped and
+ * `articles_v3` is renamed into place), and child foreign keys are only
+ * verified afterwards with `PRAGMA foreign_key_check` inside the transaction.
+ */
+function applyWithForeignKeysOff(db, migration, options) {
+  if (db.inTransaction) {
+    throw new Error(`migration ${migration.version} requires no active transaction`);
+  }
+  db.pragma('foreign_keys = OFF');
+  try {
+    db.transaction(() => {
+      migration.apply(db, options);
+      const violations = db.prepare('PRAGMA foreign_key_check').all();
+      if (violations.length > 0) {
+        const detail = violations.map(violation => JSON.stringify(violation)).join('; ');
+        throw new Error(`foreign key violations after migration ${migration.version}: ${detail}`);
+      }
+      db.prepare('INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)')
+        .run(migration.version, new Date().toISOString());
+    })();
+  } finally {
+    db.pragma('foreign_keys = ON');
+  }
+  if (db.pragma('foreign_keys', { simple: true }) !== 1) {
+    throw new Error(`foreign_keys must be enabled after migration ${migration.version}`);
+  }
+}
+
+function migrateDatabase(db, options = {}) {
+  // Versioned migrations own article table creation: a fresh database gets the
+  // legacy base table here so versions 1 -> 2 -> 3 can run without duplicate
+  // DDL in the initializer.
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       version INTEGER PRIMARY KEY,
       applied_at TEXT NOT NULL
-    )
+    );
+    CREATE TABLE IF NOT EXISTS articles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      slug TEXT UNIQUE NOT NULL,
+      content TEXT NOT NULL,
+      html TEXT NOT NULL,
+      tags TEXT,
+      created_at TEXT,
+      updated_at TEXT
+    );
   `);
   const applied = new Set(db.prepare('SELECT version FROM schema_migrations').all().map(row => row.version));
-  const migrations = /** @type {Array<[number, (database: any) => void]>} */ (
+  const migrations = /** @type {Array<{version: number, foreignKeysOff: boolean, apply: (db: any, options?: any) => void}>} */ (
     [
-      [1, applyArticleSearchMigration],
-      [2, migrateAnalyticsTrafficSchema]
+      { version: 1, foreignKeysOff: false, apply: applyArticleSearchMigration },
+      { version: 2, foreignKeysOff: false, apply: migrateAnalyticsTrafficSchema },
+      { version: 3, foreignKeysOff: true, apply: migrateLocalizedArticleSchema }
     ]
   );
-  const apply = db.transaction(() => {
-    for (const [version, migration] of migrations) {
-      if (applied.has(version)) continue;
-      migration(db);
-      db.prepare('INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)')
-        .run(version, new Date().toISOString());
+  for (const migration of migrations) {
+    if (applied.has(migration.version)) continue;
+    if (migration.foreignKeysOff) {
+      applyWithForeignKeysOff(db, migration, options);
+    } else {
+      db.transaction(() => {
+        migration.apply(db, options);
+        db.prepare('INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)')
+          .run(migration.version, new Date().toISOString());
+      })();
     }
-  });
-  apply();
+  }
   return LATEST_SCHEMA_VERSION;
 }
 

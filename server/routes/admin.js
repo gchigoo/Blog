@@ -34,6 +34,12 @@ const {
   serializeArticlePublication
 } = require('../article-audio/publication');
 const config = require('../config');
+const { createTagResolver, SYSTEM_TAG_ID } = require('../articles/schema');
+const {
+  deleteArticleSearchDocument,
+  upsertArticleSearchDocument
+} = require('../articles/search-index');
+const { loadChineseTagLabels } = require('../services/articles');
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
 // 配置文件上传
@@ -166,7 +172,7 @@ router.post('/preview', authenticateToken, receiveArticleUpload, async (req, res
 });
 
 function selectAvailableArticleSlug(requestedSlug) {
-  if (!dbGet('SELECT id FROM articles WHERE slug = ?', [requestedSlug])) {
+  if (!dbGet('SELECT id FROM articles WHERE slug = ? AND locale = ?', [requestedSlug, 'zh'])) {
     return requestedSlug;
   }
 
@@ -175,7 +181,7 @@ function selectAvailableArticleSlug(requestedSlug) {
   do {
     candidate = `${requestedSlug}-${suffix}`;
     suffix += 1;
-  } while (dbGet('SELECT id FROM articles WHERE slug = ?', [candidate]));
+  } while (dbGet('SELECT id FROM articles WHERE slug = ? AND locale = ?', [candidate, 'zh']));
   return candidate;
 }
 
@@ -284,7 +290,7 @@ router.post('/upload', authenticateToken, receiveArticleUpload, async (req, res)
           if (typeof req.body.replaceId !== 'string' || !/^\d+$/.test(req.body.replaceId)) {
             return Promise.reject(articleAudioError(400, 'article_replace_invalid', '替换文章参数无效'));
           }
-          replacementArticle = dbGet('SELECT id, slug FROM articles WHERE id = ?', [req.body.replaceId]);
+          replacementArticle = dbGet('SELECT id, slug, post_id FROM articles WHERE id = ?', [req.body.replaceId]);
           if (!replacementArticle) {
             return Promise.reject(articleAudioError(404, 'article_replace_not_found', '替换文章不存在'));
           }
@@ -352,27 +358,52 @@ router.post('/upload', authenticateToken, receiveArticleUpload, async (req, res)
           status: data.status
         });
 
+        const resolveTagId = createTagResolver(db, { acceptTagIds: true });
+        const insertArticleTag = db.prepare('INSERT OR IGNORE INTO article_tags (article_id, tag_id) VALUES (?, ?)');
+        const resolveTagIds = tags => {
+          const ids = tags.map(tag => resolveTagId(tag));
+          if (ids.length === 0) ids.push(SYSTEM_TAG_ID);
+          return [...new Set(ids)];
+        };
+
         const commitArticle = db.transaction(() => {
+          const now = new Date().toISOString();
           if (replacementArticle) {
-            const info = db.prepare(`
+            const updateInfo = db.prepare(`
               UPDATE articles
-              SET title = ?, content = ?, html = ?, tags = ?, description = ?, status = ?, updated_at = ?
+              SET title = ?, content = ?, html = ?, description = ?, status = ?, updated_at = ?
               WHERE id = ?
             `).run(
-              data.title, updatedContent, updatedHtml, JSON.stringify(data.tags),
-              data.description || null, data.status, new Date().toISOString(), replacementArticle.id
+              data.title, updatedContent, updatedHtml,
+              data.description || null, data.status, now, replacementArticle.id
             );
-            return { id: replacementArticle.id, changes: info.changes };
+            db.prepare('UPDATE posts SET updated_at = ? WHERE id = ?')
+              .run(now, replacementArticle.post_id);
+            db.prepare('DELETE FROM article_tags WHERE article_id = ?').run(replacementArticle.id);
+            for (const tagId of resolveTagIds(data.tags)) {
+              insertArticleTag.run(replacementArticle.id, tagId);
+            }
+            upsertArticleSearchDocument(db, replacementArticle.id);
+            return { id: replacementArticle.id, changes: updateInfo.changes };
           }
-          const info = db.prepare(`
+          const postInfo = db.prepare(`
+            INSERT INTO posts (translation_key, created_at, updated_at)
+            VALUES (?, ?, ?)
+          `).run(articleSlug, data.date, now);
+          const articleInfo = db.prepare(`
             INSERT INTO articles
-              (title, slug, content, html, tags, description, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              (post_id, locale, title, slug, content, html, status, description, created_at, updated_at)
+            VALUES (?, 'zh', ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
-            data.title, articleSlug, updatedContent, updatedHtml, JSON.stringify(data.tags),
-            data.description || null, data.status, data.date, new Date().toISOString()
+            postInfo.lastInsertRowid, data.title, articleSlug, updatedContent, updatedHtml,
+            data.status, data.description || null, data.date, now
           );
-          return { id: info.lastInsertRowid, changes: info.changes };
+          const articleId = Number(articleInfo.lastInsertRowid);
+          for (const tagId of resolveTagIds(data.tags)) {
+            insertArticleTag.run(articleId, tagId);
+          }
+          upsertArticleSearchDocument(db, articleId);
+          return { id: articleId, changes: articleInfo.changes };
         });
 
         publicationStarted = true;
@@ -462,16 +493,17 @@ router.post('/upload', authenticateToken, receiveArticleUpload, async (req, res)
 router.get('/articles', authenticateToken, (req, res) => {
   try {
     const articles = dbAll(
-      `SELECT id, title, slug, description, status, tags, created_at, updated_at
+      `SELECT id, title, slug, description, status, created_at, updated_at
        FROM articles
+       WHERE locale = 'zh'
        ORDER BY created_at DESC`
     );
-    
+    const tagsByArticle = loadChineseTagLabels(db, articles.map(article => article.id));
     const articlesWithTags = articles.map(article => ({
       ...article,
-      tags: article.tags ? JSON.parse(article.tags) : []
+      tags: tagsByArticle.get(article.id) || []
     }));
-    
+
     res.json(articlesWithTags);
   } catch (error) {
     console.error('获取文章列表失败:', error);
@@ -487,7 +519,7 @@ router.delete('/articles/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const deletion = await serializeArticlePublication(async () => {
-      const article = dbGet('SELECT slug FROM articles WHERE id = ?', [id]);
+      const article = dbGet('SELECT id, slug, post_id FROM articles WHERE id = ?', [id]);
       if (!article) return { status: 'not-found' };
       if (!isSafeSlug(article.slug)) return { status: 'unsafe-slug' };
 
@@ -495,7 +527,15 @@ router.delete('/articles/:id', authenticateToken, async (req, res) => {
         articleSlug: article.slug,
         articlesRoot: config.articlesDir,
         publicAudioRoot: config.audioDir,
-        commitDatabase: () => dbRun('DELETE FROM articles WHERE id = ?', [id])
+        commitDatabase: () => db.transaction(() => {
+          deleteArticleSearchDocument(db, article.id);
+          dbRun('DELETE FROM articles WHERE id = ?', [article.id]);
+          const remaining = dbGet('SELECT COUNT(*) AS count FROM articles WHERE post_id = ?', [article.post_id]);
+          if (remaining.count === 0) {
+            dbRun('DELETE FROM posts WHERE id = ?', [article.post_id]);
+          }
+          return { id: article.id, changes: 1 };
+        })()
       });
       return {
         status: 'deleted',

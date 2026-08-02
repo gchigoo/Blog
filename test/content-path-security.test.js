@@ -150,10 +150,15 @@ test('delete refuses an unsafe stored slug without touching files or the databas
   await fs.writeFile(protectedFile, 'keep');
 
   const db = new Database(path.join(root, 'blog.db'));
+  const postId = Number(db.prepare(`
+    INSERT INTO posts (translation_key, created_at, updated_at)
+    VALUES ('unsafe-post', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')
+  `).run().lastInsertRowid);
   const result = db.prepare(`
-    INSERT INTO articles (title, slug, content, html, tags)
-    VALUES (?, ?, ?, ?, ?)
-  `).run('Unsafe stored article', '../protected', 'body', '<p>body</p>', '[]');
+    INSERT INTO articles (post_id, locale, title, slug, content, html, status, created_at, updated_at)
+    VALUES (?, 'zh', ?, ?, ?, ?, 'published', ?, ?)
+  `).run(postId, 'Unsafe stored article', '../protected', 'body', '<p>body</p>',
+    '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
   db.close();
 
   const response = await fetch(`${baseUrl}/api/admin/articles/${result.lastInsertRowid}`, {

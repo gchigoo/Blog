@@ -113,10 +113,15 @@ test('disabled comments leave dedicated routes as ordinary 404s', async t => {
   assert.equal(init.status, 0, init.stderr);
 
   const db = new Database(`${root}/blog.db`);
+  const postId = Number(db.prepare(`
+    INSERT INTO posts (translation_key, created_at, updated_at)
+    VALUES ('disabled-comments', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')
+  `).run().lastInsertRowid);
   db.prepare(`
-    INSERT INTO articles (title, slug, content, html, tags)
-    VALUES (?, ?, ?, ?, ?)
-  `).run('Disabled comments', 'disabled-comments', 'body', '<p>body</p>', '[]');
+    INSERT INTO articles (post_id, locale, title, slug, content, html, status, created_at, updated_at)
+    VALUES (?, 'zh', 'Disabled comments', 'disabled-comments', 'body', '<p>body</p>', 'published',
+            '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')
+  `).run(postId);
   db.close();
 
   const { baseUrl } = await startServer(t, root, disabledCommentsEnv());

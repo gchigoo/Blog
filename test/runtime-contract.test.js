@@ -35,7 +35,7 @@ test('runtime config defaults to loopback and validates the listen host', () => 
   );
 });
 
-test('database migration applies analytics traffic schema version 2 idempotently', () => {
+test('database migration applies analytics traffic schema version 2 and articles v3 idempotently', () => {
   const db = new Database(':memory:');
   db.exec(`
     CREATE TABLE articles (
@@ -65,12 +65,12 @@ test('database migration applies analytics traffic schema version 2 idempotently
     VALUES ('2026-07-01T00:00:00.000Z', '/legacy', 'legacy', 'desktop');
   `);
 
-  assert.equal(LATEST_SCHEMA_VERSION, 2);
-  assert.equal(migrateDatabase(db), 2);
-  assert.equal(migrateDatabase(db), 2);
+  assert.equal(LATEST_SCHEMA_VERSION, 3);
+  assert.equal(migrateDatabase(db), 3);
+  assert.equal(migrateDatabase(db), 3);
   assert.deepEqual(
     db.prepare('SELECT version FROM schema_migrations ORDER BY version').all().map(row => row.version),
-    [1, 2]
+    [1, 2, 3]
   );
   assert.equal(
     db.prepare("SELECT traffic_kind FROM access_metrics WHERE path = '/legacy'").get().traffic_kind,
@@ -91,6 +91,13 @@ test('database migration applies analytics traffic schema version 2 idempotently
   ]) {
     assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = ?").get(name));
   }
+  for (const table of ['posts', 'categories', 'category_labels', 'tags', 'tag_labels', 'article_tags', 'article_fts']) {
+    assert.ok(
+      db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table),
+      `expected normalized table ${table}`
+    );
+  }
+  assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
   db.close();
 });
 
