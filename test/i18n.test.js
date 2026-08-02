@@ -18,6 +18,14 @@ const {
   messages,
   collectKeyPaths
 } = require('../server/i18n/messages');
+const {
+  formatDate,
+  formatLocalizedDate,
+  formatLocalizedMonth,
+  formatLocalizedYear,
+  formatYear,
+  groupArticlesByMonth
+} = require('../server/utils/presentation');
 const config = require('../server/config');
 
 const baseEnv = {
@@ -183,4 +191,73 @@ test('Chinese and English message catalogs are parallel', () => {
   const enKeys = collectKeyPaths(messages.en);
   assert.ok(zhKeys.length >= 20, `expected at least 20 keys, got ${zhKeys.length}`);
   assert.deepEqual(enKeys, zhKeys);
+});
+
+// ---------------------------------------------------------------------------
+// Task 9: locale-aware date formatting with locked compatibility helpers
+// ---------------------------------------------------------------------------
+
+test('formatLocalizedDate localizes the same timestamp while archive grouping keeps the Beijing boundary', () => {
+  const timestamp = '2026-08-01T12:00:00.000Z';
+  const zh = formatLocalizedDate(timestamp, 'zh', { year: 'numeric', month: 'long', day: 'numeric' });
+  const en = formatLocalizedDate(timestamp, 'en', { year: 'numeric', month: 'long', day: 'numeric' });
+  assert.equal(zh, '2026年8月1日');
+  assert.equal(en, 'August 1, 2026');
+  assert.notEqual(zh, en);
+
+  // Archive grouping stays on the numeric en-CA Beijing calendar boundary.
+  const grouped = groupArticlesByMonth([
+    { id: 1, created_at: '2026-01-31T15:59:59.000Z' },
+    { id: 2, created_at: '2026-01-31T16:00:00.000Z' }
+  ]);
+  assert.deepEqual(grouped['2026']['1'].map(article => article.id), [1]);
+  assert.deepEqual(grouped['2026']['2'].map(article => article.id), [2]);
+});
+
+test('formatDate and formatYear stay Chinese/Beijing compatibility APIs', () => {
+  // Admin view shape (views/admin/articles.ejs, comments, article page).
+  assert.equal(
+    formatDate('2026-01-31T16:00:00.000Z', { year: 'numeric', month: '2-digit', day: '2-digit' }),
+    '2026/02/01'
+  );
+  // scripts/backup-db.js and scripts/query-db.js call shape.
+  assert.equal(
+    formatDate('2026-01-31T16:00:00.000Z', { dateStyle: 'medium', timeStyle: 'medium' }),
+    '2026年2月1日 00:00:00'
+  );
+  // formatYear export used by server/admin footer locals.
+  assert.equal(formatYear('2026-08-01T12:00:00.000Z'), '2026');
+  assert.equal(formatYear(new Date('2026-08-01T12:00:00.000Z')), '2026');
+});
+
+test('formatLocalizedMonth and formatLocalizedYear localize via Intl and validate input', () => {
+  assert.equal(formatLocalizedMonth(1, 'zh'), '一月');
+  assert.equal(formatLocalizedMonth(1, 'en'), 'January');
+  assert.equal(formatLocalizedMonth(12, 'zh'), '十二月');
+  assert.equal(formatLocalizedMonth(12, 'en'), 'December');
+  assert.throws(() => formatLocalizedMonth(0, 'zh'), /month/);
+  assert.throws(() => formatLocalizedMonth(13, 'en'), /month/);
+  assert.throws(() => formatLocalizedMonth(1, 'fr'), /unsupported locale/);
+  assert.equal(formatLocalizedYear('2026-08-01T12:00:00.000Z', 'zh'), '2026年');
+  assert.equal(formatLocalizedYear('2026-08-01T12:00:00.000Z', 'en'), '2026');
+});
+
+test('localized formatter caches key by locale and never share a zh/en formatter', () => {
+  const timestamp = '2026-08-01T12:00:00.000Z';
+  const options = { month: 'long' };
+  // Warm the zh cache first: if the cache ignored locale, the en call would
+  // reuse the zh formatter and emit Chinese text.
+  assert.equal(formatLocalizedDate(timestamp, 'zh', options), '八月');
+  assert.equal(formatLocalizedDate(timestamp, 'en', options), 'August');
+  assert.equal(formatLocalizedDate(timestamp, 'zh', options), '八月');
+  assert.equal(formatLocalizedDate(timestamp, 'en', options), 'August');
+
+  // Distinct option sets stay distinct within one locale.
+  assert.equal(formatLocalizedDate(timestamp, 'zh', { month: 'long', day: 'numeric' }), '8月1日');
+  assert.equal(formatLocalizedDate(timestamp, 'en', { month: 'long', day: 'numeric' }), 'August 1');
+  assert.equal(formatLocalizedDate(timestamp, 'zh', options), '八月');
+
+  // The localized helpers do not disturb the compatibility wrappers.
+  assert.equal(formatDate(timestamp, { year: 'numeric', month: '2-digit', day: '2-digit' }), '2026/08/01');
+  assert.equal(formatYear(timestamp), '2026');
 });

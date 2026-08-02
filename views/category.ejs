@@ -1,0 +1,24 @@
+<%- include('partials/header', { title: typeof i18n === 'function' ? i18n('categories.title') : '文章分类', user }) %>
+
+<h2><%= category.name %></h2>
+
+<% if (articles.length === 0) { %>
+  <p>该分类下暂无文章</p>
+<% } else { %>
+  <ul class="article-list">
+    <% articles.forEach(article => { %>
+      <li>
+        <a href="<%= typeof localizedPath === 'function' ? localizedPath('/article/' + encodeURIComponent(article.slug)) : '/article/' + encodeURIComponent(article.slug) %>"><%= article.title %></a>
+        <span class="article-meta">
+          <%= typeof formatDate === 'function' ? formatDate(article.created_at, { year: 'numeric', month: '2-digit', day: '2-digit' }) : article.created_at %>
+        </span>
+      </li>
+    <% }) %>
+  </ul>
+<% } %>
+
+<p style="margin-top: 2em;">
+  <a href="<%= typeof localizedPath === 'function' ? localizedPath('/tags') : '/tags' %>">← <%= typeof i18n === 'function' ? i18n('navigation.tags') : '查看所有标签' %></a>
+</p>
+
+<%- include('partials/footer') %>

@@ -38,6 +38,29 @@ function rawQuery(req) {
   return queryIndex === -1 ? '' : req.originalUrl.slice(queryIndex);
 }
 
+const otherLocaleOf = locale => (locale === 'zh' ? 'en' : 'zh');
+
+/**
+ * Push one hreflang alternate onto a `baseSeo` object. `href` must be the
+ * absolute self-origin URL of the target locale page, present only when that
+ * locale endpoint actually exists.
+ */
+function addAlternate(seo, hreflang, href) {
+  seo.alternates.push({ hreflang, href });
+}
+
+/**
+ * Derive `og:locale:alternate` values from the existing hreflang alternates
+ * (never from locales whose endpoint does not exist).
+ */
+function finalizeOgLocaleAlternates(seo, localeMetadata) {
+  const alternates = seo.alternates
+    .filter(alternate => alternate.hreflang !== seo.locale)
+    .map(alternate => localeMetadata(alternate.hreflang).ogLocale);
+  if (alternates.length > 0) seo.ogLocaleAlternates = alternates;
+  return seo;
+}
+
 /**
  * Install locale request locals shared by every localized public surface.
  * `res.locals` receives `locale`, `i18n`, `localizedPath`, `localeMeta`,
@@ -183,29 +206,88 @@ function createLegacyRedirectRouter({ config }) {
 
 /**
  * Root-level machine endpoints that must not be captured by the strict
- * `/:locale` router. The sitemap lists default-locale URLs so every entry
- * resolves without a redirect hop.
+ * `/:locale` router. The multilingual sitemap lists both locales' published
+ * static/article/taxonomy URLs with reciprocal `xhtml:link` alternates, so
+ * every entry resolves without a redirect hop and never points at a locale
+ * endpoint that does not exist.
  */
 function createRootMetadataRouter({ config, articleService }) {
   const router = express.Router();
   const origin = config.site.publicOrigin || `http://localhost:${config.port}`;
   const canonical = pathname => `${origin}${pathname}`;
-  const localePath = pathname => `/${DEFAULT_LOCALE}${pathname === '/' ? '/' : pathname}`;
 
   router.get('/sitemap.xml', (req, res) => {
-    const articles = articleService.listArchive(DEFAULT_LOCALE);
-    const staticPaths = ['/', '/archive', '/tags', '/about'].map(localePath);
-    const urls = [
-      ...staticPaths.map(pathname => ({ loc: canonical(pathname), updated: null })),
-      ...articles.map(article => ({
-        loc: canonical(`/${DEFAULT_LOCALE}/article/${encodeURIComponent(article.slug)}`),
-        updated: article.updated_at || article.created_at
-      }))
-    ];
-    res.type('application/xml').send(`<?xml version="1.0" encoding="UTF-8"?>
-      <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls.map(url => `
-        <url><loc>${escapeXml(url.loc)}</loc>${url.updated ? `<lastmod>${new Date(url.updated).toISOString()}</lastmod>` : ''}</url>`).join('')}
-      </urlset>`);
+    const groups = [];
+    const seen = new Set();
+    const rendered = [];
+
+    // Unpaginated static pages always exist in both locales.
+    for (const pathname of ['/', '/archive', '/tags', '/about']) {
+      groups.push(SUPPORTED_LOCALES.map(locale => ({
+        locale,
+        url: canonical(localizedPath(locale, pathname)),
+        lastmod: null
+      })));
+    }
+
+    // Published articles grouped by logical post; only published siblings
+    // ever pair up as reciprocal alternates.
+    const articlesByPost = new Map();
+    for (const locale of SUPPORTED_LOCALES) {
+      for (const article of articleService.listArchive(locale)) {
+        if (!articlesByPost.has(article.post_id)) articlesByPost.set(article.post_id, []);
+        articlesByPost.get(article.post_id).push({
+          locale,
+          url: canonical(`/${locale}/article/${encodePathSegment(article.slug)}`),
+          lastmod: article.updated_at || article.created_at
+        });
+      }
+    }
+    for (const locales of articlesByPost.values()) groups.push(locales);
+
+    // Taxonomy pages with published counts, grouped by stable id so localized
+    // label slugs pair up across locales.
+    for (const kind of ['tags', 'categories']) {
+      const byId = new Map();
+      const pathName = kind === 'tags' ? 'tag' : 'category';
+      for (const locale of SUPPORTED_LOCALES) {
+        for (const entry of articleService.listTaxonomy(locale)[kind]) {
+          if (entry.count === 0) continue;
+          if (!byId.has(entry.id)) byId.set(entry.id, []);
+          byId.get(entry.id).push({
+            locale,
+            url: canonical(`/${locale}/${pathName}/${encodePathSegment(entry.slug)}`),
+            lastmod: null
+          });
+        }
+      }
+      for (const locales of byId.values()) groups.push(locales);
+    }
+
+    for (const locales of groups) {
+      for (const entry of locales) {
+        if (seen.has(entry.url)) continue;
+        seen.add(entry.url);
+        const links = locales.map(target =>
+          `<xhtml:link rel="alternate" hreflang="${target.locale}" href="${escapeXml(target.url)}"/>`
+        );
+        links.push(`<xhtml:link rel="alternate" hreflang="x-default" href="${escapeXml(canonical('/'))}"/>`);
+        rendered.push(
+          '<url>\n' +
+          `  <loc>${escapeXml(entry.url)}</loc>\n` +
+          (entry.lastmod ? `  <lastmod>${new Date(entry.lastmod).toISOString()}</lastmod>\n` : '') +
+          links.map(link => `  ${link}`).join('\n') +
+          '\n</url>'
+        );
+      }
+    }
+
+    res.type('application/xml').send(
+      '<?xml version="1.0" encoding="UTF-8"?>\n' +
+      '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" ' +
+      'xmlns:xhtml="http://www.w3.org/1999/xhtml">\n' +
+      `${rendered.join('\n')}\n</urlset>`
+    );
   });
 
   router.get('/robots.txt', (req, res) => {
@@ -254,8 +336,26 @@ function createLocalizedPagesRouter({ config, articleService, commentsModule }) 
       title,
       description: description || res.locals.site.description,
       canonical: canonical(pathname),
-      type
+      type,
+      locale: res.locals.locale,
+      ogLocale: res.locals.localeMeta.ogLocale,
+      alternates: [],
+      xDefault: canonical('/')
     };
+  }
+
+  /**
+   * Rebuild the language switch from the resolved hreflang alternates so a
+   * switch target is only offered when the target locale endpoint actually
+   * exists (pagination pages, article siblings, taxonomy endpoints).
+   */
+  function syncLanguageSwitch(res, seo) {
+    res.locals.languageSwitch = Object.freeze(
+      seo.alternates.map(alternate => ({
+        locale: alternate.hreflang,
+        path: alternate.href.slice(origin.length)
+      }))
+    );
   }
 
   router.get('/', optionalAuth, (req, res) => {
@@ -271,16 +371,26 @@ function createLocalizedPagesRouter({ config, articleService, commentsModule }) 
     if (page > Math.max(1, result.totalPages)) {
       return renderNotFound(req, res, config);
     }
+    // A target-locale alternate/switch URL exists only when that locale also
+    // has page N under the same explicit pagination contract.
+    const other = otherLocaleOf(locale);
+    const otherResult = articleService.listPublished(other, 1, 1);
+    const otherHasPage = page <= Math.max(1, otherResult.totalPages);
+    const homePath = target => (page === 1 ? `/${target}/` : `/${target}/?page=${page}`);
+    const seo = baseSeo(req, res, res.locals.site.title, res.locals.site.description, homePath(locale));
+    addAlternate(seo, locale, canonical(homePath(locale)));
+    if (otherHasPage) addAlternate(seo, other, canonical(homePath(other)));
+    syncLanguageSwitch(res, seo);
     return res.render('index', {
       ...result,
       user: req.user,
-      seo: baseSeo(req, res, res.locals.site.title, res.locals.site.description,
-        page === 1 ? `/${locale}/` : `/${locale}/?page=${page}`)
+      seo: finalizeOgLocaleAlternates(seo, localeMetadata)
     });
   });
 
   router.get('/article/:slug', optionalAuth, (req, res) => {
-    const article = articleService.getPublishedBySlug(res.locals.locale, req.params.slug);
+    const locale = res.locals.locale;
+    const article = articleService.getPublishedBySlug(locale, req.params.slug);
     if (!article) return renderNotFound(req, res, config);
     const comments = commentsModule
       ? commentsModule.getArticleCommentsViewModel(article.id, {
@@ -288,30 +398,52 @@ function createLocalizedPagesRouter({ config, articleService, commentsModule }) 
         csrfToken: req.commentSession?.csrfToken || null
       })
       : { enabled: false };
+    const articlePath = `/${locale}/article/${encodePathSegment(article.slug)}`;
+    const seo = baseSeo(req, res, article.title, article.description, articlePath, 'article');
+    addAlternate(seo, locale, canonical(articlePath));
+    // Article alternates come only from published sibling translations.
+    const alternate = articleService.alternateFor(article);
+    if (alternate) {
+      addAlternate(seo, alternate.locale,
+        canonical(`/${alternate.locale}/article/${encodePathSegment(alternate.slug)}`));
+    }
+    syncLanguageSwitch(res, seo);
     return res.render('article', {
       article,
       comments,
       navigation: articleService.navigationFor(article),
       relatedArticles: articleService.relatedFor(article),
       user: req.user,
-      seo: baseSeo(req, res, article.title, article.description,
-        `/${res.locals.locale}/article/${encodeURIComponent(article.slug)}`, 'article')
+      seo: finalizeOgLocaleAlternates(seo, localeMetadata)
     });
   });
 
-  router.get('/archive', optionalAuth, (req, res) => res.render('archive', {
-    archive: groupArticlesByMonth(articleService.listArchive(res.locals.locale)),
-    user: req.user,
-    seo: baseSeo(req, res, res.locals.i18n('archive.title'), null, `/${res.locals.locale}/archive`)
-  }));
+  router.get('/archive', optionalAuth, (req, res) => {
+    const locale = res.locals.locale;
+    const pathname = `/${locale}/archive`;
+    const seo = baseSeo(req, res, res.locals.i18n('archive.title'), null, pathname);
+    for (const candidate of SUPPORTED_LOCALES) {
+      addAlternate(seo, candidate, canonical(localizedPath(candidate, pathname)));
+    }
+    return res.render('archive', {
+      archive: groupArticlesByMonth(articleService.listArchive(locale)),
+      user: req.user,
+      seo: finalizeOgLocaleAlternates(seo, localeMetadata)
+    });
+  });
 
   router.get('/tags', optionalAuth, (req, res) => {
     const locale = res.locals.locale;
+    const pathname = `/${locale}/tags`;
+    const seo = baseSeo(req, res, res.locals.i18n('tags.title'), null, pathname);
+    for (const candidate of SUPPORTED_LOCALES) {
+      addAlternate(seo, candidate, canonical(localizedPath(candidate, pathname)));
+    }
     const tags = articleService.listTaxonomy(locale).tags.map(tag => ({ name: tag.name, count: tag.count }));
     return res.render('tags', {
       tags,
       user: req.user,
-      seo: baseSeo(req, res, res.locals.i18n('tags.title'), null, `/${locale}/tags`)
+      seo: finalizeOgLocaleAlternates(seo, localeMetadata)
     });
   });
 
@@ -320,12 +452,47 @@ function createLocalizedPagesRouter({ config, articleService, commentsModule }) 
     const tag = findLocalizedTaxonomyTag(ensureCatalog(), locale, req.params.tag);
     if (!tag) return renderNotFound(req, res, config);
     const label = tag.labels[locale];
+    const tagPath = `/${locale}/tag/${encodePathSegment(label.slug)}`;
+    const seo = baseSeo(req, res, res.locals.i18n('tags.tagTitle', { tag: label.name }), null, tagPath);
+    addAlternate(seo, locale, canonical(tagPath));
+    // The target-locale tag alternate only exists when that locale has
+    // published articles under its own label slug.
+    const other = otherLocaleOf(locale);
+    const otherLabel = tag.labels[other];
+    if (articleService.listByTag(other, otherLabel.slug).length > 0) {
+      addAlternate(seo, other, canonical(`/${other}/tag/${encodePathSegment(otherLabel.slug)}`));
+    }
+    syncLanguageSwitch(res, seo);
     return res.render('tag', {
       tag: label.name,
       articles: articleService.listByTag(locale, label.slug),
       user: req.user,
-      seo: baseSeo(req, res, res.locals.i18n('tags.tagTitle', { tag: label.name }), null,
-        `/${locale}/tag/${encodePathSegment(label.slug)}`)
+      seo: finalizeOgLocaleAlternates(seo, localeMetadata)
+    });
+  });
+
+  // Localized category pages resolve only real published endpoints, so
+  // category alternates and sitemap entries never point at empty pages.
+  router.get('/category/:slug', optionalAuth, (req, res) => {
+    const locale = res.locals.locale;
+    const category = articleService.listTaxonomy(locale).categories
+      .find(candidate => candidate.slug === req.params.slug);
+    if (!category || category.count === 0) return renderNotFound(req, res, config);
+    const categoryPath = `/${locale}/category/${encodePathSegment(category.slug)}`;
+    const seo = baseSeo(req, res, res.locals.i18n('categories.title'), null, categoryPath);
+    addAlternate(seo, locale, canonical(categoryPath));
+    const other = otherLocaleOf(locale);
+    const otherCategory = articleService.listTaxonomy(other).categories
+      .find(candidate => candidate.id === category.id);
+    if (otherCategory && otherCategory.count > 0) {
+      addAlternate(seo, other, canonical(`/${other}/category/${encodePathSegment(otherCategory.slug)}`));
+    }
+    syncLanguageSwitch(res, seo);
+    return res.render('category', {
+      category,
+      articles: articleService.listByCategory(locale, category.slug),
+      user: req.user,
+      seo: finalizeOgLocaleAlternates(seo, localeMetadata)
     });
   });
 
@@ -335,11 +502,15 @@ function createLocalizedPagesRouter({ config, articleService, commentsModule }) 
       return res.status(400).type('text/plain')
         .send(res.locals.locale === 'en' ? 'Search query too long' : '搜索条件过长');
     }
+    const seo = finalizeOgLocaleAlternates(
+      baseSeo(req, res, res.locals.i18n('search.title'), null, `/${res.locals.locale}/search`),
+      localeMetadata
+    );
     return res.render('search', {
       query,
       articles: query ? articleService.search(res.locals.locale, query) : [],
       user: req.user,
-      seo: { ...baseSeo(req, res, res.locals.i18n('search.title'), null, `/${res.locals.locale}/search`), noindex: true }
+      seo: { ...seo, noindex: true }
     });
   });
 
@@ -347,11 +518,16 @@ function createLocalizedPagesRouter({ config, articleService, commentsModule }) 
     const locale = res.locals.locale;
     try {
       const markdown = fs.readFileSync(path.resolve(__dirname, '..', '..', config.aboutPaths[locale]), 'utf8');
+      const pathname = `/${locale}/about`;
+      const seo = baseSeo(req, res, res.locals.i18n('about.title'), null, pathname);
+      for (const candidate of SUPPORTED_LOCALES) {
+        addAlternate(seo, candidate, canonical(localizedPath(candidate, pathname)));
+      }
       return res.render('about', {
         aboutHtml: renderMarkdown(markdown, { locale }),
         title: res.locals.i18n('about.title'),
         user: req.user,
-        seo: baseSeo(req, res, res.locals.i18n('about.title'), null, `/${locale}/about`)
+        seo: finalizeOgLocaleAlternates(seo, localeMetadata)
       });
     } catch (error) {
       return next(error);
@@ -365,8 +541,8 @@ function createLocalizedPagesRouter({ config, articleService, commentsModule }) 
     const items = articles.map(article => `
       <item>
         <title>${escapeXml(article.title)}</title>
-        <link>${escapeXml(canonical(`/${locale}/article/${encodeURIComponent(article.slug)}`))}</link>
-        <guid isPermaLink="true">${escapeXml(canonical(`/${locale}/article/${encodeURIComponent(article.slug)}`))}</guid>
+        <link>${escapeXml(canonical(`/${locale}/article/${encodePathSegment(article.slug)}`))}</link>
+        <guid isPermaLink="true">${escapeXml(canonical(`/${locale}/article/${encodePathSegment(article.slug)}`))}</guid>
         <description>${escapeXml(article.description || '')}</description>
         <pubDate>${new Date(article.created_at).toUTCString()}</pubDate>
       </item>`).join('');
@@ -374,7 +550,8 @@ function createLocalizedPagesRouter({ config, articleService, commentsModule }) 
       <rss version="2.0"><channel>
       <title>${escapeXml(site.title)}</title>
       <link>${escapeXml(canonical(`/${locale}/`))}</link>
-      <description>${escapeXml(site.description)}</description>${items}
+      <description>${escapeXml(site.description)}</description>
+      <language>${escapeXml(res.locals.localeMeta.rssLanguage)}</language>${items}
       </channel></rss>`);
   });
 

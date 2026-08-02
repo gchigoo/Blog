@@ -86,6 +86,28 @@ async function seededHarness(t) {
   return { root, ...server };
 }
 
+/**
+ * Task 9 SEO/feed harness: seeds localized posts directly into the fixture
+ * database (after init-db applies the v3 schema) so asymmetric pagination and
+ * translation fixtures stay fast, then boots the real server.
+ */
+async function seoSeededHarness(t, seed) {
+  const root = await createProjectFixture(t);
+  writeFixtureCatalog(root, seededCatalog());
+  const init = runNode(root, 'server/scripts/init-db.js', [], { INITIAL_ADMIN_PASSWORD: INITIAL_PASSWORD });
+  assert.equal(init.status, 0, init.stderr);
+  const db = new Database(path.join(root, 'blog.db'));
+  db.pragma('foreign_keys = ON');
+  const created = day => new Date(Date.UTC(2026, 0, day)).toISOString();
+  seed(db, created);
+  db.close();
+  const server = await startServer(t, root, {
+    JWT_SECRET,
+    BLOG_PUBLIC_ORIGIN: 'https://blog.example.test'
+  });
+  return { root, ...server };
+}
+
 async function submit(baseUrl, endpoint, name, markdown, fields = {}) {
   const form = new FormData();
   form.append('file', new Blob([markdown]), name);
@@ -199,6 +221,7 @@ function insertLocalizedPost(db, {
   title,
   status = 'published',
   body = 'body',
+  description = null,
   created = '2026-01-01T00:00:00.000Z'
 }) {
   let post = db.prepare('SELECT id FROM posts WHERE translation_key = ?').get(translationKey);
@@ -206,9 +229,9 @@ function insertLocalizedPost(db, {
     'INSERT INTO posts (translation_key, created_at, updated_at) VALUES (?, ?, ?)'
   ).run(translationKey, created, created).lastInsertRowid);
   const articleId = Number(db.prepare(`
-    INSERT INTO articles (post_id, locale, title, slug, content, html, status, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, '<p>body</p>', ?, ?, ?)
-  `).run(postId, locale, title, slug, body, status, created, created).lastInsertRowid);
+    INSERT INTO articles (post_id, locale, title, slug, content, html, status, description, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, '<p>body</p>', ?, ?, ?, ?)
+  `).run(postId, locale, title, slug, body, status, description, created, created).lastInsertRowid);
   return { postId, articleId };
 }
 
@@ -2066,4 +2089,238 @@ test('analytics records only completed localized 2xx HTML after negotiation and 
   assert.deepEqual(paths, ['/zh/', '/zh/article/tracked-target'],
     'redirect hops and 404s must not create metrics');
   db.close();
+});
+
+// ---------------------------------------------------------------------------
+// Task 9: localized SEO, RSS feeds, and the multilingual sitemap
+// ---------------------------------------------------------------------------
+
+test('localized article pages emit self canonicals, published-sibling alternates, and og locale metadata', async t => {
+  const { baseUrl } = await seoSeededHarness(t, (db, created) => {
+    insertLocalizedPost(db, { translationKey: 'dual-post', locale: 'zh', slug: 'dual-post', title: '双语文章', created: created(1) });
+    insertLocalizedPost(db, { translationKey: 'dual-post', locale: 'en', slug: 'dual-post', title: 'Dual Post', created: created(1) });
+    insertLocalizedPost(db, { translationKey: 'zh-only-post', locale: 'zh', slug: 'zh-only', title: '仅中文', created: created(2) });
+    insertLocalizedPost(db, { translationKey: 'twin-post', locale: 'zh', slug: 'twin-post', title: '公开中文', created: created(3) });
+    insertLocalizedPost(db, { translationKey: 'twin-post', locale: 'en', slug: 'twin-post', title: 'Draft Twin EN', status: 'draft', created: created(3) });
+  });
+
+  const enHtml = await (await fetch(`${baseUrl}/en/article/dual-post`)).text();
+  assert.match(enHtml, /<link rel="canonical" href="https:\/\/blog\.example\.test\/en\/article\/dual-post">/);
+  assert.match(enHtml, /<link rel="alternate" hreflang="zh" href="https:\/\/blog\.example\.test\/zh\/article\/dual-post">/);
+  assert.match(enHtml, /<link rel="alternate" hreflang="en" href="https:\/\/blog\.example\.test\/en\/article\/dual-post">/);
+  assert.match(enHtml, /<link rel="alternate" hreflang="x-default" href="https:\/\/blog\.example\.test\/">/);
+  assert.match(enHtml, /<meta property="og:locale" content="en_US">/);
+  assert.match(enHtml, /<meta property="og:locale:alternate" content="zh_CN">/);
+
+  const zhHtml = await (await fetch(`${baseUrl}/zh/article/dual-post`)).text();
+  assert.match(zhHtml, /<link rel="canonical" href="https:\/\/blog\.example\.test\/zh\/article\/dual-post">/);
+  assert.match(zhHtml, /<meta property="og:locale" content="zh_CN">/);
+  assert.match(zhHtml, /<meta property="og:locale:alternate" content="en_US">/);
+
+  // A Chinese-only post has no English article alternate and no og alternate.
+  const zhOnlyHtml = await (await fetch(`${baseUrl}/zh/article/zh-only`)).text();
+  assert.match(zhOnlyHtml, /<link rel="canonical" href="https:\/\/blog\.example\.test\/zh\/article\/zh-only">/);
+  assert.match(zhOnlyHtml, /hreflang="zh" href="https:\/\/blog\.example\.test\/zh\/article\/zh-only"/);
+  assert.doesNotMatch(zhOnlyHtml, /hreflang="en"/);
+  assert.doesNotMatch(zhOnlyHtml, /og:locale:alternate/);
+
+  // Draft siblings never alternate, and the draft English page stays a 404.
+  const twinHtml = await (await fetch(`${baseUrl}/zh/article/twin-post`)).text();
+  assert.doesNotMatch(twinHtml, /hreflang="en"/);
+  assert.equal((await fetch(`${baseUrl}/en/article/twin-post`)).status, 404);
+});
+
+test('home pagination emits alternates only where the target locale page exists', async t => {
+  const { baseUrl } = await seoSeededHarness(t, (db, created) => {
+    // 41 Chinese published posts -> zh totalPages 3; English has none -> 1 page.
+    for (let index = 1; index <= 41; index += 1) {
+      insertLocalizedPost(db, {
+        translationKey: `zh-page-${index}`, locale: 'zh', slug: `zh-page-${index}`,
+        title: `中文文章 ${index}`, created: created(index)
+      });
+    }
+  });
+
+  const zhHome = await (await fetch(`${baseUrl}/zh/`)).text();
+  assert.match(zhHome, /<link rel="canonical" href="https:\/\/blog\.example\.test\/zh\/">/);
+  assert.match(zhHome, /hreflang="zh" href="https:\/\/blog\.example\.test\/zh\/"/);
+  assert.match(zhHome, /hreflang="en" href="https:\/\/blog\.example\.test\/en\/"/);
+
+  const enHome = await (await fetch(`${baseUrl}/en/`)).text();
+  assert.match(enHome, /hreflang="zh" href="https:\/\/blog\.example\.test\/zh\/"/);
+
+  const zhPage2 = await (await fetch(`${baseUrl}/zh/?page=2`)).text();
+  assert.match(zhPage2, /<link rel="canonical" href="https:\/\/blog\.example\.test\/zh\/\?page=2">/);
+  assert.match(zhPage2, /hreflang="zh" href="https:\/\/blog\.example\.test\/zh\/\?page=2"/);
+  assert.doesNotMatch(zhPage2, /hreflang="en"/);
+
+  const zhPage3 = await (await fetch(`${baseUrl}/zh/?page=3`)).text();
+  assert.match(zhPage3, /<link rel="canonical" href="https:\/\/blog\.example\.test\/zh\/\?page=3">/);
+  assert.match(zhPage3, /hreflang="x-default" href="https:\/\/blog\.example\.test\/">/);
+  assert.doesNotMatch(zhPage3, /hreflang="en"/);
+
+  // Out-of-range locale pages keep the Task 8 localized 404 contract.
+  const enOverflow = await fetch(`${baseUrl}/en/?page=3`);
+  assert.equal(enOverflow.status, 404);
+  assert.match(await enOverflow.text(), /<html lang="en"/);
+  const zhOverflow = await fetch(`${baseUrl}/zh/?page=42`);
+  assert.equal(zhOverflow.status, 404);
+  assert.match(await zhOverflow.text(), /<html lang="zh-CN"/);
+});
+
+test('static pages always carry zh/en alternates and search stays noindex with a locale-prefixed canonical', async t => {
+  const { baseUrl } = await seoSeededHarness(t, (db, created) => {
+    insertLocalizedPost(db, { translationKey: 'dual-post', locale: 'zh', slug: 'dual-post', title: '双语', created: created(1) });
+    insertLocalizedPost(db, { translationKey: 'dual-post', locale: 'en', slug: 'dual-post', title: 'Dual', created: created(1) });
+  });
+
+  for (const [pathname, locale, other] of [
+    ['/zh/', 'zh', 'en'],
+    ['/en/', 'en', 'zh'],
+    ['/zh/archive', 'zh', 'en'],
+    ['/en/about', 'en', 'zh'],
+    ['/zh/tags', 'zh', 'en']
+  ]) {
+    const html = await (await fetch(`${baseUrl}${pathname}`)).text();
+    assert.match(html, new RegExp(`hreflang="${locale}"`), pathname);
+    assert.match(html, new RegExp(`hreflang="${other}"`), pathname);
+    assert.match(html, /hreflang="x-default" href="https:\/\/blog\.example\.test\/"/, pathname);
+  }
+
+  const enSearch = await (await fetch(`${baseUrl}/en/search?q=node`)).text();
+  assert.match(enSearch, /<meta name="robots" content="noindex,follow">/);
+  assert.match(enSearch, /<link rel="canonical" href="https:\/\/blog\.example\.test\/en\/search">/);
+  assert.doesNotMatch(enSearch, /hreflang="zh"/);
+});
+
+test('tag and category pages alternate only to locale endpoints with published articles', async t => {
+  const { baseUrl } = await seoSeededHarness(t, (db, created) => {
+    const zhNode = insertLocalizedPost(db, { translationKey: 'zh-node-post', locale: 'zh', slug: 'zh-node', title: '中文 Node 文', created: created(1) });
+    attachTags(db, zhNode.articleId, ['nodejs']);
+    const enNode = insertLocalizedPost(db, { translationKey: 'en-node-post', locale: 'en', slug: 'en-node', title: 'English Node', created: created(2) });
+    attachTags(db, enNode.articleId, ['nodejs']);
+    // tutorial tag has a zh article only, so the en tutorial endpoint has no published articles.
+    const zhTutorial = insertLocalizedPost(db, { translationKey: 'zh-tut-post', locale: 'zh', slug: 'zh-tut', title: '教程文', created: created(3) });
+    attachTags(db, zhTutorial.articleId, ['tutorial']);
+  });
+
+  // nodejs exists in both locales -> reciprocal alternates.
+  const zhNode = await (await fetch(`${baseUrl}/zh/tag/${encodeURIComponent('Node.js')}`)).text();
+  assert.match(zhNode, /<link rel="canonical" href="https:\/\/blog\.example\.test\/zh\/tag\/Node\.js">/);
+  assert.match(zhNode, /hreflang="zh" href="https:\/\/blog\.example\.test\/zh\/tag\/Node\.js"/);
+  assert.match(zhNode, /hreflang="en" href="https:\/\/blog\.example\.test\/en\/tag\/nodejs"/);
+
+  // tutorial has no English published articles -> no English alternate.
+  const zhTutorial = await (await fetch(`${baseUrl}/zh/tag/${encodeURIComponent('教程')}`)).text();
+  assert.match(zhTutorial, /hreflang="zh"/);
+  assert.doesNotMatch(zhTutorial, /hreflang="en"/);
+
+  // Both locale category pages exist because both locales have a published
+  // article in the technology category.
+  const zhCategoryResponse = await fetch(`${baseUrl}/zh/category/${encodeURIComponent('技术')}`);
+  assert.equal(zhCategoryResponse.status, 200);
+  const zhCategory = await zhCategoryResponse.text();
+  assert.match(zhCategory, /<link rel="canonical" href="https:\/\/blog\.example\.test\/zh\/category\/%E6%8A%80%E6%9C%AF">/);
+  assert.match(zhCategory, /hreflang="en" href="https:\/\/blog\.example\.test\/en\/category\/technology"/);
+  const enCategoryResponse = await fetch(`${baseUrl}/en/category/technology`);
+  assert.equal(enCategoryResponse.status, 200);
+  assert.match(await enCategoryResponse.text(), /hreflang="zh"/);
+
+  // The uncategorized category has zero published articles: localized 404.
+  assert.equal((await fetch(`${baseUrl}/zh/category/${encodeURIComponent('其他')}`)).status, 404);
+});
+
+test('localized RSS feeds isolate locale, language, and prefixed links', async t => {
+  const { baseUrl } = await seoSeededHarness(t, (db, created) => {
+    insertLocalizedPost(db, { translationKey: 'dual-post', locale: 'zh', slug: 'dual-post', title: '双语文章', created: created(1) });
+    insertLocalizedPost(db, { translationKey: 'dual-post', locale: 'en', slug: 'dual-post', title: 'R&D', description: 'English <summary>', created: created(1) });
+    insertLocalizedPost(db, { translationKey: 'zh-only-post', locale: 'zh', slug: 'zh-only', title: '仅中文', created: created(2) });
+    insertLocalizedPost(db, { translationKey: 'en-only-post', locale: 'en', slug: 'en-only', title: 'English Only', created: created(3) });
+  });
+
+  const zhFeed = await (await fetch(`${baseUrl}/zh/feed.xml`)).text();
+  assert.match(zhFeed, /<language>zh-CN<\/language>/);
+  assert.match(zhFeed, /<title>双语文章<\/title>/);
+  assert.match(zhFeed, /<link>https:\/\/blog\.example\.test\/zh\/article\/dual-post<\/link>/);
+  assert.doesNotMatch(zhFeed, /English Only/);
+  assert.doesNotMatch(zhFeed, /R&D/);
+
+  const enFeed = await (await fetch(`${baseUrl}/en/feed.xml`)).text();
+  assert.match(enFeed, /<language>en<\/language>/);
+  assert.match(enFeed, /<title>R&amp;D<\/title>/);
+  assert.match(enFeed, /<description>English &lt;summary&gt;<\/description>/);
+  assert.match(enFeed, /<link>https:\/\/blog\.example\.test\/en\/article\/dual-post<\/link>/);
+  assert.doesNotMatch(enFeed, /仅中文/);
+  assert.doesNotMatch(enFeed, /zh-only/);
+});
+
+test('root sitemap localizes static/article/taxonomy URLs with reciprocal alternates, escaping, and dedupe', async t => {
+  const { baseUrl } = await seoSeededHarness(t, (db, created) => {
+    insertLocalizedPost(db, { translationKey: 'dual-post', locale: 'zh', slug: 'dual-post', title: '双语', created: created(1) });
+    insertLocalizedPost(db, { translationKey: 'dual-post', locale: 'en', slug: 'dual-post', title: 'Dual Post', created: created(1) });
+    const zhOnly = insertLocalizedPost(db, { translationKey: 'zh-only-post', locale: 'zh', slug: 'zh-only', title: '仅中文', created: created(2) });
+    const enOnly = insertLocalizedPost(db, { translationKey: 'en-only-post', locale: 'en', slug: 'en-only', title: 'English Only', created: created(3) });
+    attachTags(db, zhOnly.articleId, ['nodejs']);
+    attachTags(db, enOnly.articleId, ['nodejs']);
+  });
+
+  const sitemap = await (await fetch(`${baseUrl}/sitemap.xml`)).text();
+
+  // XHTML namespace for hreflang alternates.
+  assert.match(sitemap, /xmlns="http:\/\/www\.sitemaps\.org\/schemas\/sitemap\/0\.9"/);
+  assert.match(sitemap, /xmlns:xhtml="http:\/\/www\.w3\.org\/1999\/xhtml"/);
+
+  // Both locales' static pages.
+  assert.match(sitemap, /<loc>https:\/\/blog\.example\.test\/zh\/<\/loc>/);
+  assert.match(sitemap, /<loc>https:\/\/blog\.example\.test\/en\/<\/loc>/);
+  assert.match(sitemap, /<loc>https:\/\/blog\.example\.test\/zh\/about<\/loc>/);
+  assert.match(sitemap, /<loc>https:\/\/blog\.example\.test\/en\/archive<\/loc>/);
+
+  // Published articles per locale; articles carry lastmod.
+  assert.match(sitemap, /<loc>https:\/\/blog\.example\.test\/zh\/article\/dual-post<\/loc>/);
+  assert.match(sitemap, /<loc>https:\/\/blog\.example\.test\/en\/article\/dual-post<\/loc>/);
+  assert.match(sitemap, /<loc>https:\/\/blog\.example\.test\/zh\/article\/zh-only<\/loc>/);
+  assert.match(sitemap, /<lastmod>2026-01-01T00:00:00\.000Z<\/lastmod>/);
+  assert.doesNotMatch(sitemap, /\/en\/article\/zh-only</);
+  assert.doesNotMatch(sitemap, /\/zh\/article\/en-only</);
+
+  // Tags and categories with published counts.
+  assert.match(sitemap, /<loc>https:\/\/blog\.example\.test\/zh\/tag\/Node\.js<\/loc>/);
+  assert.match(sitemap, /<loc>https:\/\/blog\.example\.test\/en\/tag\/nodejs<\/loc>/);
+  assert.match(sitemap, /<loc>https:\/\/blog\.example\.test\/zh\/category\/%E6%8A%80%E6%9C%AF<\/loc>/);
+  assert.match(sitemap, /<loc>https:\/\/blog\.example\.test\/en\/category\/technology<\/loc>/);
+  assert.doesNotMatch(sitemap, /\/category\/%E5%85%B6%E4%BB%96</);
+
+  const entryContaining = needle => {
+    const index = sitemap.indexOf(`<loc>${needle}</loc>`);
+    assert.ok(index !== -1, `sitemap entry missing ${needle}`);
+    const entryStart = sitemap.lastIndexOf('<url>', index);
+    const entryEnd = sitemap.indexOf('</url>', index);
+    assert.ok(entryStart !== -1 && entryEnd !== -1, `malformed sitemap around ${needle}`);
+    return sitemap.slice(entryStart, entryEnd + 6);
+  };
+
+  // A translated post carries reciprocal zh/en alternates plus x-default.
+  const dualEntry = entryContaining('https://blog.example.test/zh/article/dual-post');
+  assert.match(dualEntry, /hreflang="zh" href="https:\/\/blog\.example\.test\/zh\/article\/dual-post"/);
+  assert.match(dualEntry, /hreflang="en" href="https:\/\/blog\.example\.test\/en\/article\/dual-post"/);
+  assert.match(dualEntry, /hreflang="x-default" href="https:\/\/blog\.example\.test\/"/);
+
+  // A locale-exclusive article gets no reciprocal alternate.
+  const zhOnlyEntry = entryContaining('https://blog.example.test/zh/article/zh-only');
+  assert.match(zhOnlyEntry, /hreflang="zh"/);
+  assert.doesNotMatch(zhOnlyEntry, /hreflang="en"/);
+
+  // The tag entry stays reciprocal because both locales have published articles.
+  const zhTagEntry = entryContaining('https://blog.example.test/zh/tag/Node.js');
+  assert.match(zhTagEntry, /hreflang="en" href="https:\/\/blog\.example\.test\/en\/tag\/nodejs"/);
+
+  // No raw unescaped XML special characters.
+  assert.doesNotMatch(sitemap, /&(?!amp;|lt;|gt;|quot;|apos;)/);
+  assert.doesNotMatch(sitemap, /<(?!\/?(?:urlset|url|loc|lastmod|xhtml:link)|!DOCTYPE|\?xml)/);
+
+  // Every loc is unique.
+  const locs = [...sitemap.matchAll(/<loc>(.*?)<\/loc>/g)].map(match => match[1]);
+  assert.ok(locs.length >= 12, `expected a rich sitemap, got ${locs.length} URLs`);
+  assert.equal(new Set(locs).size, locs.length);
 });

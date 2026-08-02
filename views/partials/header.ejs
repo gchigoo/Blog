@@ -11,10 +11,20 @@
   <% if (typeof seo !== 'undefined' && seo) { %>
     <meta name="description" content="<%= seo.description %>">
     <link rel="canonical" href="<%= seo.canonical %>">
+    <% if (Array.isArray(seo.alternates)) { %><% seo.alternates.forEach(alternate => { %>
+    <link rel="alternate" hreflang="<%= alternate.hreflang %>" href="<%= alternate.href %>">
+    <% }) %><% } %>
+    <% if (seo.xDefault) { %>
+    <link rel="alternate" hreflang="x-default" href="<%= seo.xDefault %>">
+    <% } %>
     <meta property="og:title" content="<%= seo.title %>">
     <meta property="og:description" content="<%= seo.description %>">
     <meta property="og:type" content="<%= seo.type %>">
     <meta property="og:url" content="<%= seo.canonical %>">
+    <% if (seo.ogLocale) { %><meta property="og:locale" content="<%= seo.ogLocale %>"><% } %>
+    <% if (Array.isArray(seo.ogLocaleAlternates)) { %><% seo.ogLocaleAlternates.forEach(ogLocale => { %>
+    <meta property="og:locale:alternate" content="<%= ogLocale %>">
+    <% }) %><% } %>
     <% if (seo.noindex) { %><meta name="robots" content="noindex,follow"><% } %>
   <% } %>
   <link rel="alternate" type="application/rss+xml" title="RSS" href="<%= typeof localizedPath === 'function' ? localizedPath('/feed.xml') : '/feed.xml' %>">
