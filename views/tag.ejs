@@ -1,16 +1,42 @@
-<%- include('partials/header', { title: '标签: ' + tag, user }) %>
+<%
+  const ZH_FALLBACK = {
+    'tags.tagTitle': '标签: {tag}',
+    'tags.emptyForTag': '该标签下暂无文章',
+    'tags.viewAll': '← 查看所有标签',
+    'categories.title': '文章分类',
+    'navigation.breadcrumb': '面包屑'
+  };
+  const translate = typeof i18n === 'function'
+    ? i18n
+    : (key, variables) => {
+        const template = Object.prototype.hasOwnProperty.call(ZH_FALLBACK, key) ? ZH_FALLBACK[key] : key;
+        if (!variables) return template;
+        return template.replace(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (placeholder, name) =>
+          Object.prototype.hasOwnProperty.call(variables, name) ? String(variables[name]) : placeholder);
+      };
+  const breadcrumbCategory = typeof category !== 'undefined' && category ? category : null;
+%>
+<%- include('partials/header', { title: translate('tags.tagTitle', { tag }), user }) %>
 
-<h2>标签: <%= tag %></h2>
+<% if (breadcrumbCategory) { %>
+  <nav class="breadcrumb" aria-label="<%= translate('navigation.breadcrumb') %>">
+    <a href="<%= typeof localizedPath === 'function' ? localizedPath('/tags') : '/tags' %>"><%= translate('categories.title') %></a> /
+    <a href="<%= typeof localizedPath === 'function' ? localizedPath('/category/' + encodeURIComponent(breadcrumbCategory.slug)) : '/category/' + encodeURIComponent(breadcrumbCategory.slug) %>"><%= breadcrumbCategory.name %></a> /
+    <strong><%= tag %></strong>
+  </nav>
+<% } %>
+
+<h2><%= translate('tags.tagTitle', { tag }) %></h2>
 
 <% if (articles.length === 0) { %>
-  <p>该标签下暂无文章</p>
+  <p class="analytics-empty"><%= translate('tags.emptyForTag') %></p>
 <% } else { %>
   <ul class="article-list">
     <% articles.forEach(article => { %>
       <li>
-        <a href="/article/<%= article.slug %>"><%= article.title %></a>
+        <a href="<%= typeof localizedPath === 'function' ? localizedPath('/article/' + encodeURIComponent(article.slug)) : '/article/' + encodeURIComponent(article.slug) %>"><%= article.title %></a>
         <span class="article-meta">
-          <%= typeof formatDate === 'function' ? formatDate(article.created_at, { year: 'numeric', month: '2-digit', day: '2-digit' }) : article.created_at %>
+          <%= new Intl.DateTimeFormat(typeof locale === 'string' ? locale : 'zh', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(article.created_at)) %>
         </span>
       </li>
     <% }) %>
@@ -18,7 +44,7 @@
 <% } %>
 
 <p style="margin-top: 2em;">
-  <a href="/tags">← 查看所有标签</a>
+  <a href="<%= typeof localizedPath === 'function' ? localizedPath('/tags') : '/tags' %>"><%= translate('tags.viewAll') %></a>
 </p>
 
 <%- include('partials/footer') %>

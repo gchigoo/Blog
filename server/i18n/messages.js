@@ -2,6 +2,11 @@ const { DEFAULT_LOCALE, isSupportedLocale } = require('./config');
 
 const messages = {
   zh: {
+    language: {
+      zh: '中文',
+      en: 'English',
+      switchLabel: '切换语言'
+    },
     navigation: {
       home: '首页',
       archive: '归档',
@@ -10,7 +15,9 @@ const messages = {
       about: '关于',
       rss: 'RSS',
       admin: '管理',
-      siteName: '我的博客'
+      siteName: '我的博客',
+      ariaLabel: '主导航',
+      breadcrumb: '面包屑'
     },
     home: {
       latestArticles: '最新文章',
@@ -21,16 +28,20 @@ const messages = {
     article: {
       published: '发布于 {date}',
       updated: '更新于 {date}',
+      categories: '分类：',
       tags: '标签：',
       readingTime: '阅读时长约 {minutes} 分钟',
       backHome: '返回首页',
       related: '相关文章',
+      navigationAria: '相邻文章',
       audioFallback: '无法播放时打开音频文件'
     },
     categories: {
       title: '文章分类',
       all: '全部分类',
-      uncategorized: '未分类'
+      uncategorized: '未分类',
+      empty: '该分类下暂无文章',
+      backToOverview: '← 查看全部分类'
     },
     comments: {
       title: '评论',
@@ -79,9 +90,17 @@ const messages = {
       title: '关于',
       heading: '关于我',
       fallback: '欢迎来到这个极简博客。'
+    },
+    footer: {
+      poweredBy: '由 Gchigoo 极简博客驱动'
     }
   },
   en: {
+    language: {
+      zh: '中文',
+      en: 'English',
+      switchLabel: 'Switch language'
+    },
     navigation: {
       home: 'Home',
       archive: 'Archive',
@@ -90,7 +109,9 @@ const messages = {
       about: 'About',
       rss: 'RSS',
       admin: 'Admin',
-      siteName: 'My Blog'
+      siteName: 'My Blog',
+      ariaLabel: 'Main navigation',
+      breadcrumb: 'Breadcrumb'
     },
     home: {
       latestArticles: 'Latest Articles',
@@ -101,16 +122,20 @@ const messages = {
     article: {
       published: 'Published {date}',
       updated: 'Updated {date}',
+      categories: 'Categories: ',
       tags: 'Tags: ',
       readingTime: 'About {minutes} min read',
       backHome: 'Back to Home',
       related: 'Related Articles',
+      navigationAria: 'Adjacent articles',
       audioFallback: 'Open audio file if playback fails'
     },
     categories: {
       title: 'Categories',
       all: 'All Categories',
-      uncategorized: 'Uncategorized'
+      uncategorized: 'Uncategorized',
+      empty: 'No articles in this category',
+      backToOverview: '← View all categories'
     },
     comments: {
       title: 'Comments',
@@ -159,6 +184,9 @@ const messages = {
       title: 'About',
       heading: 'About Me',
       fallback: 'Welcome to this minimalist blog.'
+    },
+    footer: {
+      poweredBy: 'Powered by Gchigoo Minimalist Blog'
     }
   }
 };

@@ -26,6 +26,9 @@ const { createTokenService, sessionCookieOptions } = require('../../server/comme
 const { parseEventListQuery } = require('../../server/analytics/query/analytics-query');
 const { renderMarkdown } = require('../../server/utils/markdown');
 const { assetUrl, formatDate, formatYear } = require('../../server/utils/presentation');
+const { createTranslator } = require('../../server/i18n/messages');
+const { localeMetadata } = require('../../server/i18n/config');
+const { localizedPath: localizedPathForLocale } = require('../../server/i18n/request');
 
 const PORT = Number(process.env.BROWSER_HARNESS_PORT || 4173);
 const SESSION_SECRET = 'ejs-visual-session-secret-0123456789abcdef';
@@ -185,8 +188,67 @@ insertComment.run(
 );
 
 function normalizeArticle(row) {
-  return { ...row, tags: JSON.parse(row.tags || '[]') };
+  const article = { ...row, tags: JSON.parse(row.tags || '[]') };
+  // The public templates render category badges and fine-tag links from the
+  // localized taxonomy projection that production attaches per article; the
+  // legacy harness rows get a deterministic fixture mapping instead.
+  const categories = [];
+  const seenCategories = new Set();
+  const taxonomyTags = [];
+  for (const tagName of article.tags) {
+    const category = VISUAL_CATEGORY_BY_TAG[tagName];
+    const categoryId = category ? category.id : 'uncategorized';
+    const categoryName = category ? category.name : '其他';
+    const categorySlug = category ? category.slug : '其他';
+    if (!seenCategories.has(categoryId)) {
+      seenCategories.add(categoryId);
+      categories.push({ id: categoryId, name: categoryName, slug: categorySlug });
+    }
+    taxonomyTags.push({
+      id: `legacy-${tagName}`,
+      categoryId,
+      name: tagName,
+      slug: VISUAL_TAG_SLUG_BY_NAME[tagName] || tagName
+    });
+  }
+  article.taxonomy = { categories, tags: taxonomyTags };
+  return article;
 }
+
+const VISUAL_CATEGORY_BY_TAG = {
+  EJS: { id: 'technology', name: '技术', slug: '技术' },
+  upgrade: { id: 'technology', name: '技术', slug: '技术' },
+  'Node.js': { id: 'technology', name: '技术', slug: '技术' },
+  CSS: { id: 'technology', name: '技术', slug: '技术' },
+  测试: { id: 'life', name: '生活', slug: '生活' },
+  视觉回归: { id: 'life', name: '生活', slug: '生活' }
+};
+
+const VISUAL_TAG_SLUG_BY_NAME = {
+  EJS: 'EJS',
+  upgrade: 'upgrade',
+  'Node.js': 'Node.js',
+  CSS: 'CSS',
+  测试: '测试',
+  视觉回归: '视觉回归'
+};
+
+const VISUAL_TAXONOMY = {
+  categories: [
+    { id: 'technology', name: '技术', slug: '技术', count: 4 },
+    { id: 'life', name: '生活', slug: '生活', count: 3 },
+    { id: 'news', name: '新闻', slug: '新闻', count: 0 },
+    { id: 'uncategorized', name: '其他', slug: '其他', count: 0 }
+  ],
+  tags: [
+    { id: 'legacy-ejs', categoryId: 'technology', name: 'EJS', slug: 'EJS', count: 2 },
+    { id: 'legacy-upgrade', categoryId: 'technology', name: 'upgrade', slug: 'upgrade', count: 3 },
+    { id: 'legacy-nodejs', categoryId: 'technology', name: 'Node.js', slug: 'Node.js', count: 1 },
+    { id: 'legacy-css', categoryId: 'technology', name: 'CSS', slug: 'CSS', count: 1 },
+    { id: 'legacy-testing', categoryId: 'life', name: '测试', slug: '测试', count: 2 },
+    { id: 'legacy-visual', categoryId: 'life', name: '视觉回归', slug: '视觉回归', count: 1 }
+  ]
+};
 
 function allArticles() {
   return db.prepare('SELECT * FROM articles ORDER BY created_at DESC, id DESC')
@@ -545,6 +607,25 @@ app.use(commentsModule.authRouter);
 app.use(commentsModule.publicRouter);
 app.use(commentsModule.adminRouter);
 
+// Public locale locals: the harness renders the Chinese surface, so the
+// template contract (i18n, locale, localizedPath, localeMeta) matches a
+// localized production request. Every route below overrides languageSwitch
+// per page so a switch target is only offered when the endpoint exists.
+app.use((req, res, next) => {
+  res.locals.locale = 'zh';
+  res.locals.i18n = createTranslator('zh');
+  res.locals.localizedPath = pathname => localizedPathForLocale('zh', pathname);
+  res.locals.localeMeta = localeMetadata('zh');
+  res.locals.availableLocales = ['zh', 'en'];
+  res.locals.languageSwitch = [
+    { locale: 'zh', path: '/zh/' },
+    { locale: 'en', path: '/en/' }
+  ];
+  next();
+});
+
+const zhOnlySwitch = pathname => [{ locale: 'zh', path: `/zh${pathname}` }];
+
 app.get('/', (req, res) => renderHome(res, null));
 app.get('/__visual/home-admin', (req, res) => renderHome(res, {
   id: 1,
@@ -552,25 +633,32 @@ app.get('/__visual/home-admin', (req, res) => renderHome(res, {
 }));
 app.get('/article/comments-disabled', (req, res) => {
   const article = normalizeArticle(db.prepare('SELECT * FROM articles WHERE slug = ?').get('comments-disabled'));
+  res.locals.languageSwitch = zhOnlySwitch('/article/comments-disabled');
   return res.render('article', { article, user: null, comments: { enabled: false } });
 });
-app.get('/__audio/article', (req, res) => res.render('article', {
-  article: {
-    id: 99,
-    title: '一次 AI 歌曲实验：从过程到成品',
-    slug: 'audio-browser',
-    content: 'audio browser fixture',
-    html: AUDIO_ARTICLE_HTML,
-    tags: ['AI', '音乐', '创作过程'],
-    created_at: '2026-07-17T08:00:00.000Z'
-  },
-  user: null,
-  comments: { enabled: false }
-}));
+app.get('/__audio/article', (req, res) => {
+  res.locals.languageSwitch = zhOnlySwitch('/article/audio-browser');
+  return res.render('article', {
+    article: {
+      id: 99,
+      title: '一次 AI 歌曲实验：从过程到成品',
+      slug: 'audio-browser',
+      content: 'audio browser fixture',
+      html: AUDIO_ARTICLE_HTML,
+      tags: ['AI', '音乐', '创作过程'],
+      created_at: '2026-07-17T08:00:00.000Z'
+    },
+    user: null,
+    comments: { enabled: false }
+  });
+});
 app.get('/article/:slug', (req, res) => {
   const row = db.prepare('SELECT * FROM articles WHERE slug = ?').get(req.params.slug);
   if (!row) return res.status(404).render('404', { user: null });
   const article = normalizeArticle(row);
+  // The harness articles have no translation siblings, so the switch shows
+  // only the current language and never a dead English target.
+  res.locals.languageSwitch = zhOnlySwitch(`/article/${article.slug}`);
   return res.render('article', {
     article,
     user: null,
@@ -593,21 +681,27 @@ app.get('/archive', (req, res) => {
   return res.render('archive', { archive, user: null });
 });
 app.get('/tags', (req, res) => res.render('tags', {
-  tags: [
-    { name: 'upgrade', count: 3 },
-    { name: 'EJS', count: 2 },
-    { name: '测试', count: 2 },
-    { name: 'Node.js', count: 1 },
-    { name: 'CSS', count: 1 },
-    { name: '视觉回归', count: 1 }
-  ],
+  taxonomy: VISUAL_TAXONOMY,
   user: null
 }));
 app.get('/tag/upgrade', (req, res) => res.render('tag', {
   tag: 'upgrade',
+  category: { name: '技术', slug: '技术' },
   articles: allArticles().filter(article => article.tags.includes('upgrade')),
   user: null
 }));
+app.get('/category/:slug', (req, res) => {
+  const category = VISUAL_TAXONOMY.categories.find(candidate => candidate.slug === req.params.slug);
+  if (!category || category.count === 0) return res.status(404).render('404', { user: null });
+  const articles = category.id === 'technology'
+    ? allArticles()
+    : allArticles().filter(article => article.taxonomy.categories.some(entry => entry.id === category.id));
+  return res.render('category', {
+    category,
+    articles,
+    user: null
+  });
+});
 app.get('/search', (req, res) => res.render('search', {
   query: 'EJS',
   articles: allArticles().slice(0, 2),
@@ -615,7 +709,8 @@ app.get('/search', (req, res) => res.render('search', {
   seo: { title: '搜索', description: '搜索文章', canonical: 'https://example.test/search', type: 'website', noindex: true }
 }));
 app.get('/about', (req, res) => res.render('about', {
-  aboutHtml: renderMarkdown('# 关于我\n\n这是可配置的 Markdown 关于页面。'),
+  aboutHtml: renderMarkdown(fs.readFileSync(path.resolve(__dirname, '..', '..', 'content', 'zh', 'about.md'), 'utf8'), { locale: 'zh' }),
+  title: '关于',
   user: null,
   seo: { title: '关于', description: '关于本站', canonical: 'https://example.test/about', type: 'website' }
 }));

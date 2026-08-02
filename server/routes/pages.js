@@ -92,6 +92,15 @@ function renderNotFound(req, res, config, status = 404) {
   if (!isSupportedLocale(req.locale)) {
     setLocaleLocals(req, res, config, DEFAULT_LOCALE);
   }
+  // A 404 page has no real alternate: the language switch falls back to both
+  // locales' roots, which always resolve, instead of mirroring the unknown
+  // path into a dead switch target.
+  res.locals.languageSwitch = Object.freeze(
+    SUPPORTED_LOCALES.map(candidate => ({
+      locale: candidate,
+      path: `/${candidate}/`
+    }))
+  );
   return res.status(status).render('404', { user: req.user || null, seo: null });
 }
 
@@ -442,9 +451,12 @@ function createLocalizedPagesRouter({ config, articleService, commentsModule }) 
     for (const candidate of SUPPORTED_LOCALES) {
       addAlternate(seo, candidate, canonical(localizedPath(candidate, pathname)));
     }
-    const tags = articleService.listTaxonomy(locale).tags.map(tag => ({ name: tag.name, count: tag.count }));
+    // The two-level overview: configured category order, each category with
+    // its distinct published-article count, and the fine tags grouped under
+    // their parent category with non-zero counts (see views/tags.ejs).
+    const taxonomy = articleService.listTaxonomy(locale);
     return res.render('tags', {
-      tags,
+      taxonomy,
       user: req.user,
       seo: finalizeOgLocaleAlternates(seo, localeMetadata)
     });
@@ -466,8 +478,17 @@ function createLocalizedPagesRouter({ config, articleService, commentsModule }) 
       addAlternate(seo, other, canonical(`/${other}/tag/${encodePathSegment(otherLabel.slug)}`));
     }
     syncLanguageSwitch(res, seo);
+    // The parent category breadcrumb: the catalog tag carries its single
+    // parent category, localized to the current surface locale. The parent
+    // page always resolves because a published tag implies a published
+    // category count.
+    const parentCategory = ensureCatalog().categories.find(candidate => candidate.tags.includes(tag));
+    const categoryLabel = parentCategory ? parentCategory.labels[locale] : null;
     return res.render('tag', {
       tag: label.name,
+      category: categoryLabel
+        ? { name: categoryLabel.name, slug: categoryLabel.slug }
+        : null,
       articles: articleService.listByTag(locale, label.slug),
       user: req.user,
       seo: finalizeOgLocaleAlternates(seo, localeMetadata)

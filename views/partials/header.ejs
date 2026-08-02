@@ -7,7 +7,15 @@
     <meta name="analytics-event-token" content="<%= analyticsEventToken %>">
     <script src="<%= typeof assetUrl === 'function' ? assetUrl('/js/analytics-context.js') : '/js/analytics-context.js' %>" defer></script>
   <% } %>
-  <title><%= typeof seo !== 'undefined' && seo?.title ? seo.title + ' - ' : (typeof title !== 'undefined' ? title + ' - ' : '') %><%= typeof site !== 'undefined' ? site.title : '我的博客' %></title>
+  <%
+    const siteTitle = typeof site !== 'undefined' && site && site.title
+      ? site.title
+      : (typeof i18n === 'function' ? i18n('navigation.siteName') : '我的博客');
+    const pageTitle = typeof seo !== 'undefined' && seo && seo.title
+      ? seo.title
+      : (typeof title !== 'undefined' ? title : '');
+  %>
+  <title><%= pageTitle %><% if (pageTitle && siteTitle && pageTitle !== siteTitle) { %> - <%= siteTitle %><% } %></title>
   <% if (typeof seo !== 'undefined' && seo) { %>
     <meta name="description" content="<%= seo.description %>">
     <link rel="canonical" href="<%= seo.canonical %>">
@@ -27,7 +35,7 @@
     <% }) %><% } %>
     <% if (seo.noindex) { %><meta name="robots" content="noindex,follow"><% } %>
   <% } %>
-  <link rel="alternate" type="application/rss+xml" title="RSS" href="<%= typeof localizedPath === 'function' ? localizedPath('/feed.xml') : '/feed.xml' %>">
+  <link rel="alternate" type="application/rss+xml" title="<%= typeof i18n === 'function' ? i18n('navigation.rss') : 'RSS' %>" href="<%= typeof localizedPath === 'function' ? localizedPath('/feed.xml') : '/feed.xml' %>">
   <link rel="stylesheet" href="<%= typeof assetUrl === 'function' ? assetUrl('/vendor/inter.css') : '/vendor/inter.css' %>">
   <link rel="stylesheet" href="<%= typeof assetUrl === 'function' ? assetUrl('/vendor/new.css/new.min.css') : '/vendor/new.css/new.min.css' %>">
   <link rel="stylesheet" href="<%= typeof assetUrl === 'function' ? assetUrl('/css/highlight.css') : '/css/highlight.css' %>">
@@ -35,16 +43,36 @@
 </head>
 <body>
   <header>
-    <h1><a href="/" style="text-decoration: none; color: inherit;">我的博客</a></h1>
-    <nav>
-      <a href="/">首页</a> /
-      <a href="/archive">归档</a> /
-      <a href="/tags">标签</a> /
-      <a href="/search">搜索</a> /
-      <a href="/feed.xml">RSS</a> /
-      <a href="/about">关于</a>
+    <div class="site-header-bar">
+      <h1><a href="<%= typeof localizedPath === 'function' ? localizedPath('/') : '/' %>" style="text-decoration: none; color: inherit;"><%= siteTitle %></a></h1>
+      <nav class="language-switcher" aria-label="<%= typeof i18n === 'function' ? i18n('language.switchLabel') : '切换语言' %>">
+        <%
+          const currentLocale = typeof locale === 'string' ? locale : 'zh';
+          const switchLocales = typeof languageSwitch !== 'undefined' && Array.isArray(languageSwitch) && languageSwitch.length > 0
+            ? languageSwitch
+            : (typeof availableLocales !== 'undefined' && Array.isArray(availableLocales)
+              ? availableLocales.map(candidate => ({ locale: candidate, path: typeof localizedPath === 'function' ? localizedPath('/') : `/${candidate}/` }))
+              : []);
+        %>
+        <% switchLocales.forEach((entry, index) => { %>
+          <% if (entry.locale === currentLocale) { %>
+            <span class="language-switcher-current" aria-current="true"><%= typeof i18n === 'function' ? i18n('language.' + entry.locale) : entry.locale %></span>
+          <% } else { %>
+            <a href="<%= entry.path %>" lang="<%= entry.locale %>"><%= typeof i18n === 'function' ? i18n('language.' + entry.locale) : entry.locale %></a>
+          <% } %>
+          <% if (index < switchLocales.length - 1) { %> <span class="language-switcher-separator" aria-hidden="true">/</span> <% } %>
+        <% }) %>
+      </nav>
+    </div>
+    <nav class="site-nav" aria-label="<%= typeof i18n === 'function' ? i18n('navigation.ariaLabel') : '主导航' %>">
+      <a href="<%= typeof localizedPath === 'function' ? localizedPath('/') : '/' %>"><%= typeof i18n === 'function' ? i18n('navigation.home') : '首页' %></a> /
+      <a href="<%= typeof localizedPath === 'function' ? localizedPath('/archive') : '/archive' %>"><%= typeof i18n === 'function' ? i18n('navigation.archive') : '归档' %></a> /
+      <a href="<%= typeof localizedPath === 'function' ? localizedPath('/tags') : '/tags' %>"><%= typeof i18n === 'function' ? i18n('navigation.tags') : '标签' %></a> /
+      <a href="<%= typeof localizedPath === 'function' ? localizedPath('/search') : '/search' %>"><%= typeof i18n === 'function' ? i18n('navigation.search') : '搜索' %></a> /
+      <a href="<%= typeof localizedPath === 'function' ? localizedPath('/feed.xml') : '/feed.xml' %>"><%= typeof i18n === 'function' ? i18n('navigation.rss') : 'RSS' %></a> /
+      <a href="<%= typeof localizedPath === 'function' ? localizedPath('/about') : '/about' %>"><%= typeof i18n === 'function' ? i18n('navigation.about') : '关于' %></a>
       <% if (typeof user !== 'undefined' && user) { %>
-        / <a href="/admin">管理</a>
+        / <a href="/admin"><%= typeof i18n === 'function' ? i18n('navigation.admin') : '管理' %></a>
       <% } %>
     </nav>
   </header>

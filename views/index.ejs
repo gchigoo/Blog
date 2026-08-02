@@ -1,21 +1,57 @@
-<%- include('partials/header', { title: '首页', user }) %>
+<%
+  const currentLocale = typeof locale === 'string' ? locale : 'zh';
+  const ZH_FALLBACK = {
+    'home.latestArticles': '最新文章',
+    'home.noArticlesUser': '还没有文章，',
+    'home.publishNow': '立即发布',
+    'home.noArticlesGuest': '敬请期待！',
+    'pagination.prev': '上一页',
+    'pagination.next': '下一页',
+    'pagination.ariaLabel': '文章分页'
+  };
+  const translate = typeof i18n === 'function'
+    ? i18n
+    : (key, variables) => {
+        const template = Object.prototype.hasOwnProperty.call(ZH_FALLBACK, key) ? ZH_FALLBACK[key] : key;
+        if (!variables) return template;
+        return template.replace(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (placeholder, name) =>
+          Object.prototype.hasOwnProperty.call(variables, name) ? String(variables[name]) : placeholder);
+      };
+  const link = pathname => typeof localizedPath === 'function'
+    ? localizedPath('/article/' + encodeURIComponent(pathname))
+    : '/article/' + encodeURIComponent(pathname);
+  const listDateFormatter = new Intl.DateTimeFormat(currentLocale, {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  });
+  const formatListDate = value => listDateFormatter.format(new Date(value));
+%>
+<%- include('partials/header', { title: translate('home.latestArticles'), user }) %>
 
-<h2>最新文章</h2>
+<h2><%= translate('home.latestArticles') %></h2>
 
 <% if (articles.length === 0) { %>
-  <p>还没有文章，<% if (typeof user !== 'undefined' && user) { %><a href="/admin/upload">立即发布</a><% } else { %>敬请期待！<% } %></p>
+  <p><%= translate('home.noArticlesUser') %><% if (typeof user !== 'undefined' && user) { %><a href="/admin/upload"><%= translate('home.publishNow') %></a><% } else { %><%= translate('home.noArticlesGuest') %><% } %></p>
 <% } else { %>
   <ul class="article-list">
     <% articles.forEach(article => { %>
       <li>
-        <a href="/article/<%= article.slug %>"><%= article.title %></a>
+        <a href="<%= link(article.slug) %>"><%= article.title %></a>
         <span class="article-meta">
-          <%= typeof formatDate === 'function' ? formatDate(article.created_at, { year: 'numeric', month: '2-digit', day: '2-digit' }) : article.created_at %>
-          <% if (article.tags && article.tags.length > 0) { %>
-            · 
-            <% article.tags.forEach((tag, index) => { %>
-              <a href="/tag/<%= encodeURIComponent(tag) %>" class="tag"><%= tag %></a><% if (index < article.tags.length - 1) { %> <% } %>
-            <% }) %>
+          <time datetime="<%= article.created_at %>"><%= formatListDate(article.created_at) %></time>
+          <% if (article.taxonomy && article.taxonomy.categories && article.taxonomy.categories.length > 0) { %>
+            <span class="article-categories">
+              <% article.taxonomy.categories.forEach(category => { %>
+                <a href="<%= localizedPath('/category/' + encodeURIComponent(category.slug)) %>" class="category-badge"><%= category.name %></a>
+              <% }) %>
+            </span>
+          <% } %>
+          <% if (article.taxonomy && article.taxonomy.tags && article.taxonomy.tags.length > 0) { %>
+            <span class="article-tags">
+              <% article.taxonomy.tags.forEach(tag => { %>
+                <a href="<%= localizedPath('/tag/' + encodeURIComponent(tag.slug)) %>" class="tag"><%= tag.name %></a>
+              <% }) %>
+            </span>
           <% } %>
         </span>
       </li>
@@ -23,13 +59,17 @@
   </ul>
   
   <% if (totalPages > 1) { %>
-    <nav class="pagination" aria-label="文章分页">
-      <% if (page > 1) { %><a href="/?page=<%= page - 1 %>" rel="prev">← 上一页</a><% } %>
+    <nav class="pagination" aria-label="<%= translate('pagination.ariaLabel') %>">
+      <% if (page > 1) { %><a href="<%= localizedPath('/?page=' + (page - 1)) %>" rel="prev"><%= translate('pagination.prev') %></a><% } %>
       <% const firstPage = Math.max(1, page - 3); const lastPage = Math.min(totalPages, page + 3); %>
       <% for (let number = firstPage; number <= lastPage; number += 1) { %>
-        <a href="/?page=<%= number %>" <%= number === page ? 'aria-current=page' : '' %>><%= number %></a>
+        <% if (number === page) { %>
+          <span class="pagination-current" aria-current="page"><%= number %></span>
+        <% } else { %>
+          <a href="<%= localizedPath('/?page=' + number) %>"><%= number %></a>
+        <% } %>
       <% } %>
-      <% if (page < totalPages) { %><a href="/?page=<%= page + 1 %>" rel="next">下一页 →</a><% } %>
+      <% if (page < totalPages) { %><a href="<%= localizedPath('/?page=' + (page + 1)) %>" rel="next"><%= translate('pagination.next') %></a><% } %>
     </nav>
   <% } %>
 <% } %>

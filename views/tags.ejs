@@ -1,15 +1,44 @@
-<%- include('partials/header', { title: '标签', user }) %>
+<%
+  const ZH_FALLBACK = {
+    'tags.title': '所有标签',
+    'tags.empty': '暂无标签'
+  };
+  const translate = typeof i18n === 'function'
+    ? i18n
+    : (key, variables) => {
+        const template = Object.prototype.hasOwnProperty.call(ZH_FALLBACK, key) ? ZH_FALLBACK[key] : key;
+        if (!variables) return template;
+        return template.replace(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (placeholder, name) =>
+          Object.prototype.hasOwnProperty.call(variables, name) ? String(variables[name]) : placeholder);
+      };
+  const taxonomyGroups = typeof taxonomy !== 'undefined' && taxonomy ? taxonomy : { categories: [], tags: [] };
+  const categories = Array.isArray(taxonomyGroups.categories) ? taxonomyGroups.categories : [];
+  const tags = Array.isArray(taxonomyGroups.tags) ? taxonomyGroups.tags : [];
+  // Zero-count categories (including the system uncategorized bucket) are
+  // hidden; the uncategorized category becomes visible exactly when legacy or
+  // system-tagged articles keep its count above zero.
+  const visibleCategories = categories.filter(category => (category.count || 0) > 0);
+%>
+<%- include('partials/header', { title: translate('tags.title'), user }) %>
 
-<h2>所有标签</h2>
+<h2><%= translate('tags.title') %></h2>
 
-<% if (tags.length === 0) { %>
-  <p>暂无标签</p>
+<% if (visibleCategories.length === 0) { %>
+  <p class="analytics-empty"><%= translate('tags.empty') %></p>
 <% } else { %>
-  <div class="tag-cloud">
-    <% tags.forEach(tag => { %>
-      <a href="/tag/<%= encodeURIComponent(tag.name) %>" class="tag tag-cloud-item" style="font-size: <%= 0.8 + (tag.count / Math.max(...tags.map(t => t.count))) * 0.15 %>em;">
-        <%= tag.name %> (<%= tag.count %>)
-      </a>
+  <div class="taxonomy-groups">
+    <% visibleCategories.forEach(category => { %>
+      <section class="taxonomy-category">
+        <h3 class="taxonomy-category-heading">
+          <a href="<%= typeof localizedPath === 'function' ? localizedPath('/category/' + encodeURIComponent(category.slug)) : '/category/' + encodeURIComponent(category.slug) %>"><%= category.name %></a>
+          <span class="taxonomy-count">(<%= category.count %>)</span>
+        </h3>
+        <div class="taxonomy-tags">
+          <% tags.filter(tag => tag.categoryId === category.id && (tag.count || 0) > 0).forEach(tag => { %>
+            <a href="<%= typeof localizedPath === 'function' ? localizedPath('/tag/' + encodeURIComponent(tag.slug)) : '/tag/' + encodeURIComponent(tag.slug) %>" class="tag"><%= tag.name %></a>
+          <% }) %>
+        </div>
+      </section>
     <% }) %>
   </div>
 <% } %>

@@ -1,55 +1,99 @@
+<%
+  const currentLocale = typeof locale === 'string' ? locale : 'zh';
+  // Every localized public page receives a real translator from the locale
+  // middleware; the Chinese fallback preserves the pre-i18n copy for legacy
+  // test harnesses that render the article template without locale locals.
+  const ZH_FALLBACK = {
+    'article.published': '发布于 {date}',
+    'article.categories': '分类：',
+    'article.tags': '标签：',
+    'article.navigationAria': '相邻文章',
+    'article.backHome': '返回首页',
+    'article.related': '相关文章',
+    'comments.title': '评论',
+    'comments.privacyNotice': '评论提交后需要管理员审核；审核通过后会公开正文和你当前 Google 展示名称。',
+    'comments.emailNeverShared': '本站不会公开你的邮箱或头像。',
+    'comments.empty': '还没有审核通过的评论。',
+    'comments.commentingAs': '正在以 {name} 的身份评论。',
+    'comments.logout': '退出账号',
+    'comments.contentLabel': '评论内容',
+    'comments.contentHelp': '纯文本，去除首尾空白后最多 1000 个字符。',
+    'comments.submit': '提交评论',
+    'comments.loginPrompt': '使用 Google 登录后评论'
+  };
+  const translate = typeof i18n === 'function'
+    ? i18n
+    : (key, variables) => {
+        const template = Object.prototype.hasOwnProperty.call(ZH_FALLBACK, key) ? ZH_FALLBACK[key] : key;
+        if (!variables) return template;
+        return template.replace(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (placeholder, name) =>
+          Object.prototype.hasOwnProperty.call(variables, name) ? String(variables[name]) : placeholder);
+      };
+  const articleLink = slug => typeof localizedPath === 'function'
+    ? localizedPath('/article/' + encodeURIComponent(slug))
+    : '/article/' + encodeURIComponent(slug);
+  const articleDateFormatter = new Intl.DateTimeFormat(currentLocale, {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+  });
+  const formatArticleDate = value => articleDateFormatter.format(new Date(value));
+%>
 <%- include('partials/header', { title: article.title, user }) %>
 
 <article class="article-detail">
-  <!-- 文章头部信息 -->
   <div class="article-header">
     <h1 class="article-title"><%= article.title %></h1>
     
     <div class="article-meta">
       <span class="article-date">
-        发布于 <%= typeof formatDate === 'function' ? formatDate(article.created_at, { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) : article.created_at %>
+        <%= translate('article.published', { date: formatArticleDate(article.created_at) }) %>
       </span>
-      <% if (article.tags && article.tags.length > 0) { %>
+      <% if (article.taxonomy && article.taxonomy.categories && article.taxonomy.categories.length > 0) { %>
+        <span class="article-categories">
+          <%= translate('article.categories') %>
+          <% article.taxonomy.categories.forEach(category => { %>
+            <a href="<%= localizedPath('/category/' + encodeURIComponent(category.slug)) %>" class="category-badge"><%= category.name %></a>
+          <% }) %>
+        </span>
+      <% } %>
+      <% if (article.taxonomy && article.taxonomy.tags && article.taxonomy.tags.length > 0) { %>
         <span class="article-tags">
-          标签: 
-          <% article.tags.forEach((tag, index) => { %>
-            <a href="/tag/<%= encodeURIComponent(tag) %>" class="tag"><%= tag %></a><% if (index < article.tags.length - 1) { %> <% } %>
+          <%= translate('article.tags') %>
+          <% article.taxonomy.tags.forEach(tag => { %>
+            <a href="<%= localizedPath('/tag/' + encodeURIComponent(tag.slug)) %>" class="tag"><%= tag.name %></a>
           <% }) %>
         </span>
       <% } %>
     </div>
   </div>
   
-  <!-- 分隔线 -->
   <hr class="article-divider">
   
-  <!-- 文章内容 -->
   <div class="article-content">
     <%- article.html %>
   </div>
   
-  <!-- 底部导航 -->
   <div class="article-footer">
-    <nav class="article-navigation" aria-label="相邻文章">
-      <% if (typeof navigation !== 'undefined' && navigation?.previous) { %><a href="/article/<%= navigation.previous.slug %>">← <%= navigation.previous.title %></a><% } %>
-      <a href="/" class="back-link">返回首页</a>
-      <% if (typeof navigation !== 'undefined' && navigation?.next) { %><a href="/article/<%= navigation.next.slug %>"><%= navigation.next.title %> →</a><% } %>
+    <nav class="article-navigation" aria-label="<%= translate('article.navigationAria') %>">
+      <% if (typeof navigation !== 'undefined' && navigation && navigation.previous) { %><a href="<%= articleLink(navigation.previous.slug) %>">← <%= navigation.previous.title %></a><% } %>
+      <a href="<%= typeof localizedPath === 'function' ? localizedPath('/') : '/' %>" class="back-link"><%= translate('article.backHome') %></a>
+      <% if (typeof navigation !== 'undefined' && navigation && navigation.next) { %><a href="<%= articleLink(navigation.next.slug) %>"><%= navigation.next.title %> →</a><% } %>
     </nav>
-    <% if (typeof relatedArticles !== 'undefined' && relatedArticles?.length) { %>
+    <% if (typeof relatedArticles !== 'undefined' && relatedArticles && relatedArticles.length) { %>
       <aside class="related-articles" aria-labelledby="related-articles-title">
-        <h2 id="related-articles-title">相关文章</h2>
-        <ul><% relatedArticles.forEach(related => { %><li><a href="/article/<%= related.slug %>"><%= related.title %></a></li><% }) %></ul>
+        <h2 id="related-articles-title"><%= translate('article.related') %></h2>
+        <ul><% relatedArticles.forEach(related => { %><li><a href="<%= articleLink(related.slug) %>"><%= related.title %></a></li><% }) %></ul>
       </aside>
     <% } %>
   </div>
 </article>
 
-<% if (typeof comments !== 'undefined' && comments.enabled) { %>
+<% if (typeof comments !== 'undefined' && comments && comments.enabled) { %>
   <section id="comments" class="comments-section" aria-labelledby="comments-title">
-    <h2 id="comments-title">评论</h2>
+    <h2 id="comments-title"><%= translate('comments.title') %></h2>
     <p class="comments-privacy-notice">
-      评论提交后需要管理员审核；审核通过后会公开正文和你当前 Google 展示名称。
-      本站不会公开你的邮箱或头像。
+      <%= translate('comments.privacyNotice') %>
+      <%= translate('comments.emailNeverShared') %>
     </p>
 
     <% if (comments.comments.length > 0) { %>
@@ -67,21 +111,21 @@
         <% }) %>
       </ol>
     <% } else { %>
-      <p class="comments-empty">还没有审核通过的评论。</p>
+      <p class="comments-empty"><%= translate('comments.empty') %></p>
     <% } %>
 
     <% if (comments.commenter) { %>
       <div class="comment-composer">
         <div class="comment-identity">
-          <p>正在以 <strong><%= comments.commenter.displayName %></strong> 的身份评论。</p>
+          <p><%= translate('comments.commentingAs', { name: comments.commenter.displayName }) %></p>
           <form id="comment-logout-form" action="/auth/logout" method="post">
             <input type="hidden" name="csrfToken" value="<%= comments.csrfToken %>">
-            <button type="submit" class="secondary-button comment-logout-button">退出账号</button>
+            <button type="submit" class="secondary-button comment-logout-button"><%= translate('comments.logout') %></button>
           </form>
         </div>
         <form id="comment-form" class="comment-form" action="/api/articles/<%= article.id %>/comments" method="post">
           <input type="hidden" name="csrfToken" value="<%= comments.csrfToken %>">
-          <label for="comment-content">评论内容</label>
+          <label for="comment-content"><%= translate('comments.contentLabel') %></label>
           <textarea
             id="comment-content"
             name="content"
@@ -90,8 +134,8 @@
             aria-describedby="comment-content-help"
           ></textarea>
           <div class="comment-form-actions">
-            <small id="comment-content-help">纯文本，去除首尾空白后最多 1000 个字符。</small>
-            <button type="submit" class="comment-submit-button">提交评论</button>
+            <small id="comment-content-help"><%= translate('comments.contentHelp') %></small>
+            <button type="submit" class="comment-submit-button"><%= translate('comments.submit') %></button>
           </div>
         </form>
         <p id="comment-feedback" class="message" role="status" tabindex="-1" hidden></p>
@@ -99,7 +143,7 @@
     <% } else { %>
       <p class="comment-login-prompt">
         <a class="comment-login-link" href="/auth/google?returnTo=<%= encodeURIComponent('/article/' + article.slug) %>">
-          使用 Google 登录后评论
+          <%= translate('comments.loginPrompt') %>
         </a>
       </p>
     <% } %>

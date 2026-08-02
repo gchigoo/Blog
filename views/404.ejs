@@ -1,10 +1,25 @@
-<%- include('partials/header', { title: typeof i18n === 'function' ? i18n('notFound.title') : '404 - 页面未找到', user }) %>
+<%
+  const ZH_FALLBACK = {
+    'notFound.title': '404 - 页面未找到',
+    'notFound.message': '页面未找到',
+    'notFound.backHome': '返回首页'
+  };
+  const translate = typeof i18n === 'function'
+    ? i18n
+    : (key, variables) => {
+        const template = Object.prototype.hasOwnProperty.call(ZH_FALLBACK, key) ? ZH_FALLBACK[key] : key;
+        if (!variables) return template;
+        return template.replace(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (placeholder, name) =>
+          Object.prototype.hasOwnProperty.call(variables, name) ? String(variables[name]) : placeholder);
+      };
+%>
+<%- include('partials/header', { title: translate('notFound.title'), user }) %>
 
 <div style="text-align: center; padding: 4em 0;">
   <h1 style="font-size: 4em; margin: 0;">404</h1>
-  <p style="font-size: 1.5em; margin: 1em 0;"><%= typeof i18n === 'function' ? i18n('notFound.message') : '页面未找到' %></p>
+  <p style="font-size: 1.5em; margin: 1em 0;"><%= translate('notFound.message') %></p>
   <p>
-    <a href="<%= typeof localizedPath === 'function' ? localizedPath('/') : '/' %>"><%= typeof i18n === 'function' ? i18n('notFound.backHome') : '返回首页' %></a>
+    <a href="<%= typeof localizedPath === 'function' ? localizedPath('/') : '/' %>"><%= translate('notFound.backHome') %></a>
   </p>
 </div>
 

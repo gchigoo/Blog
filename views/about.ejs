@@ -1,7 +1,22 @@
-<%- include('partials/header', { title: typeof title !== 'undefined' ? title : '关于', user, seo: typeof seo !== 'undefined' ? seo : null }) %>
+<%
+  const ZH_FALLBACK = {
+    'about.title': '关于',
+    'about.heading': '关于我',
+    'about.fallback': '欢迎来到这个极简博客。'
+  };
+  const translate = typeof i18n === 'function'
+    ? i18n
+    : (key, variables) => {
+        const template = Object.prototype.hasOwnProperty.call(ZH_FALLBACK, key) ? ZH_FALLBACK[key] : key;
+        if (!variables) return template;
+        return template.replace(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (placeholder, name) =>
+          Object.prototype.hasOwnProperty.call(variables, name) ? String(variables[name]) : placeholder);
+      };
+%>
+<%- include('partials/header', { title: typeof title !== 'undefined' ? title : translate('about.title'), user, seo: typeof seo !== 'undefined' ? seo : null }) %>
 
 <article class="about-content">
-  <% if (typeof aboutHtml !== 'undefined') { %><%- aboutHtml %><% } else { %><h1>关于我</h1><p>欢迎来到这个极简博客。</p><% } %>
+  <% if (typeof aboutHtml !== 'undefined') { %><%- aboutHtml %><% } else { %><h1><%= translate('about.heading') %></h1><p><%= translate('about.fallback') %></p><% } %>
 </article>
 
 <%- include('partials/footer') %>
