@@ -41,6 +41,8 @@ const {
   createOperation,
   dbStateHash,
   fileSha256,
+  fsyncDirectory,
+  fsyncFile,
   listOperations,
   nextOperationId,
   readManifest,
@@ -114,22 +116,24 @@ function finalizeRecovery(operationsDir, operationId) {
 }
 
 /**
- * Restore every tombstoned source from its verified tombstone in reverse
- * order, then drop staging. Throws `rollback_failed` when any restore fails,
- * leaving the journal as evidence for manual recovery.
+ * Restore every source the apply itself moved away, in reverse order, then
+ * drop staging. Files whose durable flag says tombstoned are always restored
+ * from their verified tombstone. Files whose flag was never persisted are
+ * restored only when the source is missing and a hash-valid tombstone exists
+ * (the crash window between rename and flag persistence); an existing source
+ * is external state and is left exactly as the writer left it. Throws
+ * `rollback_failed` when any restore fails, leaving the journal as evidence
+ * for manual recovery.
  */
 function restoreFiles(manifest) {
   const failures = [];
   for (const file of [...manifest.files].reverse()) {
-    if (!file.tombstoned) continue;
-    const source = sourcePath(manifest, file);
-    const tombstone = tombstonePath(source, file);
     try {
-      const tombstoneHash = fileSha256(tombstone);
-      if (tombstoneHash !== file.originalHash) {
-        throw new OperationError('file_hash_mismatch', `tombstone hash mismatch for ${file.path}`);
+      if (file.tombstoned) {
+        restoreSource(manifest, file);
+      } else {
+        restoreMissingSource(manifest, file);
       }
-      fs.renameSync(tombstone, source);
     } catch (error) {
       failures.push({ path: file.path, error: error.message });
     }
@@ -141,6 +145,82 @@ function restoreFiles(manifest) {
       `compensation could not restore every file: ${failures.map(item => item.path).join(', ')}`
     );
   }
+}
+
+/**
+ * Restore a file whose durable flag already says it was tombstoned: verify the
+ * tombstone still holds the original bytes, rename it back over the source
+ * (which replaces any promoted rewrite), and fsync the directory before the
+ * journal is removed.
+ */
+function restoreSource(manifest, file) {
+  const source = sourcePath(manifest, file);
+  const tombstone = tombstonePath(source, file);
+  const tombstoneHash = fileSha256(tombstone);
+  if (tombstoneHash !== file.originalHash) {
+    throw new OperationError('file_hash_mismatch', `tombstone hash mismatch for ${file.path}`);
+  }
+  fs.renameSync(tombstone, source);
+  fsyncDirectory(path.dirname(source));
+}
+
+/**
+ * Compensation for a file whose durable flag was never persisted. The source
+ * still exists (untouched or externally drifted) → leave it, the root error
+ * propagates. The source is missing but a hash-valid tombstone exists → a
+ * crash landed between the rename and the flag update; restore it. Anything
+ * else cannot be deterministically restored.
+ */
+function restoreMissingSource(manifest, file) {
+  const source = sourcePath(manifest, file);
+  if (fs.existsSync(source)) return;
+  const tombstone = tombstonePath(source, file);
+  let tombstoneHash;
+  try {
+    tombstoneHash = fileSha256(tombstone);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    throw new OperationError('file_hash_mismatch', `source and tombstone are both missing for ${file.path}`);
+  }
+  if (tombstoneHash !== file.originalHash) {
+    throw new OperationError('file_hash_mismatch', `tombstone hash mismatch for ${file.path}`);
+  }
+  fs.renameSync(tombstone, source);
+  fsyncDirectory(path.dirname(source));
+}
+
+/**
+ * Confirm a source still holds its original content, or restore it from a
+ * hash-valid tombstone when the source is missing. The missing-source case is
+ * a crash that landed after the tombstone rename but before the durable
+ * `tombstoned` flag update; a deterministic pre-state restore is available
+ * because the tombstone hash is recorded. A source that exists with different
+ * bytes is ambiguous (an external writer), and so is any tombstone hash
+ * mismatch — both refuse rather than guess.
+ */
+function verifyOrRestoreSource(manifest, file) {
+  const source = sourcePath(manifest, file);
+  let sourceHash = null;
+  try {
+    sourceHash = fileSha256(source);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  if (sourceHash === file.originalHash) return;
+  if (sourceHash !== null) {
+    throw new OperationError('recovery_ambiguous', `source file mismatch for ${file.path}`);
+  }
+  let tombstoneHash;
+  try {
+    tombstoneHash = fileSha256(tombstonePath(source, file));
+  } catch {
+    throw new OperationError('recovery_ambiguous', `source and tombstone are both missing for ${file.path}`);
+  }
+  if (tombstoneHash !== file.originalHash) {
+    throw new OperationError('recovery_ambiguous', `tombstone hash mismatch for ${file.path}`);
+  }
+  fs.renameSync(tombstonePath(source, file), source);
+  fsyncDirectory(path.dirname(source));
 }
 
 /**
@@ -336,6 +416,8 @@ function applyTaxonomySync(db, catalog, options = {}) {
       const stagedPath = path.join(stagedFilesRoot, `${index}.md`);
       const rewrittenDocument = rewriteMarkdownTags(fs.readFileSync(source, 'utf8'), rewrite.tags);
       fs.writeFileSync(stagedPath, rewrittenDocument, { flag: 'wx' });
+      // Durable staging: the payload must be on disk before any promotion.
+      fsyncFile(stagedPath);
       const stagedHash = fileSha256(stagedPath);
       if (stagedHash !== rewrite.stagedHash) {
         throw new OperationError('file_hash_mismatch', `staged rewrite diverged from plan: ${rewrite.path}`);
@@ -365,7 +447,9 @@ function applyTaxonomySync(db, catalog, options = {}) {
     maybePause(options);
 
     // Tombstone every original; the hash is verified immediately before the
-    // rename so a concurrent writer cannot be silently overwritten.
+    // rename so a concurrent writer cannot be silently overwritten. The parent
+    // directory is fsynced after the rename and before the durable flag
+    // update, so the manifest never claims a rename that is not durable.
     for (const file of files) {
       const source = sourcePath(manifest, file);
       hooks.beforeTombstone?.(file);
@@ -374,6 +458,10 @@ function applyTaxonomySync(db, catalog, options = {}) {
         throw new OperationError('file_hash_mismatch', `source file changed before tombstone: ${file.path}`);
       }
       fs.renameSync(source, tombstonePath(source, file));
+      fsyncDirectory(path.dirname(source));
+      hooks.afterTombstoneRename?.(file);
+      injectFailure(options, 'tombstone-rename');
+      maybePause(options);
       file.tombstoned = true;
       manifest = updateManifest(operationsDir, operationId, { files });
       hooks.afterTombstone?.(file);
@@ -382,7 +470,8 @@ function applyTaxonomySync(db, catalog, options = {}) {
     }
 
     // Promote every staged rewrite (refusing to clobber an unexpected
-    // destination) and verify the staged hash at the destination.
+    // destination), verify the staged hash at the destination, and fsync the
+    // destination directory before the durable promoted flag is written.
     for (const file of files) {
       const source = sourcePath(manifest, file);
       const stagedPath = fileWithin(manifest.rootDir, file.stagedPath);
@@ -391,6 +480,7 @@ function applyTaxonomySync(db, catalog, options = {}) {
       }
       hooks.beforePromote?.(file);
       fs.renameSync(stagedPath, source);
+      fsyncDirectory(path.dirname(source));
       const destinationHash = fileSha256(source);
       if (destinationHash !== file.stagedHash) {
         throw new OperationError('file_hash_mismatch', `promoted file hash mismatch: ${file.path}`);
@@ -546,25 +636,18 @@ function validateManifest(manifest) {
 }
 
 /**
- * Pre-state recovery: no live changes should exist, so every recorded source
- * still matches its original hash and any crashed tombstone is restored
- * through the verified path.
+ * Pre-state recovery: every recorded source must still match its original
+ * hash. Files whose durable flag says they were tombstoned are restored from
+ * the verified tombstone; files whose source is missing but whose tombstone is
+ * hash-valid (crash between rename and flag persistence) are restored the same
+ * way; any other mismatch refuses automated recovery.
  */
 function verifyUntouchedSources(manifest) {
   for (const file of manifest.files || []) {
-    const source = sourcePath(manifest, file);
     if (file.tombstoned) {
-      const tombstone = tombstonePath(source, file);
-      const tombstoneHash = fileSha256(tombstone);
-      if (tombstoneHash !== file.originalHash) {
-        throw new OperationError('recovery_ambiguous', `tombstone hash mismatch for ${file.path}`);
-      }
-      fs.renameSync(tombstone, source);
+      restoreSource(manifest, file);
     } else {
-      const sourceHash = fileSha256(source);
-      if (sourceHash !== file.originalHash) {
-        throw new OperationError('recovery_ambiguous', `source file mismatch for ${file.path}`);
-      }
+      verifyOrRestoreSource(manifest, file);
     }
   }
 }

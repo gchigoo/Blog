@@ -772,6 +772,143 @@ test('taxonomy sync leaves a recoverable db-committed journal when cleanup fails
   db.close();
 });
 
+test('taxonomy sync compensates when a failure lands between tombstone rename and flag persistence', t => {
+  const { root, db, options } = mainFixture(t);
+  const newCatalog = writeNewCatalog(root);
+  const beforeFiles = walkFiles(root).filter(name => !name.startsWith('blog.db'));
+  const beforeDb = dbStateHash(db);
+  const hooks = {
+    afterTombstoneRename() {
+      throw new Error('crash after rename');
+    }
+  };
+  assert.throws(() => applyTaxonomySync(db, newCatalog, { ...options, hooks }), /crash after rename/);
+  assert.deepEqual(walkFiles(root).filter(name => !name.startsWith('blog.db')), beforeFiles, 'residue after compensation');
+  assert.equal(dbStateHash(db), beforeDb, 'database changed');
+  assert.deepEqual(fs.readdirSync(options.operationsDir), [], 'journal residue after compensation');
+  assert.ok(!fs.existsSync(path.join(options.operationsDir, 'active.lock')));
+  db.close();
+});
+
+function instrumentFileOps() {
+  const events = [];
+  const originalOpen = fs.openSync;
+  const originalFsync = fs.fsyncSync;
+  const originalRename = fs.renameSync;
+  const fdPaths = new Map();
+  fs.openSync = function openSync(target, ...rest) {
+    const descriptor = originalOpen.call(fs, target, ...rest);
+    fdPaths.set(descriptor, String(target));
+    return descriptor;
+  };
+  fs.fsyncSync = function fsync(descriptor) {
+    events.push(['fsync', fdPaths.get(descriptor) || String(descriptor)]);
+    return originalFsync.call(fs, descriptor);
+  };
+  fs.renameSync = function rename(from, to) {
+    events.push(['rename', String(from), String(to)]);
+    return originalRename.call(fs, from, to);
+  };
+  return {
+    events,
+    restore() {
+      fs.openSync = originalOpen;
+      fs.fsyncSync = originalFsync;
+      fs.renameSync = originalRename;
+    }
+  };
+}
+
+function eventsAfter(events, index, predicate) {
+  for (let cursor = index + 1; cursor < events.length; cursor += 1) {
+    if (predicate(events[cursor])) return cursor;
+  }
+  return -1;
+}
+
+test('taxonomy sync fsyncs staged files and article directories before advancing manifest flags', t => {
+  const { root, db, options } = mainFixture(t);
+  const newCatalog = writeNewCatalog(root);
+  const instrument = instrumentFileOps();
+  try {
+    applyTaxonomySync(db, newCatalog, options);
+  } finally {
+    instrument.restore();
+  }
+  const { events } = instrument;
+  const articlesDir = options.articlesDir;
+  const isArticlesDirFsync = event => event[0] === 'fsync' && event[1] === articlesDir;
+  const isManifestFsync = event => event[0] === 'fsync' && String(event[1]).includes('operation.json');
+  const expectedSources = ['label-c.md', 'legacy-a.md'];
+
+  for (const [index, filename] of expectedSources.entries()) {
+    const sourcePath = path.join(articlesDir, filename);
+    const stagedPath = events.find(event => event[0] === 'rename' && event[1].endsWith(`${path.sep}files${path.sep}${index}.md`))?.[1];
+    assert.ok(stagedPath, `promotion rename recorded for ${filename}`);
+
+    // Staged payload is fsynced before it is promoted.
+    const stagedFsync = events.findIndex(event => event[0] === 'fsync' && event[1] === stagedPath);
+    const promotion = events.findIndex(event => event[0] === 'rename' && event[1] === stagedPath);
+    assert.ok(stagedFsync !== -1 && promotion !== -1, `staged fsync + promotion recorded for ${filename}`);
+    assert.ok(stagedFsync < promotion, `staged file fsynced before promotion for ${filename}`);
+
+    // Tombstone rename is followed by an article-directory fsync before any
+    // manifest flag fsync.
+    const tombstoneRename = events.findIndex(event => event[0] === 'rename' && event[1] === sourcePath);
+    assert.ok(tombstoneRename !== -1, `tombstone rename recorded for ${filename}`);
+    const dirFsyncAfterTombstone = eventsAfter(events, tombstoneRename, isArticlesDirFsync);
+    const manifestFsyncAfterTombstone = eventsAfter(events, tombstoneRename, isManifestFsync);
+    assert.ok(dirFsyncAfterTombstone !== -1 && manifestFsyncAfterTombstone !== -1);
+    assert.ok(
+      dirFsyncAfterTombstone < manifestFsyncAfterTombstone,
+      `article directory fsynced after tombstone rename before manifest flag for ${filename}`
+    );
+
+    // Promotion rename is followed by an article-directory fsync before any
+    // manifest flag fsync.
+    const dirFsyncAfterPromotion = eventsAfter(events, promotion, isArticlesDirFsync);
+    const manifestFsyncAfterPromotion = eventsAfter(events, promotion, isManifestFsync);
+    assert.ok(dirFsyncAfterPromotion !== -1 && manifestFsyncAfterPromotion !== -1);
+    assert.ok(
+      dirFsyncAfterPromotion < manifestFsyncAfterPromotion,
+      `article directory fsynced after promotion before manifest flag for ${filename}`
+    );
+  }
+  db.close();
+});
+
+test('taxonomy sync rewrites a rewired legacy tag referenced by its own generated stable id', t => {
+  const { root, db, options } = mainFixture(t);
+  const newCatalog = writeNewCatalog(root);
+  const legacyId = `legacy-${sha256('TypeScript').slice(0, 12)}`;
+  fs.writeFileSync(
+    path.join(root, 'articles', 'legacy-a.md'),
+    markdownFile({ title: 'Legacy A', slug: 'legacy-a', tags: [legacyId] })
+  );
+
+  const dryPlan = planTaxonomySync(db, newCatalog, options);
+  assert.deepEqual(dryPlan.conflicts, []);
+  const legacyRewrite = dryPlan.markdownRewrites.find(rewrite => rewrite.path === 'legacy-a.md');
+  assert.ok(legacyRewrite, 'plan must record a markdown rewrite for the legacy article');
+  assert.ok(
+    legacyRewrite.rewrites.some(rewrite => rewrite.from === legacyId && rewrite.to === 'typescript'),
+    'plan must rewrite the generated legacy id to the reviewed config tag'
+  );
+
+  applyTaxonomySync(db, newCatalog, options);
+
+  const content = fs.readFileSync(path.join(root, 'articles', 'legacy-a.md'), 'utf8');
+  assert.match(content, /^tags: \["typescript"\]$/m);
+  assert.deepEqual(
+    db.prepare('SELECT tag_id FROM article_tags WHERE article_id = 1').all().map(row => row.tag_id),
+    ['typescript']
+  );
+  const { data } = parseMarkdownDocument(content);
+  const resolved = resolveMarkdownTagTokens(db, newCatalog, data.tags || []);
+  assert.deepEqual([...resolved.tagIds].sort(), ['typescript'], 'file tag ids must equal article_tags after apply');
+  db.close();
+});
+
 // ---------------------------------------------------------------------------
 // Group 4: lock semantics and recovery
 // ---------------------------------------------------------------------------
@@ -860,6 +997,12 @@ test('taxonomy sync recovery refuses an unsafe tombstone path in the manifest', 
 test('taxonomy sync recovery restores or finalizes child-process kill states deterministically', async t => {
   const killStates = [
     { name: 'after lock acquisition', reached: manifest => manifest && manifest.phase === 'lock-acquired' },
+    {
+      name: 'after tombstone rename before flag persistence',
+      reached: manifest => manifest && manifest.files.length >= 2
+        && !manifest.files[0].tombstoned
+        && !fs.existsSync(path.join(manifest.articlesDir, manifest.files[0].path))
+    },
     {
       name: 'after tombstoning',
       reached: manifest => manifest && manifest.files.length >= 2

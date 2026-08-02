@@ -524,19 +524,23 @@ function setsEqual(left, right) {
  * Decide whether a referenced token is rewritten to its resolved tag's stable
  * ID. A rewrite is built only for an actual referenced alias whose tag the
  * operation itself changes: legacy tags being rewired to their reviewed config
- * tag, and config tags whose own localized label changes (the old display
- * label stops matching afterwards, so the file must carry the stable ID to
- * keep the file↔DB equality invariant). Aliases of untouched tags stay as
- * authored; catalog-only updates therefore never touch Markdown.
+ * tag — whether the file references the legacy display label or the legacy
+ * tag's own generated stable id — and config tags whose own localized label
+ * changes (the old display label stops matching afterwards, so the file must
+ * carry the stable ID to keep the file↔DB equality invariant). Aliases of
+ * untouched tags stay as authored; catalog-only updates therefore never touch
+ * Markdown.
  */
 function rewriteTargetFor(token, tag, snapshot, indexes, tagLabelChanges) {
   const normalized = normalizeToken(token);
-  if (normalized === tag.id) return null;
   if (tag.origin === 'legacy') {
+    // A rewired legacy tag is deleted by the apply, so any reference — label
+    // or its own generated stable id — must move to the reviewed config id.
     const owner = legacyOwnerFor(tag, snapshot, indexes);
     if (owner) return owner;
     return null;
   }
+  if (normalized === tag.id) return null;
   if (tagLabelChanges.has(tag.id)) return tag.id;
   return null;
 }
