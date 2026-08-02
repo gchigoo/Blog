@@ -638,6 +638,36 @@ test('content migration conflicts on unreferenced legacy audio directories', t =
   db.close();
 });
 
+test('content migration conflicts on unreferenced legacy audio files before any mutation', async t => {
+  const mp3 = validMp3();
+  const stray = Buffer.from('unreferenced-legacy-audio-bytes');
+  const strayHash = sha256(stray);
+  const fixture = buildV3Fixture(t, { articles: [exampleArticleData(mp3)] });
+  const { root, db, dbPath, options } = fixture;
+  fs.writeFileSync(path.join(root, 'public', 'audio', 'example', `${strayHash}.mp3`), stray);
+  const beforeFiles = walkFiles(root).filter(name => !name.startsWith('blog.db'));
+  const beforeBytes = fs.readFileSync(dbPath);
+
+  // Dry-run reports the deterministic pre-commit conflict with zero writes.
+  const dryRun = await runContentCli(root, ['--dry-run']);
+  assert.equal(dryRun.code, 2, dryRun.stdout);
+  const dryPlan = JSON.parse(dryRun.stdout).plan;
+  assert.ok(
+    dryPlan.conflicts.some(conflict => conflict.type === 'unreferenced-audio-file' && conflict.file === `${strayHash}.mp3`),
+    JSON.stringify(dryPlan.conflicts)
+  );
+  assert.deepEqual(walkFiles(root).filter(name => !name.startsWith('blog.db')), beforeFiles, 'dry-run mutated files');
+  assert.deepEqual(fs.readFileSync(dbPath), beforeBytes, 'dry-run mutated the database');
+
+  // Apply refuses pre-commit and mutates nothing.
+  assert.throws(() => applyLocalizedContentMigration(db, options), error => error.code === 'plan_blocked');
+  assert.deepEqual(fs.readdirSync(options.operationsDir), []);
+  assert.deepEqual(walkFiles(root).filter(name => !name.startsWith('blog.db')), beforeFiles, 'apply mutated files');
+  assert.deepEqual(fs.readFileSync(dbPath), beforeBytes, 'apply mutated the database');
+  assert.ok(fs.existsSync(path.join(root, 'public', 'audio', 'example', `${strayHash}.mp3`)), 'stray legacy audio was deleted');
+  db.close();
+});
+
 test('content migration refuses schema v2 apply', t => {
   const mp3 = validMp3();
   const fixture = buildContentFixture(t, { articles: [exampleArticleData(mp3)] });
@@ -761,6 +791,63 @@ test('content migration reports a destination collision and compensates', t => {
   db.close();
 });
 
+test('pre-existing identical audio destinations survive rollback and pre-state recovery', async t => {
+  const mp3 = validMp3();
+  const hash = sha256(mp3);
+  const fixture = buildV3Fixture(t, { articles: [exampleArticleData(mp3)] });
+  const { root, db, options } = fixture;
+  const localizedDir = path.join(root, 'public', 'audio', 'zh', 'example');
+  fs.mkdirSync(localizedDir, { recursive: true });
+  fs.writeFileSync(path.join(localizedDir, `${hash}.mp3`), mp3);
+  const legacyDir = path.join(root, 'public', 'audio', 'example');
+  const beforeDb = contentDbStateHash(db);
+
+  // 1) A caught failure after the audio promotion flag: the pre-existing
+  // destination and the restored legacy source must both survive byte-identically.
+  assert.throws(
+    () => applyLocalizedContentMigration(db, options, { injectFailures: { 'audio-promote': true } }),
+    /injected failure/
+  );
+  assert.deepEqual(fs.readFileSync(path.join(localizedDir, `${hash}.mp3`)), mp3, 'pre-existing destination deleted by rollback');
+  assert.deepEqual(fs.readFileSync(path.join(legacyDir, `${hash}.mp3`)), mp3, 'legacy source not restored by rollback');
+  assert.deepEqual(
+    fs.readFileSync(path.join(root, 'articles', 'example.md'), 'utf8'),
+    exampleArticleData(mp3).markdown,
+    'source markdown not restored by rollback'
+  );
+  assert.ok(!fs.existsSync(path.join(root, 'articles', 'zh', 'example.md')), 'apply-created markdown destination remains after rollback');
+  assert.equal(contentDbStateHash(db), beforeDb);
+  assert.deepEqual(fs.readdirSync(options.operationsDir), []);
+  assert.ok(!fs.existsSync(path.join(options.operationsDir, 'active.lock')));
+
+  // 2) A child-process kill after promotion followed by --recover must restore
+  // the pre-state with both identical audio files intact.
+  const handle = spawnContentCli(root, []);
+  const operationId = await waitFor(() => firstOperationId(root), { timeoutMs: 15000 });
+  await waitFor(() => {
+    const manifest = readOperationManifest(root, operationId);
+    return manifest && manifest.phase === 'files-promoted' ? manifest : null;
+  }, { timeoutMs: 15000 });
+  await killChild(handle.child);
+  await handle.exit;
+  const recovered = await runContentCli(root, ['--recover', operationId]);
+  assert.equal(recovered.code, 0, recovered.stderr);
+  const output = JSON.parse(recovered.stdout);
+  assert.equal(output.state, 'pre-state-restored');
+  assert.deepEqual(fs.readFileSync(path.join(localizedDir, `${hash}.mp3`)), mp3, 'pre-existing destination deleted by recovery');
+  assert.deepEqual(fs.readFileSync(path.join(legacyDir, `${hash}.mp3`)), mp3, 'legacy source not restored by recovery');
+  assert.ok(fs.existsSync(path.join(root, 'articles', 'example.md')), 'source markdown not restored by recovery');
+  assert.ok(!fs.existsSync(path.join(root, 'articles', 'zh', 'example.md')), 'apply-created markdown destination remains after recovery');
+  assert.deepEqual(fs.readdirSync(options.operationsDir), []);
+
+  // 3) A fresh apply then completes end-to-end with the pre-existing destination retained.
+  const plan = applyLocalizedContentMigration(db, options);
+  assert.equal(plan.audioMoves.length, 1);
+  assert.deepEqual(fs.readdirSync(options.operationsDir), []);
+  assert.deepEqual(fs.readFileSync(path.join(localizedDir, `${hash}.mp3`)), mp3, 'destination bytes changed by the fresh apply');
+  db.close();
+});
+
 test('content migration compensates when the database drifts before the apply transaction', t => {
   const mp3 = validMp3();
   const fixture = buildV3Fixture(t, { articles: [exampleArticleData(mp3)] });
@@ -804,6 +891,52 @@ test('content migration leaves a recoverable db-committed journal when the final
   const row = db.prepare('SELECT html FROM articles WHERE id = 1').get();
   assert.match(row.html, /\/audio\/zh\/example\//);
   assert.ok(fs.existsSync(path.join(root, 'articles', 'zh', 'example.md')));
+  db.close();
+});
+
+test('recovery refuses to finalize an audit-invalid committed post-state', t => {
+  const mp3 = validMp3();
+  const fixture = buildV3Fixture(t, { articles: [exampleArticleData(mp3)] });
+  const { root, db, options } = fixture;
+  assert.throws(
+    () => applyLocalizedContentMigration(db, options, { injectFailures: { audit: true } }),
+    error => error.code === 'cleanup_failed'
+  );
+  const operationId = firstOperationId(root);
+  assert.ok(operationId);
+  assert.equal(readOperationManifest(root, operationId).phase, 'db-committed');
+
+  // Corrupt only the filesystem post-state so the required audit rejects it:
+  // an unreferenced locale-owned audio file (the database stays post-state).
+  const strayHash = 'e'.repeat(64);
+  const strayPath = path.join(root, 'public', 'audio', 'zh', 'example', `${strayHash}.mp3`);
+  fs.writeFileSync(strayPath, Buffer.from('stray-locale-owned-audio'));
+
+  // Simulate the apply process having died, then attempt recovery: it must
+  // refuse to report post-state-finalized and must retain the evidence.
+  const ownerPath = path.join(options.operationsDir, 'active.lock', 'owner.json');
+  const owner = JSON.parse(fs.readFileSync(ownerPath, 'utf8'));
+  fs.writeFileSync(ownerPath, JSON.stringify({ ...owner, pid: 999999999 }));
+  assert.throws(
+    () => recoverLocalizedContentMigration(db, operationId, options),
+    error => error.code === 'recovery_ambiguous'
+  );
+  assert.ok(fs.existsSync(path.join(options.operationsDir, operationId)), 'journal evidence removed on refusal');
+  assert.ok(fs.existsSync(path.join(options.operationsDir, 'active.lock')), 'lock evidence removed on refusal');
+  assert.ok(fs.existsSync(strayPath), 'stray locale-owned audio was silently deleted');
+  const row = db.prepare('SELECT html FROM articles WHERE id = 1').get();
+  assert.match(row.html, /\/audio\/zh\/example\//, 'committed post-state must not be rolled back on refusal');
+
+  // Removing the stray file lets recovery finalize the committed post-state.
+  // The first (refusing) recovery process has "died": mark its lock stale again.
+  fs.rmSync(strayPath, { force: true });
+  const secondOwnerPath = path.join(options.operationsDir, 'active.lock', 'owner.json');
+  const secondOwner = JSON.parse(fs.readFileSync(secondOwnerPath, 'utf8'));
+  fs.writeFileSync(secondOwnerPath, JSON.stringify({ ...secondOwner, pid: 999999999 }));
+  const result = recoverLocalizedContentMigration(db, operationId, options);
+  assert.equal(result.state, 'post-state-finalized');
+  assert.deepEqual(fs.readdirSync(options.operationsDir), []);
+  assert.ok(!fs.existsSync(path.join(options.operationsDir, 'active.lock')));
   db.close();
 });
 

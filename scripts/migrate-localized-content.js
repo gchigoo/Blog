@@ -387,18 +387,27 @@ function evaluateArchive(plan, article, archive, resolver) {
 }
 
 /**
- * Collect exact same-article legacy audio URL rewrites from `text`, pushing
+ * Collect exact same-article audio URL references from `text`, pushing
  * foreign-slug, missing-file, and malformed references as conflicts. Returns
- * unique `{ from, to, file }` rewrites plus a per-URL occurrence count.
+ * unique `{ from, to, file }` rewrites, a per-URL occurrence count, and the
+ * set of audio file keys the article's HTML genuinely references (legacy
+ * own-slug URLs and published own-locale/slug URLs). The referenced set is
+ * what the auditor requires every locale-owned audio file to satisfy.
  */
 function collectUrlRewrites(article, text, plan, audioFileByArticle) {
   const rewrites = [];
   const occurrences = new Map();
+  const referencedFiles = new Set();
   const seenFiles = new Set();
   const files = audioFileByArticle.get(article.id);
   for (const reference of scanAudioUrlReferences(text)) {
     const classified = classifyAudioUrl(reference.path);
-    if (classified.kind === 'published') continue;
+    if (classified.kind === 'published') {
+      if (classified.locale === article.locale && classified.slug === article.slug) {
+        referencedFiles.add(classified.file);
+      }
+      continue;
+    }
     if (classified.kind === 'legacy') {
       if (classified.slug !== article.slug) {
         plan.conflicts.push({ articleId: article.id, type: 'foreign-slug-audio-url', url: reference.path });
@@ -408,6 +417,7 @@ function collectUrlRewrites(article, text, plan, audioFileByArticle) {
         plan.conflicts.push({ articleId: article.id, type: 'referenced-audio-missing', url: reference.path });
         continue;
       }
+      referencedFiles.add(classified.file);
       occurrences.set(reference.path, (occurrences.get(reference.path) || 0) + 1);
       if (seenFiles.has(classified.file)) continue;
       seenFiles.add(classified.file);
@@ -418,7 +428,7 @@ function collectUrlRewrites(article, text, plan, audioFileByArticle) {
       plan.conflicts.push({ articleId: article.id, type: 'malformed-audio-url', url: reference.path });
     }
   }
-  return { rewrites, occurrences };
+  return { rewrites, occurrences, referencedFiles };
 }
 
 /**
@@ -594,10 +604,12 @@ function planLocalizedContentMigration(db, options = {}) {
   }
 
   // HTML and content URL rewrites (every article, regardless of layout).
+  const htmlReferencedByArticle = new Map();
   for (const article of articles) {
     if (!SAFE_SLUG_PATTERN.test(article.slug)) continue;
     const htmlResult = collectUrlRewrites(article, article.html, plan, audioFileByArticle);
     const contentResult = collectUrlRewrites(article, article.content, plan, audioFileByArticle);
+    htmlReferencedByArticle.set(article.id, htmlResult.referencedFiles);
     for (const [from, occurrences] of htmlResult.occurrences) {
       const rewrite = htmlResult.rewrites.find(entry => entry.from === from);
       plan.htmlAudioRewrites.push({
@@ -628,6 +640,21 @@ function planLocalizedContentMigration(db, options = {}) {
       newContent,
       rewrites: [...htmlResult.rewrites, ...contentResult.rewrites].map(rewrite => ({ from: rewrite.from, to: rewrite.to }))
     });
+  }
+
+  // A legacy audio file the article's HTML never references would become an
+  // unreferenced locale-owned file after the move and fail the required audit;
+  // reject it deterministically before any mutation instead of moving it.
+  for (const article of articles) {
+    if (!SAFE_SLUG_PATTERN.test(article.slug)) continue;
+    const files = audioFileByArticle.get(article.id);
+    if (!files) continue;
+    const referenced = htmlReferencedByArticle.get(article.id) || new Set();
+    for (const fileKey of [...files].sort()) {
+      if (!referenced.has(fileKey)) {
+        plan.conflicts.push({ articleId: article.id, type: 'unreferenced-audio-file', slug: article.slug, file: fileKey });
+      }
+    }
   }
 
   plan.markdownMoves.sort((left, right) => left.articleId - right.articleId || left.from.localeCompare(right.from));
@@ -802,14 +829,16 @@ function verifyOrRestoreSource(manifest, file) {
 }
 
 /**
- * Undo one file: remove the promoted destination when present and hash-verified
- * (a destination with a different hash is external state: during rollback it is
- * preserved, during recovery it is an ambiguous refusal), then restore the
- * source from its verified tombstone.
+ * Undo one file: remove the promoted destination when present, hash-verified,
+ * and created by this operation. A destination recorded as pre-existing
+ * (`file.destinationExists`) is external state and is never removed; a
+ * destination with a different hash is external state and is never clobbered
+ * (during recovery a mismatched apply-created destination is an ambiguous
+ * refusal). The source is then restored from its verified tombstone.
  */
 function restoreFile(manifest, file, { ambiguous = false } = {}) {
   const destination = destinationPath(manifest, file);
-  if (fs.existsSync(destination)) {
+  if (fs.existsSync(destination) && !file.destinationExists) {
     const destinationHash = fileSha256(destination);
     if (destinationHash === file.stagedHash) {
       fs.rmSync(destination, { force: true });
@@ -1176,6 +1205,9 @@ function validateManifest(manifest) {
     if (!['markdown', 'audio'].includes(file.kind)) {
       throw new OperationError('invalid_manifest', `invalid file kind: ${JSON.stringify(file.kind)}`);
     }
+    if (file.destinationExists && file.kind !== 'audio') {
+      throw new OperationError('invalid_manifest', `destinationExists is only valid for audio files: ${file.path}`);
+    }
     sourcePath(manifest, file);
     destinationPath(manifest, file);
     validateTombstoneName(file.tombstone);
@@ -1192,7 +1224,23 @@ function validateManifest(manifest) {
   }
 }
 
-function finalizeCommittedOperation(manifest, operationsDir, operationId, options) {
+function finalizeCommittedOperation(db, manifest, operationsDir, operationId, options) {
+  // The committed post-state must still satisfy the required audit before the
+  // journal and lock evidence are removed; otherwise recovery cannot declare
+  // success for a state the rollout gate still rejects. The manifest's
+  // recorded directories are authoritative.
+  const audit = auditLocalizedContent(db, {
+    ...options,
+    articlesDir: manifest.articlesDir,
+    audioDir: manifest.audioDir,
+    checkOperations: false
+  });
+  if (!audit.passed) {
+    throw new OperationError(
+      'recovery_ambiguous',
+      `committed post-state still fails the required audit: ${audit.errors.map(error => error.message).join('; ')}`
+    );
+  }
   for (const file of manifest.files || []) {
     const destination = destinationPath(manifest, file);
     if (!file.promoted) {
@@ -1274,7 +1322,7 @@ function recoverLocalizedContentMigration(db, operationId, options = {}) {
       if (manifest.phase === 'prepared') {
         throw new OperationError('recovery_ambiguous', 'database is post-state but files were never promoted');
       }
-      finalizeCommittedOperation(manifest, operationsDir, operationId, options);
+      finalizeCommittedOperation(db, manifest, operationsDir, operationId, options);
       finalizeRecovery(operationsDir, operationId);
       return { operationId, state: 'post-state-finalized' };
     }
