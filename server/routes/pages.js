@@ -119,6 +119,7 @@ function createRootNegotiatorRouter() {
       acceptLanguage: req.headers['accept-language']
     });
     res.set('Vary', 'Cookie, Accept-Language');
+    res.set('Cache-Control', 'private, no-store');
     return res.redirect(302, `/${locale}/${req.originalUrl.slice(1)}`);
   });
   return router;

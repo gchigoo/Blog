@@ -512,35 +512,218 @@ Cloudflare 不得对公开 HTML、`/admin/*`、`/api/admin/analytics*` 或 `/api
 - Edge TTL：存在 `Cache-Control` 时遵循源站；缺少时使用 Cloudflare 对响应状态码的默认 TTL。成功 WebP 继续使用 Nginx 返回的 30 天，404 等错误响应不再套用 1 年覆盖值
 - Tiered Cache：保持 `Active`
 
-图片文件名由当前发布链路生成且不会原地覆盖。不要把规则扩大到其他 hostname、HTML、管理端或 API。发布后传入一个真实存在的 WebP URL 做烟测；脚本同时断言 HTTP 200、图片类型、30 天 public immutable 缓存、没有泄漏上游的 `max-age=0`、`MISS → HIT`，并确认首页仍为 `DYNAMIC`：
+图片文件名由当前发布链路生成且不会原地覆盖。不要把规则扩大到其他 hostname、HTML、管理端或 API。发布后传入一个真实存在的 WebP URL 做烟测；脚本同时断言 HTTP 200、图片类型、30 天 public immutable 缓存、没有泄漏上游的 `max-age=0`、`MISS → HIT`，并验证无 Cookie/语言偏好的直达 `/` 默认 302 到 `/zh/` 且正确设置 `Vary`，以及 `/zh/`、`/en/` 均保持 `private, no-store`、`DYNAMIC` 且没有 `Age`：
 
 ```bash
 set -euo pipefail
 IMAGE_URL="${1:?usage: $0 https://blog.cokedaily.space/images/existing.webp}"
+if [[ ! "$IMAGE_URL" =~ ^https://blog[.]cokedaily[.]space/images/[A-Za-z0-9][A-Za-z0-9._-]*[.]webp$ ]]; then
+  echo 'invalid IMAGE_URL: expected one flat WebP under https://blog.cokedaily.space/images/' >&2
+  exit 64
+fi
 SMOKE_URL="${IMAGE_URL}?cf-cache-smoke=$(date +%s)"
-FIRST_HEADERS="$(mktemp)"
-SECOND_HEADERS="$(mktemp)"
-HOME_HEADERS="$(mktemp)"
-trap 'rm -f "$FIRST_HEADERS" "$SECOND_HEADERS" "$HOME_HEADERS"' EXIT
+SMOKE_TMP="$(mktemp -d)"
+trap 'rm -rf -- "$SMOKE_TMP"' EXIT
+FIRST_RAW_HEADERS="$SMOKE_TMP/first.raw.headers"
+SECOND_RAW_HEADERS="$SMOKE_TMP/second.raw.headers"
+ROOT_RAW_HEADERS="$SMOKE_TMP/root.raw.headers"
+ZH_HOME_RAW_HEADERS="$SMOKE_TMP/zh-home.raw.headers"
+EN_HOME_RAW_HEADERS="$SMOKE_TMP/en-home.raw.headers"
+FIRST_HEADERS="$SMOKE_TMP/first.final.headers"
+SECOND_HEADERS="$SMOKE_TMP/second.final.headers"
+ROOT_HEADERS="$SMOKE_TMP/root.final.headers"
+ZH_HOME_HEADERS="$SMOKE_TMP/zh-home.final.headers"
+EN_HOME_HEADERS="$SMOKE_TMP/en-home.final.headers"
 
-FIRST_STATUS="$(curl -sS --max-time 30 -D "$FIRST_HEADERS" -o /dev/null -w '%{http_code}' "$SMOKE_URL")"
+extract_final_headers() {
+  local raw_headers="$1"
+  local final_headers="$2"
+  awk '
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      if (line ~ /^HTTP\/[0-9][0-9.]*[[:space:]]+[0-9][0-9][0-9]([[:space:]]|$)/) {
+        block = line ORS
+        in_block = 1
+        found = 1
+        next
+      }
+      if (in_block) {
+        block = block line ORS
+        if (line == "") {
+          final_block = block
+          block = ""
+          in_block = 0
+        }
+      }
+    }
+    END {
+      if (!found) exit 1
+      if (in_block) final_block = block
+      if (final_block == "") exit 1
+      printf "%s", final_block
+    }
+  ' "$raw_headers" > "$final_headers"
+}
+
+require_singleton_header() {
+  local headers="$1"
+  local target_name="$2"
+  local expected_value="$3"
+  local fold_case="${4:-true}"
+  awk -v target_name="$target_name" -v expected_value="$expected_value" -v fold_case="$fold_case" '
+    function trim(value) {
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      return value
+    }
+    BEGIN {
+      target_name = tolower(target_name)
+      if (fold_case == "true") expected_value = tolower(expected_value)
+    }
+    {
+      separator = index($0, ":")
+      if (!separator) next
+      name = tolower(trim(substr($0, 1, separator - 1)))
+      if (name != target_name) next
+      count++
+      value = trim(substr($0, separator + 1))
+      if (fold_case == "true") value = tolower(value)
+      if (value != expected_value) invalid = 1
+    }
+    END {
+      if (count != 1 || invalid) exit 1
+    }
+  ' "$headers"
+}
+
+forbid_header() {
+  local headers="$1"
+  local target_name="$2"
+  awk -v target_name="$target_name" '
+    function trim(value) {
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      return value
+    }
+    BEGIN { target_name = tolower(target_name) }
+    {
+      separator = index($0, ":")
+      if (!separator) next
+      name = tolower(trim(substr($0, 1, separator - 1)))
+      if (name == target_name) found = 1
+    }
+    END {
+      if (found) exit 1
+    }
+  ' "$headers"
+}
+
+require_cache_control() {
+  local headers="$1"
+  local profile="$2"
+  awk -v profile="$profile" '
+    function trim(value) {
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      return value
+    }
+    {
+      separator = index($0, ":")
+      if (!separator) next
+      name = tolower(trim(substr($0, 1, separator - 1)))
+      if (name != "cache-control") next
+      field_count++
+      value = substr($0, separator + 1)
+      token_count = split(value, tokens, ",")
+      for (index_token = 1; index_token <= token_count; index_token++) {
+        token = tolower(trim(tokens[index_token]))
+        total++
+        if (profile == "image") {
+          if (token == "public") public_count++
+          else if (token == "immutable") immutable_count++
+          else if (token == "max-age=2592000") max_age_count++
+          else invalid = 1
+        } else {
+          if (token == "private") private_count++
+          else if (token == "no-store") no_store_count++
+          else invalid = 1
+        }
+      }
+    }
+    END {
+      if (!field_count || invalid) exit 1
+      if (profile == "image") {
+        if (total != 3 || public_count != 1 || immutable_count != 1 || max_age_count != 1) exit 1
+      } else {
+        if (total != 2 || private_count != 1 || no_store_count != 1) exit 1
+      }
+    }
+  ' "$headers"
+}
+
+require_vary() {
+  local headers="$1"
+  awk '
+    function trim(value) {
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      return value
+    }
+    {
+      separator = index($0, ":")
+      if (!separator) next
+      name = tolower(trim(substr($0, 1, separator - 1)))
+      if (name != "vary") next
+      field_count++
+      value = substr($0, separator + 1)
+      token_count = split(value, tokens, ",")
+      for (index_token = 1; index_token <= token_count; index_token++) {
+        token = tolower(trim(tokens[index_token]))
+        if (token == "" || token == "*" || token !~ /^[[:alnum:]-]+$/) invalid = 1
+        if (token == "cookie") cookie_count++
+        if (token == "accept-language") language_count++
+      }
+    }
+    END {
+      if (!field_count || invalid || cookie_count != 1 || language_count != 1) exit 1
+    }
+  ' "$headers"
+}
+
+FIRST_STATUS="$(curl -q --proto '=https' --globoff -sS --max-time 30 -D "$FIRST_RAW_HEADERS" -o /dev/null -w '%{http_code}' -- "$SMOKE_URL")"
+extract_final_headers "$FIRST_RAW_HEADERS" "$FIRST_HEADERS"
 sleep 1
-SECOND_STATUS="$(curl -sS --max-time 30 -D "$SECOND_HEADERS" -o /dev/null -w '%{http_code}' "$SMOKE_URL")"
-HOME_STATUS="$(curl -sS --max-time 30 -D "$HOME_HEADERS" -o /dev/null -w '%{http_code}' https://blog.cokedaily.space/)"
+SECOND_STATUS="$(curl -q --proto '=https' --globoff -sS --max-time 30 -D "$SECOND_RAW_HEADERS" -o /dev/null -w '%{http_code}' -- "$SMOKE_URL")"
+extract_final_headers "$SECOND_RAW_HEADERS" "$SECOND_HEADERS"
+ROOT_STATUS="$(curl -q --proto '=https' --globoff -sS --max-time 30 -D "$ROOT_RAW_HEADERS" -o /dev/null -w '%{http_code}' -- https://blog.cokedaily.space/)"
+extract_final_headers "$ROOT_RAW_HEADERS" "$ROOT_HEADERS"
+ZH_HOME_STATUS="$(curl -q --proto '=https' --globoff -sS --max-time 30 -D "$ZH_HOME_RAW_HEADERS" -o /dev/null -w '%{http_code}' -- https://blog.cokedaily.space/zh/)"
+extract_final_headers "$ZH_HOME_RAW_HEADERS" "$ZH_HOME_HEADERS"
+EN_HOME_STATUS="$(curl -q --proto '=https' --globoff -sS --max-time 30 -D "$EN_HOME_RAW_HEADERS" -o /dev/null -w '%{http_code}' -- https://blog.cokedaily.space/en/)"
+extract_final_headers "$EN_HOME_RAW_HEADERS" "$EN_HOME_HEADERS"
 
 test "$FIRST_STATUS" = 200
 test "$SECOND_STATUS" = 200
-test "$HOME_STATUS" = 200
-grep -qi '^content-type: image/webp' "$FIRST_HEADERS"
+test "$ROOT_STATUS" = 302
+test "$ZH_HOME_STATUS" = 200
+test "$EN_HOME_STATUS" = 200
 for headers in "$FIRST_HEADERS" "$SECOND_HEADERS"; do
-  grep -Eqi '^cache-control:.*max-age=2592000([,[:space:]]|$)' "$headers"
-  grep -Eqi '^cache-control:.*public.*immutable' "$headers"
-  ! grep -Eqi '^cache-control:.*max-age=0([,[:space:]]|$)' "$headers"
+  require_singleton_header "$headers" content-type image/webp
+  require_cache_control "$headers" image
 done
-grep -qi '^cf-cache-status: MISS' "$FIRST_HEADERS"
-grep -qi '^cf-cache-status: HIT' "$SECOND_HEADERS"
-grep -qi '^cache-control: private, no-store' "$HOME_HEADERS"
-grep -qi '^cf-cache-status: DYNAMIC' "$HOME_HEADERS"
+require_singleton_header "$FIRST_HEADERS" cf-cache-status MISS
+require_singleton_header "$SECOND_HEADERS" cf-cache-status HIT
+require_singleton_header "$ROOT_HEADERS" location /zh/ false
+require_vary "$ROOT_HEADERS"
+require_cache_control "$ROOT_HEADERS" private
+require_singleton_header "$ROOT_HEADERS" cf-cache-status DYNAMIC
+forbid_header "$ROOT_HEADERS" age
+for headers in "$ZH_HOME_HEADERS" "$EN_HOME_HEADERS"; do
+  require_cache_control "$headers" private
+  require_singleton_header "$headers" cf-cache-status DYNAMIC
+  forbid_header "$headers" age
+done
 ```
 
 回滚时在 Cloudflare Cache Rules 中禁用该规则。若未来允许图片在同一路径原地更新，发布后还必须 purge 对应 URL，或继续改用带版本的新文件名。

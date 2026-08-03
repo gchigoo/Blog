@@ -1884,6 +1884,7 @@ test('root negotiation, slash canonicalization, and legacy redirects follow the 
     });
     assert.equal(response.status, 302, fixture.name);
     assert.equal(response.headers.get('location'), fixture.location, fixture.name);
+    assert.equal(response.headers.get('cache-control'), 'private, no-store', fixture.name);
     assert.match(response.headers.get('vary') || '', /Cookie/, fixture.name);
     assert.match(response.headers.get('vary') || '', /Accept-Language/, fixture.name);
     assert.equal(response.headers.get('set-cookie'), null, 'negotiation must not set the locale cookie');
