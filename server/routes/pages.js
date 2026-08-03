@@ -365,6 +365,7 @@ function createLocalizedPagesRouter({ config, articleService, commentsModule }) 
     if (!isSupportedLocale(locale)) {
       return renderNotFound(req, res, config);
     }
+    res.set('Cache-Control', 'private, no-store');
     setLocaleLocals(req, res, config, locale);
     res.cookie(LOCALE_COOKIE, locale, localeCookieOptions(config.secureCookies));
     next();

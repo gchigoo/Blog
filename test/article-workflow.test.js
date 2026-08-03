@@ -1932,6 +1932,7 @@ test('localized pages set the one-year blog_locale cookie and never vary by lang
       headers: { 'accept-language': locale === 'zh' ? 'en-US,en;q=0.9' : 'zh-CN,zh;q=0.9' }
     });
     assert.equal(response.status, 200, pathname);
+    assert.equal(response.headers.get('cache-control'), 'private, no-store', pathname);
     const setCookie = response.headers.get('set-cookie') || '';
     assert.match(setCookie, new RegExp(`blog_locale=${locale}`), pathname);
     assert.match(setCookie, /Max-Age=31536000/, pathname);
