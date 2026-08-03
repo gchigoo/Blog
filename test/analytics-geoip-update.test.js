@@ -123,6 +123,19 @@ test('Nginx caches static assets only by explicit prefixes and gates public traf
   }
   assert.match(nginx, /location\s+=\s*\/favicon\.ico\s*\{/, 'exact favicon route missing');
 
+  // Images must preserve the public URI when proxying to Express. Nginx owns
+  // the 30-day success cache headers and must suppress Express's max-age=0.
+  const imagesBlock = extractLocationBlock(nginx, '/images/');
+  assert.match(imagesBlock, /proxy_pass\s+http:\/\/127\.0\.0\.1:3000;/, 'images must proxy to Express without a URI suffix');
+  assert.doesNotMatch(imagesBlock, /proxy_pass\s+http:\/\/127\.0\.0\.1:3000\//, 'images proxy_pass must not rewrite the URI');
+  assert.doesNotMatch(imagesBlock, /\balias\b/, 'images must not use a filesystem alias');
+  assert.doesNotMatch(imagesBlock, /\/root\/Blog/, 'images must not depend on traversing /root');
+  assert.match(imagesBlock, /proxy_hide_header\s+Cache-Control;/, 'upstream Cache-Control must be hidden');
+  assert.match(imagesBlock, /proxy_hide_header\s+Expires;/, 'upstream Expires must be hidden');
+  assert.match(imagesBlock, /expires\s+30d;/, 'images must retain 30-day success caching');
+  assert.match(imagesBlock, /add_header\s+Cache-Control\s+"public, immutable";/, 'images must retain public immutable caching');
+  assert.doesNotMatch(imagesBlock, /\balways\b/, 'image cache headers must not be added to error responses');
+
   // The catch-all dynamic proxy is the only location able to serve
   // /zh/tag/Node.js (no static prefix shadows it and no regex captures it).
   assert.match(nginx, /location\s+(\/\s*\{|\{\s*$)/, 'dynamic proxy catch-all missing');
@@ -187,6 +200,22 @@ function extractServerBlocks(nginx) {
     cursor = end + 1;
   }
   return blocks;
+}
+
+function extractLocationBlock(nginx, location) {
+  const escaped = location.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = new RegExp(`location\\s+${escaped}\\s*\\{`).exec(nginx);
+  if (!match) throw new Error(`location ${location} missing from blog.conf`);
+
+  let depth = 0;
+  for (let index = match.index; index < nginx.length; index += 1) {
+    if (nginx[index] === '{') depth += 1;
+    else if (nginx[index] === '}') {
+      depth -= 1;
+      if (depth === 0) return nginx.slice(match.index, index + 1);
+    }
+  }
+  throw new Error(`unbalanced location ${location} block in blog.conf`);
 }
 
 test('Linux updater covers lock, bootstrap, no-op, failure preservation, promotion, and rollback', {

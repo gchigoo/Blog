@@ -341,7 +341,9 @@ server {
         add_header Cache-Control "public, max-age=2592000";
     }
     location /images/ {
-        alias /root/Blog/public/images/;
+        proxy_pass http://127.0.0.1:3000;
+        proxy_hide_header Cache-Control;
+        proxy_hide_header Expires;
         expires 30d;
         add_header Cache-Control "public, immutable";
     }
@@ -353,7 +355,7 @@ server {
 }
 ```
 
-**静态缓存契约**：只对 `/css/`、`/js/`、`/vendor/`、`/fonts/`、`/images/` 这些已知前缀与精确的 `/favicon.ico` 应用缓存头。禁止扩展名正则缓存（如 `location ~* \.(css|js)$`），否则带点的 taxonomy HTML 路由（如 `/zh/tag/Node.js`）会被错误缓存或误判为静态资源，必须保持动态代理。
+**静态缓存契约**：只对 `/css/`、`/js/`、`/vendor/`、`/fonts/`、`/images/` 这些已知前缀与精确的 `/favicon.ico` 应用缓存头。禁止扩展名正则缓存（如 `location ~* \.(css|js)$`），否则带点的 taxonomy HTML 路由（如 `/zh/tag/Node.js`）会被错误缓存或误判为静态资源，必须保持动态代理。`/images/` 使用不带 URI 尾斜杠的 `proxy_pass`，因此原始 `/images/*` URI 会原样交给 Express；Nginx 隐藏上游的 `Cache-Control` 与 `Expires` 后，为成功响应设置 30 天 public immutable 缓存。`add_header` 不得使用 `always`，以免缺失图片等错误响应继承成功缓存策略。
 
 #### 公共维护门（cutover 期间 503）
 
@@ -510,7 +512,7 @@ Cloudflare 不得对公开 HTML、`/admin/*`、`/api/admin/analytics*` 或 `/api
 - Edge TTL：存在 `Cache-Control` 时遵循源站；缺少时使用 Cloudflare 对响应状态码的默认 TTL。成功 WebP 继续使用 Nginx 返回的 30 天，404 等错误响应不再套用 1 年覆盖值
 - Tiered Cache：保持 `Active`
 
-图片文件名由当前发布链路生成且不会原地覆盖。不要把规则扩大到其他 hostname、HTML、管理端或 API。发布后传入一个真实存在的 WebP URL 做烟测；脚本同时断言 HTTP 200、图片类型、`MISS → HIT`，并确认首页仍为 `DYNAMIC`：
+图片文件名由当前发布链路生成且不会原地覆盖。不要把规则扩大到其他 hostname、HTML、管理端或 API。发布后传入一个真实存在的 WebP URL 做烟测；脚本同时断言 HTTP 200、图片类型、30 天 public immutable 缓存、没有泄漏上游的 `max-age=0`、`MISS → HIT`，并确认首页仍为 `DYNAMIC`：
 
 ```bash
 set -euo pipefail
@@ -530,7 +532,11 @@ test "$FIRST_STATUS" = 200
 test "$SECOND_STATUS" = 200
 test "$HOME_STATUS" = 200
 grep -qi '^content-type: image/webp' "$FIRST_HEADERS"
-grep -qi '^cache-control: public, max-age=2592000' "$FIRST_HEADERS"
+for headers in "$FIRST_HEADERS" "$SECOND_HEADERS"; do
+  grep -Eqi '^cache-control:.*max-age=2592000([,[:space:]]|$)' "$headers"
+  grep -Eqi '^cache-control:.*public.*immutable' "$headers"
+  ! grep -Eqi '^cache-control:.*max-age=0([,[:space:]]|$)' "$headers"
+done
 grep -qi '^cf-cache-status: MISS' "$FIRST_HEADERS"
 grep -qi '^cf-cache-status: HIT' "$SECOND_HEADERS"
 grep -qi '^cache-control: private, no-store' "$HOME_HEADERS"
@@ -695,6 +701,12 @@ chmod 755 public/images
 # 检查磁盘空间
 df -h
 ```
+
+#### Nginx `/images/*` 返回 403
+
+如果图片文件存在、Express 的 `http://127.0.0.1:3000/images/<file>.webp` 返回 200，但 HTTPS 经 Nginx 返回 403，请确认安装的 `deploy/nginx/blog.conf` 中 `/images/` 使用不带 URI 尾斜杠的 `proxy_pass http://127.0.0.1:3000;`，而不是指向 `/root/Blog/public/images/` 的 `alias`。缺失图片仍应由 Express 返回原有错误状态，缓存头也不得使用 `always`。
+
+**不要**通过放宽 `/root` 的目录权限、给 Nginx worker（通常为 `www-data`）授予 `/root` ACL，或把 Nginx worker 提升为 root/其他高权限用户来修复图片 403；这些做法扩大了权限边界。应保持 `/root` 不可遍历，并让 Nginx 通过现有 loopback Express 服务读取 `/images/*`。
 
 ### 问题 4: Nginx 502 Bad Gateway
 
