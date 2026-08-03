@@ -429,7 +429,7 @@ test('content migration apply localizes markdown, audio, and exact HTML URLs', t
 
   const moved = fs.readFileSync(path.join(root, 'articles', 'zh', 'example.md'), 'utf8');
   assert.match(moved, /^locale: zh$/m);
-  assert.match(moved, /^translationKey: example$/m);
+  assert.match(moved, /^translationKey: "example"$/m);
   assert.match(moved, /^tags: \["nodejs", "legacy-[a-f0-9]{12}"\]$/m);
   assert.match(moved, /^title: Example Post$/m);
   assert.ok(!fs.existsSync(path.join(root, 'articles', 'example.md')), 'legacy markdown source remains');
@@ -456,6 +456,48 @@ test('content migration apply localizes markdown, audio, and exact HTML URLs', t
   assert.deepEqual(again.htmlAudioRewrites, []);
   assert.deepEqual(again.conflicts, []);
   assert.deepEqual(fs.readdirSync(options.operationsDir), []);
+  db.close();
+});
+
+test('content migration preserves numeric-looking translation keys as strings', t => {
+  const body = 'numeric translation key body';
+  const article = {
+    title: 'Numeric Translation Key',
+    slug: '9102',
+    tags: ['Node.js'],
+    content: body,
+    html: '<p>numeric translation key body</p>',
+    markdown: transitionalMarkdown({
+      title: 'Numeric Translation Key',
+      slug: '9102',
+      tags: ['Node.js'],
+      body
+    }).replace('slug: 9102', "slug: '9102'")
+  };
+  const fixture = buildV3Fixture(t, { articles: [article] });
+  const { root, db, options } = fixture;
+  const source = fs.readFileSync(path.join(root, 'articles', '9102.md'), 'utf8');
+  const sourceBody = parseMarkdownDocument(source).content;
+  const dbContent = db.prepare('SELECT content FROM articles WHERE id = 1').get().content;
+
+  const dryPlan = planLocalizedContentMigration(db, options);
+  assert.deepEqual(dryPlan.conflicts, []);
+  assert.deepEqual(dryPlan.missingMarkdown, []);
+  assert.deepEqual(dryPlan.orphanMarkdown, []);
+  assert.equal(dryPlan.markdownMoves.length, 1);
+
+  applyLocalizedContentMigration(db, options);
+
+  const moved = fs.readFileSync(path.join(root, 'articles', 'zh', '9102.md'), 'utf8');
+  const parsed = parseMarkdownDocument(moved);
+  assert.match(moved, /^translationKey: "9102"$/m);
+  assert.equal(parsed.data.translationKey, '9102');
+  assert.equal(typeof parsed.data.translationKey, 'string');
+  assert.equal(parsed.content, sourceBody, 'migration must preserve the Markdown body byte-for-byte');
+  assert.equal(db.prepare('SELECT content FROM articles WHERE id = 1').get().content, dbContent);
+
+  const audit = auditLocalizedContent(db, options);
+  assert.equal(audit.passed, true, JSON.stringify(audit.errors));
   db.close();
 });
 

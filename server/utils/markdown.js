@@ -493,7 +493,7 @@ function rewriteTransitionalMarkdown(source, { locale, translationKey, tagIds })
   const withTags = rewriteMarkdownTags(source, tagIds);
   return setFrontMatterKeys(withTags, [
     { key: 'locale', value: locale },
-    { key: 'translationKey', value: translationKey }
+    { key: 'translationKey', value: JSON.stringify(translationKey) }
   ]);
 }
 
