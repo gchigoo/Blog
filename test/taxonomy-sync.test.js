@@ -19,6 +19,7 @@ const { parseMarkdownDocument } = require('../server/utils/markdown');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const CLI = path.join(REPO_ROOT, 'scripts', 'sync-taxonomy.js');
+const SHIPPED_CATALOG = path.join(REPO_ROOT, 'content', 'taxonomy.json');
 const NODE_PATH = [path.join(REPO_ROOT, 'node_modules'), process.env.NODE_PATH].filter(Boolean).join(path.delimiter);
 
 function sha256(text) {
@@ -427,6 +428,97 @@ test('taxonomy sync apply coordinates catalog, markdown, article_tags, and FTS i
   // No journal residue remains after a successful apply.
   assert.deepEqual(fs.readdirSync(options.operationsDir), []);
   db.close();
+});
+
+test('taxonomy sync promotes production historical tags into stable bilingual entries', t => {
+  const sourceTags = {
+    '9102': ['数码', '科普', '充电', '苹果'],
+    'baiduyun-speed-limit': ['教程', '工具', '百度网盘', 'IDM', 'Tampermonkey'],
+    'apps-in-my-iphone-1784032269347': ['App', 'iPhone', 'iOS', '工具', '效率'],
+    'home-assistant-nuc9-to-mac-mini-homekit': [
+      'Home Assistant', 'HomeKit', 'Mac mini', 'UTM', '智能家居'
+    ]
+  };
+  const expectedStableTags = {
+    '9102': ['consumer-electronics', 'explainers', 'charging', 'apple'],
+    'baiduyun-speed-limit': ['tutorials', 'tools', 'baidu-netdisk', 'idm', 'tampermonkey'],
+    'apps-in-my-iphone-1784032269347': ['app', 'iphone', 'ios', 'tools', 'productivity'],
+    'home-assistant-nuc9-to-mac-mini-homekit': [
+      'home-assistant', 'homekit', 'mac-mini', 'utm', 'smart-home'
+    ]
+  };
+  const { db, options } = buildV3Fixture(t, {
+    oldCatalog: catalogWithCategories(),
+    legacyArticles: Object.entries(sourceTags).map(([slug, tags]) => ({
+      title: `Historical ${slug}`,
+      slug,
+      tags
+    })),
+    files: Object.entries(sourceTags).map(([slug, tags]) => {
+      const content = markdownFile({ title: `Historical ${slug}`, slug, tags });
+      return {
+        relative: `${slug}.md`,
+        content: slug === '9102' ? content.replace('slug: 9102', "slug: '9102'") : content
+      };
+    })
+  });
+  t.after(() => db.close());
+  const catalog = loadTaxonomyCatalog(SHIPPED_CATALOG);
+
+  const assertProductionPlan = plan => {
+    assert.equal(plan.legacyRewires.length, 18);
+    assert.equal(plan.deletedTags.length, 18);
+    assert.equal(plan.markdownRewrites.length, 4);
+    assert.equal(plan.affectedArticleIds.length, 4);
+    assert.deepEqual(plan.conflicts, []);
+    assert.deepEqual(plan.blockedSlugChanges, []);
+    assert.deepEqual(plan.blockedDeletions, []);
+    assert.deepEqual(plan.unmappedLegacyTags, []);
+  };
+
+  const dryPlan = planTaxonomySync(db, catalog, options);
+  assertProductionPlan(dryPlan);
+  const plan = applyTaxonomySync(db, catalog, options);
+  assert.deepEqual(plan, dryPlan);
+  assertProductionPlan(plan);
+
+  for (const [slug, expected] of Object.entries(expectedStableTags)) {
+    const raw = fs.readFileSync(path.join(options.articlesDir, `${slug}.md`), 'utf8');
+    const { data } = parseMarkdownDocument(raw);
+    assert.deepEqual([...new Set(data.tags || [])].sort(), [...expected].sort(), slug);
+  }
+
+  const slugs = Object.keys(sourceTags);
+  const placeholders = slugs.map(() => '?').join(', ');
+  const promotedArticleTags = db.prepare(`
+    SELECT articles.slug, tags.id, tags.origin
+    FROM article_tags
+    JOIN articles ON articles.id = article_tags.article_id
+    JOIN tags ON tags.id = article_tags.tag_id
+    WHERE articles.slug IN (${placeholders})
+    ORDER BY articles.slug, tags.id
+  `).all(...slugs);
+  assert.equal(promotedArticleTags.length, 19);
+  assert.deepEqual(promotedArticleTags.filter(tag => tag.origin === 'legacy'), []);
+
+  const stableZhNames = new Map(catalog.categories.flatMap(category =>
+    category.tags.map(tag => [tag.id, tag.labels.zh.name])
+  ));
+  const ftsBySlug = new Map(db.prepare(`
+    SELECT articles.slug, article_fts.taxonomy
+    FROM article_fts
+    JOIN articles ON articles.id = article_fts.rowid
+    WHERE articles.slug IN (${placeholders})
+  `).all(...slugs).map(row => [row.slug, row.taxonomy]));
+  assert.equal(ftsBySlug.size, 4);
+  for (const [slug, tagIds] of Object.entries(expectedStableTags)) {
+    const taxonomy = ftsBySlug.get(slug);
+    for (const tagId of tagIds) {
+      const localizedName = stableZhNames.get(tagId);
+      assert.ok(localizedName, `${tagId}: missing stable zh label`);
+      assert.ok(taxonomy.includes(localizedName), `${slug}: FTS missing ${localizedName}`);
+    }
+  }
 });
 
 test('taxonomy sync preserves order and removes duplicates created by a rewire', t => {

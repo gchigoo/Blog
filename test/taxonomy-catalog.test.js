@@ -77,11 +77,37 @@ test('ships a taxonomy catalog that validates and contains the required entries'
   assert.equal(systemTag.id, 'other');
   assert.equal(systemTag.labels.zh.name, '未分类');
   assert.equal(systemTag.labels.en.slug, 'uncategorized');
-  assert.deepEqual(
-    catalog.categories.filter(category => category.id !== 'uncategorized')
-      .map(category => category.tags),
-    [[], [], []]
-  );
+  const expectedPromotedTags = {
+    productivity: ['life', '效率', 'Productivity', ['效率']],
+    app: ['technology', 'App', 'App', ['App']],
+    utm: ['technology', 'UTM', 'UTM', ['UTM']],
+    'smart-home': ['technology', '智能家居', 'Smart Home', ['智能家居']],
+    'home-assistant': ['technology', 'Home Assistant', 'Home Assistant', ['Home Assistant']],
+    ios: ['technology', 'iOS', 'iOS', ['iOS']],
+    iphone: ['technology', 'iPhone', 'iPhone', ['iPhone']],
+    apple: ['technology', '苹果', 'Apple', ['苹果']],
+    tools: ['technology', '工具', 'Tools', ['工具']],
+    tampermonkey: ['technology', 'Tampermonkey', 'Tampermonkey', ['Tampermonkey']],
+    tutorials: ['technology', '教程', 'Tutorials', ['教程']],
+    charging: ['technology', '充电', 'Charging', ['充电']],
+    explainers: ['technology', '科普', 'Explainers', ['科普']],
+    'baidu-netdisk': ['technology', '百度网盘', 'Baidu Netdisk', ['百度网盘']],
+    'mac-mini': ['technology', 'Mac mini', 'Mac mini', ['Mac mini']],
+    idm: ['technology', 'IDM', 'IDM', ['IDM']],
+    'consumer-electronics': ['technology', '数码', 'Consumer Electronics', ['数码']],
+    homekit: ['technology', 'HomeKit', 'HomeKit', ['HomeKit']]
+  };
+  const actual = Object.fromEntries(catalog.categories.flatMap(category =>
+    category.tags.map(tag => [tag.id, [
+      category.id,
+      tag.labels.zh.name,
+      tag.labels.en.name,
+      tag.legacyNames
+    ]])
+  ));
+  for (const [id, expected] of Object.entries(expectedPromotedTags)) {
+    assert.deepEqual(actual[id], expected, id);
+  }
 });
 
 test('accepts the canonical taxonomy shape', () => {

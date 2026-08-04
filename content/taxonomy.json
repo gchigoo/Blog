@@ -17,7 +17,17 @@
         "zh": { "name": "生活", "slug": "生活" },
         "en": { "name": "Life", "slug": "life" }
       },
-      "tags": []
+      "tags": [
+        {
+          "id": "productivity",
+          "sortOrder": 10,
+          "labels": {
+            "zh": { "name": "效率", "slug": "效率" },
+            "en": { "name": "Productivity", "slug": "productivity" }
+          },
+          "legacyNames": ["效率"]
+        }
+      ]
     },
     {
       "id": "technology",
@@ -26,7 +36,161 @@
         "zh": { "name": "技术", "slug": "技术" },
         "en": { "name": "Technology", "slug": "technology" }
       },
-      "tags": []
+      "tags": [
+        {
+          "id": "app",
+          "sortOrder": 10,
+          "labels": {
+            "zh": { "name": "App", "slug": "App" },
+            "en": { "name": "App", "slug": "app" }
+          },
+          "legacyNames": ["App"]
+        },
+        {
+          "id": "utm",
+          "sortOrder": 20,
+          "labels": {
+            "zh": { "name": "UTM", "slug": "UTM" },
+            "en": { "name": "UTM", "slug": "utm" }
+          },
+          "legacyNames": ["UTM"]
+        },
+        {
+          "id": "smart-home",
+          "sortOrder": 30,
+          "labels": {
+            "zh": { "name": "智能家居", "slug": "智能家居" },
+            "en": { "name": "Smart Home", "slug": "smart-home" }
+          },
+          "legacyNames": ["智能家居"]
+        },
+        {
+          "id": "home-assistant",
+          "sortOrder": 40,
+          "labels": {
+            "zh": { "name": "Home Assistant", "slug": "Home Assistant" },
+            "en": { "name": "Home Assistant", "slug": "home-assistant" }
+          },
+          "legacyNames": ["Home Assistant"]
+        },
+        {
+          "id": "ios",
+          "sortOrder": 50,
+          "labels": {
+            "zh": { "name": "iOS", "slug": "iOS" },
+            "en": { "name": "iOS", "slug": "ios" }
+          },
+          "legacyNames": ["iOS"]
+        },
+        {
+          "id": "iphone",
+          "sortOrder": 60,
+          "labels": {
+            "zh": { "name": "iPhone", "slug": "iPhone" },
+            "en": { "name": "iPhone", "slug": "iphone" }
+          },
+          "legacyNames": ["iPhone"]
+        },
+        {
+          "id": "apple",
+          "sortOrder": 70,
+          "labels": {
+            "zh": { "name": "苹果", "slug": "苹果" },
+            "en": { "name": "Apple", "slug": "apple" }
+          },
+          "legacyNames": ["苹果"]
+        },
+        {
+          "id": "tools",
+          "sortOrder": 80,
+          "labels": {
+            "zh": { "name": "工具", "slug": "工具" },
+            "en": { "name": "Tools", "slug": "tools" }
+          },
+          "legacyNames": ["工具"]
+        },
+        {
+          "id": "tampermonkey",
+          "sortOrder": 90,
+          "labels": {
+            "zh": { "name": "Tampermonkey", "slug": "Tampermonkey" },
+            "en": { "name": "Tampermonkey", "slug": "tampermonkey" }
+          },
+          "legacyNames": ["Tampermonkey"]
+        },
+        {
+          "id": "tutorials",
+          "sortOrder": 100,
+          "labels": {
+            "zh": { "name": "教程", "slug": "教程" },
+            "en": { "name": "Tutorials", "slug": "tutorials" }
+          },
+          "legacyNames": ["教程"]
+        },
+        {
+          "id": "charging",
+          "sortOrder": 110,
+          "labels": {
+            "zh": { "name": "充电", "slug": "充电" },
+            "en": { "name": "Charging", "slug": "charging" }
+          },
+          "legacyNames": ["充电"]
+        },
+        {
+          "id": "explainers",
+          "sortOrder": 120,
+          "labels": {
+            "zh": { "name": "科普", "slug": "科普" },
+            "en": { "name": "Explainers", "slug": "explainers" }
+          },
+          "legacyNames": ["科普"]
+        },
+        {
+          "id": "baidu-netdisk",
+          "sortOrder": 130,
+          "labels": {
+            "zh": { "name": "百度网盘", "slug": "百度网盘" },
+            "en": { "name": "Baidu Netdisk", "slug": "baidu-netdisk" }
+          },
+          "legacyNames": ["百度网盘"]
+        },
+        {
+          "id": "mac-mini",
+          "sortOrder": 140,
+          "labels": {
+            "zh": { "name": "Mac mini", "slug": "Mac mini" },
+            "en": { "name": "Mac mini", "slug": "mac-mini" }
+          },
+          "legacyNames": ["Mac mini"]
+        },
+        {
+          "id": "idm",
+          "sortOrder": 150,
+          "labels": {
+            "zh": { "name": "IDM", "slug": "IDM" },
+            "en": { "name": "IDM", "slug": "idm" }
+          },
+          "legacyNames": ["IDM"]
+        },
+        {
+          "id": "consumer-electronics",
+          "sortOrder": 160,
+          "labels": {
+            "zh": { "name": "数码", "slug": "数码" },
+            "en": { "name": "Consumer Electronics", "slug": "consumer-electronics" }
+          },
+          "legacyNames": ["数码"]
+        },
+        {
+          "id": "homekit",
+          "sortOrder": 170,
+          "labels": {
+            "zh": { "name": "HomeKit", "slug": "HomeKit" },
+            "en": { "name": "HomeKit", "slug": "homekit" }
+          },
+          "legacyNames": ["HomeKit"]
+        }
+      ]
     },
     {
       "id": "uncategorized",
