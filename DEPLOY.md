@@ -726,7 +726,46 @@ for headers in "$ZH_HOME_HEADERS" "$EN_HOME_HEADERS"; do
 done
 ```
 
-回滚时在 Cloudflare Cache Rules 中禁用该规则。若未来允许图片在同一路径原地更新，发布后还必须 purge 对应 URL，或继续改用带版本的新文件名。
+若未来允许图片在同一路径原地更新，发布后还必须 purge 对应 URL，或继续改用带版本的新文件名。
+
+#### Cloudflare 图片缓存确定性回滚
+
+图片缓存必须保留两条范围完全相同、顺序固定的 Cache Rule：
+
+1. `Cache blog images at Cloudflare edge`：`Eligible for cache`，Edge TTL 遵循源站，保持 Enabled。
+2. `Emergency bypass blog image cache`：`Bypass cache`，正常状态为 Disabled；Bypass cache 在请求阶段取消缓存资格，因此启用后预期为 `CF-Cache-Status: DYNAMIC`。它必须排在 `Cache blog images at Cloudflare edge` 之后，使后置设置覆盖前面的缓存资格。
+
+两条规则都只能匹配 `(http.host eq "blog.cokedaily.space" and http.request.uri.path wildcard r"/images/*")`。不得通过禁用主缓存规则来回滚，因为已经驻留在边缘的对象可能继续命中；确定性回滚需要后置 Bypass 和前缀 purge 同时执行。
+
+发布前必须在 Nginx 维护门仍开启时完成一次演练：
+
+1. 确认 Bypass 规则 Disabled。从生产主机（维护 allowlist）请求一个带唯一查询串的现有 WebP 两次，记录 `MISS → HIT`；再从非 allowlist 客户端确认同一 URL 可命中该缓存对象。
+2. 启用 `Emergency bypass blog image cache`，通过 Rulesets API 或 Dashboard 读回确认 `enabled=true`，并确认它仍位于主缓存规则之后。
+3. purge `/images/*` 前缀。API 使用 `POST /zones/$ZONE_ID/purge_cache`，请求体必须是：
+
+   ```json
+   {"prefixes":["blog.cokedaily.space/images"]}
+   ```
+
+4. 从非 allowlist 公网客户端重新请求演练 URL 和一个不带查询串的现有 WebP，必须观察到 `HIT → DYNAMIC → 503`，且没有 `Age`。这证明维护期间不会继续泄漏先前缓存的图片 200。
+5. 演练后保持 Bypass Enabled，直到正式开放前的最后一步。
+
+正式开放顺序：
+
+1. 再次确认应用、数据库审计、PM2、Nginx 配置和维护态公网 503 均正常。
+2. 将 `Emergency bypass blog image cache` 设为 Disabled，并从 API 读回确认；此时前缀已经 purge，维护门仍阻止公开源站响应。
+3. 注释 Nginx 的 maintenance include，运行 `nginx -t`，再 reload。
+4. 立即运行上面的完整 post-open smoke，确认图片 `MISS → HIT`，HTML 为 `DYNAMIC`/`private, no-store`。
+
+若开放后的任一门禁失败，按以下顺序回滚，不得调换：
+
+1. 启用 `Emergency bypass blog image cache` 并读回确认。
+2. purge `/images/*` 前缀，并确认 Cloudflare API 返回成功。
+3. 启用 Nginx 维护门，执行 `nginx -t` 后 reload。
+4. 从非 allowlist 客户端确认 `/` 与现有图片均为 503；图片必须是 `CF-Cache-Status: DYNAMIC` 且没有 `Age`。
+5. 捕获切换后的数据库、文章、音频和日志证据，再决定前向修复或协调回滚；不得盲目恢复发布前数据库。
+
+正常稳定状态下，主缓存规则保持 Enabled，后置 Bypass 规则保持 Disabled，便于下一次紧急回滚只做一次受控启用。Cloudflare Token 不得写入仓库、命令历史、PM2 环境或发布证据；使用后必须从临时文件和 shell 环境清除。
 
 ---
 

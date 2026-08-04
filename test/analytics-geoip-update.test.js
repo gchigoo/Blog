@@ -703,6 +703,135 @@ printf '%s' "$status"
   t.diagnostic('network-free curl stub handled all five valid requests and enforced -q first, HTTPS-only protocol, globoff, max-time 30, no redirect option, and -- before URL');
 });
 
+test('DEPLOY defines a later-priority image bypass and prefix purge for deterministic rollback', async () => {
+  const deploy = await fs.readFile(path.join(projectRoot, 'DEPLOY.md'), 'utf8');
+  const exactExpression = '(http.host eq "blog.cokedaily.space" and http.request.uri.path wildcard r"/images/*")';
+
+  function extractRequiredSection(text, startMarker, endMarker, label) {
+    const start = text.indexOf(startMarker);
+    assert.notEqual(start, -1, `${label} start marker missing`);
+    const end = text.indexOf(endMarker, start + startMarker.length);
+    assert.notEqual(end, -1, `${label} end marker missing`);
+    return text.slice(start, end);
+  }
+
+  function assertOrdered(text, markers, label) {
+    let cursor = -1;
+    for (const marker of markers) {
+      const index = text.indexOf(marker, cursor + 1);
+      assert.ok(index > cursor, `${label} marker missing or out of order: ${marker}`);
+      cursor = index;
+    }
+  }
+
+  function validateRollbackContract(text) {
+    const rollback = extractRequiredSection(
+      text,
+      '#### Cloudflare 图片缓存确定性回滚',
+      '\n---',
+      'deterministic Cloudflare image rollback section'
+    );
+    const ruleContract = extractRequiredSection(
+      rollback,
+      '图片缓存必须保留两条范围完全相同、顺序固定的 Cache Rule：',
+      '发布前必须在 Nginx 维护门仍开启时完成一次演练：',
+      'Cloudflare rule contract'
+    );
+    const rehearsal = extractRequiredSection(
+      rollback,
+      '发布前必须在 Nginx 维护门仍开启时完成一次演练：',
+      '正式开放顺序：',
+      'Cloudflare rollback rehearsal'
+    );
+    const cutover = extractRequiredSection(
+      rollback,
+      '正式开放顺序：',
+      '若开放后的任一门禁失败，按以下顺序回滚，不得调换：',
+      'Cloudflare public cutover'
+    );
+    const failureRollback = extractRequiredSection(
+      rollback,
+      '若开放后的任一门禁失败，按以下顺序回滚，不得调换：',
+      '正常稳定状态下',
+      'Cloudflare failed-cutover rollback'
+    );
+    const steadyState = rollback.slice(rollback.indexOf('正常稳定状态下'));
+
+    assert.match(ruleContract, /Cache blog images at Cloudflare edge/);
+    assert.match(ruleContract, /Emergency bypass blog image cache/);
+    assert.match(ruleContract, /Bypass cache[^\n]*CF-Cache-Status: DYNAMIC/);
+    assert.match(ruleContract, /正常状态[^\n]*Disabled/);
+    assert.match(ruleContract, /必须排在[^\n]*Cache blog images at Cloudflare edge[^\n]*之后/);
+    const expressionMatch = /两条规则都只能匹配 `([^`\r\n]+)`。/.exec(ruleContract);
+    assert.ok(expressionMatch, 'shared Cloudflare rule expression missing');
+    assert.equal(expressionMatch[1], exactExpression, 'both rules must use only the exact host and /images/* expression');
+    assert.doesNotMatch(ruleContract, /禁用 `Cache blog images at Cloudflare edge`/,
+      'rollback must not disable the primary image cache rule');
+
+    assertOrdered(rehearsal, [
+      '确认 Bypass 规则 Disabled',
+      '`MISS → HIT`',
+      '启用 `Emergency bypass blog image cache`',
+      '`enabled=true`',
+      'purge `/images/*` 前缀',
+      '`HIT → DYNAMIC → 503`',
+      '保持 Bypass Enabled'
+    ], 'rehearsal');
+    assert.match(rehearsal, /"prefixes"\s*:\s*\[\s*"blog\.cokedaily\.space\/images"\s*\]/);
+
+    assertOrdered(cutover, [
+      '将 `Emergency bypass blog image cache` 设为 Disabled',
+      '从 API 读回确认',
+      '注释 Nginx 的 maintenance include',
+      '`nginx -t`',
+      'reload',
+      '完整 post-open smoke'
+    ], 'public cutover');
+
+    assertOrdered(failureRollback, [
+      '启用 `Emergency bypass blog image cache`',
+      '读回确认',
+      'purge `/images/*` 前缀',
+      'Cloudflare API 返回成功',
+      '启用 Nginx 维护门',
+      '`nginx -t`',
+      'reload',
+      '确认 `/` 与现有图片均为 503',
+      '`CF-Cache-Status: DYNAMIC`',
+      '没有 `Age`'
+    ], 'failed-cutover rollback');
+
+    assert.match(steadyState, /主缓存规则保持 Enabled[^\n]*后置 Bypass 规则保持 Disabled/);
+  }
+
+  validateRollbackContract(deploy);
+
+  const broadenedScope = deploy.replaceAll(exactExpression, '(http.host eq "blog.cokedaily.space")');
+  assert.notEqual(broadenedScope, deploy, 'scope mutation fixture must change the document');
+  assert.throws(() => validateRollbackContract(broadenedScope), /exact host and \/images\/\* expression/);
+
+  const additivelyBroadenedScope = deploy.replaceAll(
+    exactExpression,
+    `${exactExpression} or http.host eq "admin.cokedaily.space"`
+  );
+  assert.notEqual(additivelyBroadenedScope, deploy, 'additive-scope mutation fixture must change the document');
+  assert.throws(() => validateRollbackContract(additivelyBroadenedScope), /exact host and \/images\/\* expression/);
+
+  const cutoverRemoved = deploy.replace(
+    /正式开放顺序：[\s\S]*?(?=若开放后的任一门禁失败)/,
+    '正式开放顺序：\n\n'
+  );
+  assert.notEqual(cutoverRemoved, deploy, 'cutover-removal fixture must change the document');
+  assert.throws(() => validateRollbackContract(cutoverRemoved), /public cutover marker missing or out of order/);
+
+  const unsafeRollbackOrder = deploy.replace(
+    '1. 启用 `Emergency bypass blog image cache` 并读回确认。\n2. purge `/images/*` 前缀，并确认 Cloudflare API 返回成功。\n3. 启用 Nginx 维护门，执行 `nginx -t` 后 reload。',
+    '1. 启用 Nginx 维护门，执行 `nginx -t` 后 reload。\n2. 启用 `Emergency bypass blog image cache` 并读回确认。\n3. purge `/images/*` 前缀，并确认 Cloudflare API 返回成功。'
+  );
+  assert.notEqual(unsafeRollbackOrder, deploy, 'rollback-order fixture must change the document');
+  assert.throws(() => validateRollbackContract(unsafeRollbackOrder), /failed-cutover rollback marker missing or out of order/);
+});
+
 test('Nginx caches static assets only by explicit prefixes and gates public traffic during maintenance', async () => {
   const [nginx, maintenance] = await Promise.all([
     fs.readFile(path.join(projectRoot, 'deploy/nginx/blog.conf'), 'utf8'),
