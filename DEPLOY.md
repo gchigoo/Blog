@@ -304,6 +304,15 @@ sudo systemctl reload nginx
 参考 `deploy/nginx/blog.conf`，主要配置项：
 
 ```nginx
+map $upstream_status $blog_image_expires {
+    ~^(200|206|304)$ 30d;
+    default off;
+}
+map $upstream_status $blog_image_cache_control {
+    ~^(200|206|304)$ "public, immutable";
+    default "private, no-store";
+}
+
 server {
     listen 443 ssl;
     server_name blog.cokedaily.space;
@@ -344,8 +353,8 @@ server {
         proxy_pass http://127.0.0.1:3000;
         proxy_hide_header Cache-Control;
         proxy_hide_header Expires;
-        expires 30d;
-        add_header Cache-Control "public, immutable";
+        expires $blog_image_expires;
+        add_header Cache-Control $blog_image_cache_control always;
     }
     location = /favicon.ico {
         proxy_pass http://127.0.0.1:3000;
@@ -355,7 +364,7 @@ server {
 }
 ```
 
-**静态缓存契约**：只对 `/css/`、`/js/`、`/vendor/`、`/fonts/`、`/images/` 这些已知前缀与精确的 `/favicon.ico` 应用缓存头。禁止扩展名正则缓存（如 `location ~* \.(css|js)$`），否则带点的 taxonomy HTML 路由（如 `/zh/tag/Node.js`）会被错误缓存或误判为静态资源，必须保持动态代理。`/images/` 使用不带 URI 尾斜杠的 `proxy_pass`，因此原始 `/images/*` URI 会原样交给 Express；Nginx 隐藏上游的 `Cache-Control` 与 `Expires` 后，为成功响应设置 30 天 public immutable 缓存。`add_header` 不得使用 `always`，以免缺失图片等错误响应继承成功缓存策略。
+**静态缓存契约**：只对 `/css/`、`/js/`、`/vendor/`、`/fonts/`、`/images/` 这些已知前缀与精确的 `/favicon.ico` 应用缓存头。禁止扩展名正则缓存（如 `location ~* \.(css|js)$`），否则带点的 taxonomy HTML 路由（如 `/zh/tag/Node.js`）会被错误缓存或误判为静态资源，必须保持动态代理。`/images/` 使用不带 URI 尾斜杠的 `proxy_pass`，因此原始 `/images/*` URI 会原样交给 Express。Nginx 隐藏上游的 `Cache-Control` 与 `Expires` 后按 `$upstream_status` 选择策略：200/206/304 获得 30 天 public immutable；其他状态不生成 `Expires`，并通过 `add_header ... always` 明确返回 `private, no-store`。这样错误响应不会继承成功缓存策略，也不会因隐藏上游头而失去 no-store。
 
 #### 公共维护门（cutover 期间 503）
 
@@ -728,6 +737,69 @@ done
 
 若未来允许图片在同一路径原地更新，发布后还必须 purge 对应 URL，或继续改用带版本的新文件名。
 
+#### Cloudflare 错误响应缓存防护
+
+应用必须为所有 HTML 4xx/5xx 设置 `Cache-Control: private, no-store`，为所有 `/api/*` 响应设置 `Cache-Control: no-store`，并移除错误响应上的 `Expires`。这包括静态文件未命中后生成的 HTML 404、audio 404、API 404、真实 HTML/API 500 及请求解析错误，防止 `.webp` 等默认可缓存扩展把错误页面变成共享负缓存。
+
+##### 规则写入契约（不可放宽）
+
+Cloudflare Zone 必须保留以下 Cache Response Rule，作为所有 hostname 的纵深防护；它只影响错误响应，不改变成功 2xx 图片和静态资源的缓存：
+
+- 规则名：`Do not cache error responses`
+- Phase：`http_response_cache_settings`
+- 状态：`enabled: true`
+- 匹配表达式：`(http.response.code ge 400)`
+- Action：`set_cache_control`
+- Action parameters：
+
+  ```json
+  {"no-store":{"operation":"set","cloudflare_only":true}}
+  ```
+
+`cloudflare_only: true` 只阻止 Cloudflare 存储错误对象；浏览器看到的 Blog 错误响应仍由应用自己的 `private, no-store` 契约控制。写入现有 phase 时使用单规则 Create/Update API 并保留其他规则；禁止用未包含完整现有规则列表的 entrypoint `PUT`，因为它会替换整个 ruleset。
+
+该规则必须是 phase 的 `.result.rules` 数组中**最后一条 Enabled 的 `set_cache_control` 规则**。Cloudflare 对同一设置采用后置匹配规则覆盖前置规则；只要目标规则之后还存在任何 Enabled 的 `set_cache_control` 规则，就必须停止发布并先重排或审查，不能仅凭目标规则存在便继续。
+
+##### 控制面回读与冲突审计（强制）
+
+每次创建、更新或重排后，都必须重新执行控制面 GET；不得把写入请求的响应当作回读：
+
+```text
+GET /zones/$ZONE_ID/rulesets/phases/http_response_cache_settings/entrypoint
+```
+
+对新取得的 `.result.rules` 按数组顺序检查，并保留脱敏证据：
+
+1. `Do not cache error responses` 恰好出现一次；
+2. 该规则的 `enabled` 严格等于 `true`；
+3. `phase`、表达式、Action 和 Action parameters 与上面的契约逐字一致；
+4. 该规则的数组下标等于所有 `enabled == true && action == "set_cache_control"` 规则中的最大下标，即它之后没有 Enabled 的 `set_cache_control` 规则；
+5. 若回读不存在该 phase、规则重复、规则 Disabled、字段不一致或存在后置冲突，均为发布阻塞项。
+
+##### Cloudflare Trace 终态验证（强制）
+
+控制面回读后，使用 Cloudflare Trace API（或 Dashboard Trace）对 Blog 的全新缺失 URL 发起真实源站响应 Trace；`skip_response` 必须为 `false`，否则无法得到 `http.response.code`：
+
+```text
+POST /accounts/$ACCOUNT_ID/request-tracer/trace
+{"method":"GET","url":"https://blog.cokedaily.space/<trace-nonce>.webp","skip_response":false}
+```
+
+Trace 必须显示 `result.status_code >= 400`，并出现一条 `description == "Do not cache error responses"`、`matched == true`、`action == "set_cache_control"` 且 `action_parameters.no-store.operation == "set"`、`cloudflare_only == true` 的执行记录。Inactive/Disabled 规则不会进入 Trace；若目标规则未匹配，或它之后出现任何 matched 的 `set_cache_control` 记录，则停止发布。若 API Token 没有 Request Tracer Read 权限，必须在 Dashboard 使用同一输入完成 Trace；不能以规则创建成功代替终态验证。
+
+##### Purge 与公网验证
+
+部署该规则后必须 purge 已经观察到的错误 URL；若无法完整枚举 Blog 的旧错误对象，则 purge `blog.cokedaily.space` hostname，再重新预热真实图片。
+
+每次开放后使用全新 nonce 连续请求两次以下路径：
+
+- `https://blog.cokedaily.space/images/<nonce>.webp`
+- `https://blog.cokedaily.space/imagesx/<nonce>.webp`
+- `https://blog.cokedaily.space/<nonce>.webp`
+- 同一 Zone 下的非目标 hostname 上一个全新 `<nonce>.webp`
+
+Blog 的 HTML 404 必须为 `private, no-store`；所有目标连续两次请求都不得出现 `CF-Cache-Status: HIT` 或 `Age`。这组公网请求验证真实边缘效果，但不能替代上面的控制面回读和 Trace。同时重新验证两张真实 WebP 仍为 `MISS → HIT`，证明错误响应防护没有破坏成功图片缓存。
+
 #### Cloudflare 图片缓存确定性回滚
 
 图片缓存必须保留两条范围完全相同、顺序固定的 Cache Rule：
@@ -926,7 +998,7 @@ df -h
 
 #### Nginx `/images/*` 返回 403
 
-如果图片文件存在、Express 的 `http://127.0.0.1:3000/images/<file>.webp` 返回 200，但 HTTPS 经 Nginx 返回 403，请确认安装的 `deploy/nginx/blog.conf` 中 `/images/` 使用不带 URI 尾斜杠的 `proxy_pass http://127.0.0.1:3000;`，而不是指向 `/root/Blog/public/images/` 的 `alias`。缺失图片仍应由 Express 返回原有错误状态，缓存头也不得使用 `always`。
+如果图片文件存在、Express 的 `http://127.0.0.1:3000/images/<file>.webp` 返回 200，但 HTTPS 经 Nginx 返回 403，请确认安装的 `deploy/nginx/blog.conf` 中 `/images/` 使用不带 URI 尾斜杠的 `proxy_pass http://127.0.0.1:3000;`，而不是指向 `/root/Blog/public/images/` 的 `alias`。缺失图片仍应由 Express 返回原有错误状态；状态映射的 `add_header Cache-Control $blog_image_cache_control always;` 必须保留 `always`，才能让 4xx/5xx 收到 `private, no-store`。禁止的是固定成功值 `add_header Cache-Control "public, immutable" always;`，因为它会把成功缓存策略错误地附加到失败响应。
 
 **不要**通过放宽 `/root` 的目录权限、给 Nginx worker（通常为 `www-data`）授予 `/root` ACL，或把 Nginx worker 提升为 root/其他高权限用户来修复图片 403；这些做法扩大了权限边界。应保持 `/root` 不可遍历，并让 Nginx 通过现有 loopback Express 服务读取 `/images/*`。
 

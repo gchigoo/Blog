@@ -89,6 +89,8 @@ function setLocaleLocals(req, res, config, locale) {
  * localized with the right `html lang` and messages.
  */
 function renderNotFound(req, res, config, status = 404) {
+  res.set('Cache-Control', 'private, no-store');
+  res.removeHeader('Expires');
   if (!isSupportedLocale(req.locale)) {
     setLocaleLocals(req, res, config, DEFAULT_LOCALE);
   }

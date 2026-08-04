@@ -703,6 +703,133 @@ printf '%s' "$status"
   t.diagnostic('network-free curl stub handled all five valid requests and enforced -q first, HTTPS-only protocol, globoff, max-time 30, no redirect option, and -- before URL');
 });
 
+test('DEPLOY prevents Cloudflare from caching any HTTP error response', async () => {
+  const deploy = await fs.readFile(path.join(projectRoot, 'DEPLOY.md'), 'utf8');
+
+  function extractRequiredSection(text, startMarker, endMarker, label) {
+    const start = text.indexOf(startMarker);
+    assert.notEqual(start, -1, `${label} start marker missing`);
+    const end = text.indexOf(endMarker, start + startMarker.length);
+    assert.notEqual(end, -1, `${label} end marker missing`);
+    return text.slice(start, end);
+  }
+
+  function assertOrdered(text, markers, label) {
+    let cursor = -1;
+    for (const marker of markers) {
+      const index = text.indexOf(marker, cursor + 1);
+      assert.ok(index > cursor, `${label} marker missing or out of order: ${marker}`);
+      cursor = index;
+    }
+  }
+
+  function validateErrorCacheContract(text) {
+    const section = extractRequiredSection(
+      text,
+      '#### Cloudflare 错误响应缓存防护',
+      '#### Cloudflare 图片缓存确定性回滚',
+      'Cloudflare error-response cache protection section'
+    );
+    const ruleContract = extractRequiredSection(
+      section,
+      '##### 规则写入契约（不可放宽）',
+      '##### 控制面回读与冲突审计（强制）',
+      'Cloudflare error-response rule contract'
+    );
+    const readback = extractRequiredSection(
+      section,
+      '##### 控制面回读与冲突审计（强制）',
+      '##### Cloudflare Trace 终态验证（强制）',
+      'Cloudflare error-response control-plane readback'
+    );
+    const trace = extractRequiredSection(
+      section,
+      '##### Cloudflare Trace 终态验证（强制）',
+      '##### Purge 与公网验证',
+      'Cloudflare error-response Trace verification'
+    );
+    const publicVerification = section.slice(section.indexOf('##### Purge 与公网验证'));
+
+    assert.match(section, /HTML 4xx\/5xx[\s\S]*真实 HTML\/API 500/);
+    assert.match(section, /private, no-store/);
+    assert.match(ruleContract, /- 规则名：`Do not cache error responses`/);
+    assert.match(ruleContract, /- Phase：`http_response_cache_settings`/);
+    const enabled = /- 状态：`([^`\r\n]+)`/.exec(ruleContract);
+    assert.ok(enabled, 'error-response rule enabled state missing');
+    assert.equal(enabled[1], 'enabled: true', 'error-response rule must be explicitly enabled');
+    const expression = /- 匹配表达式：`([^`\r\n]+)`/.exec(ruleContract);
+    assert.ok(expression, 'error-response rule expression missing');
+    assert.equal(expression[1], '(http.response.code ge 400)');
+    assert.match(ruleContract, /- Action：`set_cache_control`/);
+    assert.match(ruleContract, /"no-store"\s*:\s*\{\s*"operation"\s*:\s*"set"\s*,\s*"cloudflare_only"\s*:\s*true\s*\}/);
+    assert.match(ruleContract, /最后一条 Enabled 的 `set_cache_control` 规则/,
+      'target rule must be the final enabled cache-control modifier');
+    assert.match(ruleContract, /目标规则之后还存在任何 Enabled 的 `set_cache_control` 规则[^\n]*停止发布/,
+      'a later cache-control modifier must block release');
+
+    assert.match(readback, /GET \/zones\/\$ZONE_ID\/rulesets\/phases\/http_response_cache_settings\/entrypoint/);
+    assertOrdered(readback, [
+      '恰好出现一次',
+      '`enabled` 严格等于 `true`',
+      '逐字一致',
+      '最大下标',
+      '规则 Disabled'
+    ], 'Cloudflare error-response readback');
+    assert.match(readback, /enabled == true && action == "set_cache_control"/);
+    assert.match(readback, /它之后没有 Enabled 的 `set_cache_control` 规则/,
+      'readback must prove no later enabled cache-control modifier exists');
+    assert.match(readback, /不得把写入请求的响应当作回读/);
+
+    assert.match(trace, /POST \/accounts\/\$ACCOUNT_ID\/request-tracer\/trace/);
+    assert.match(trace, /`skip_response` 必须为 `false`/);
+    assert.match(trace, /"skip_response":false/);
+    assert.match(trace, /result\.status_code >= 400/);
+    assert.match(trace, /description == "Do not cache error responses"/);
+    assert.match(trace, /matched == true/);
+    assert.match(trace, /action == "set_cache_control"/);
+    assert.match(trace, /action_parameters\.no-store\.operation == "set"/);
+    assert.match(trace, /cloudflare_only == true/);
+    assert.match(trace, /Inactive\/Disabled 规则不会进入 Trace/);
+    assert.match(trace, /它之后出现任何 matched 的 `set_cache_control` 记录[^\n]*停止发布/);
+
+    assert.match(publicVerification, /\/images\/<nonce>\.webp/);
+    assert.match(publicVerification, /\/imagesx\/<nonce>\.webp/);
+    assert.match(publicVerification, /\/<nonce>\.webp/);
+    assert.match(publicVerification, /非目标 hostname/);
+    assert.match(publicVerification, /不得出现[^\n]*CF-Cache-Status: HIT[^\n]*Age/);
+    assert.match(publicVerification, /不能替代上面的控制面回读和 Trace/);
+    assert.match(publicVerification, /purge/);
+  }
+
+  validateErrorCacheContract(deploy);
+
+  const disabled = deploy.replace('- 状态：`enabled: true`', '- 状态：`enabled: false`');
+  assert.notEqual(disabled, deploy, 'disabled-rule fixture must change the document');
+  assert.throws(() => validateErrorCacheContract(disabled), /explicitly enabled/);
+
+  const laterConflictAllowed = deploy.replace(
+    '即它之后没有 Enabled 的 `set_cache_control` 规则',
+    '但允许它之后存在 Enabled 的 `set_cache_control` 规则'
+  );
+  assert.notEqual(laterConflictAllowed, deploy, 'later-conflict fixture must change the document');
+  assert.throws(() => validateErrorCacheContract(laterConflictAllowed), /no later enabled cache-control modifier/);
+
+  const writeResponseAccepted = deploy.replace(
+    '不得把写入请求的响应当作回读',
+    '可以把写入请求的响应当作回读'
+  );
+  assert.notEqual(writeResponseAccepted, deploy, 'write-response fixture must change the document');
+  assert.throws(() => validateErrorCacheContract(writeResponseAccepted), /写入请求的响应/);
+
+  const skippedOrigin = deploy.replace('`skip_response` 必须为 `false`', '`skip_response` 必须为 `true`');
+  assert.notEqual(skippedOrigin, deploy, 'Trace skip-response fixture must change the document');
+  assert.throws(() => validateErrorCacheContract(skippedOrigin), /skip_response/);
+
+  const unmatchedTrace = deploy.replace('`matched == true`', '`matched == false`');
+  assert.notEqual(unmatchedTrace, deploy, 'unmatched Trace fixture must change the document');
+  assert.throws(() => validateErrorCacheContract(unmatchedTrace), /matched == true/);
+});
+
 test('DEPLOY defines a later-priority image bypass and prefix purge for deterministic rollback', async () => {
   const deploy = await fs.readFile(path.join(projectRoot, 'DEPLOY.md'), 'utf8');
   const exactExpression = '(http.host eq "blog.cokedaily.space" and http.request.uri.path wildcard r"/images/*")';
@@ -833,9 +960,10 @@ test('DEPLOY defines a later-priority image bypass and prefix purge for determin
 });
 
 test('Nginx caches static assets only by explicit prefixes and gates public traffic during maintenance', async () => {
-  const [nginx, maintenance] = await Promise.all([
+  const [nginx, maintenance, deploy] = await Promise.all([
     fs.readFile(path.join(projectRoot, 'deploy/nginx/blog.conf'), 'utf8'),
-    fs.readFile(path.join(projectRoot, 'deploy/nginx/blog-maintenance.conf'), 'utf8')
+    fs.readFile(path.join(projectRoot, 'deploy/nginx/blog-maintenance.conf'), 'utf8'),
+    fs.readFile(path.join(projectRoot, 'DEPLOY.md'), 'utf8')
   ]);
 
   // No extension-wide cache regex: a dot-containing taxonomy HTML route such as
@@ -860,9 +988,28 @@ test('Nginx caches static assets only by explicit prefixes and gates public traf
   assert.doesNotMatch(imagesBlock, /\/root\/Blog/, 'images must not depend on traversing /root');
   assert.match(imagesBlock, /proxy_hide_header\s+Cache-Control;/, 'upstream Cache-Control must be hidden');
   assert.match(imagesBlock, /proxy_hide_header\s+Expires;/, 'upstream Expires must be hidden');
-  assert.match(imagesBlock, /expires\s+30d;/, 'images must retain 30-day success caching');
-  assert.match(imagesBlock, /add_header\s+Cache-Control\s+"public, immutable";/, 'images must retain public immutable caching');
-  assert.doesNotMatch(imagesBlock, /\balways\b/, 'image cache headers must not be added to error responses');
+  assert.match(nginx, /map\s+\$upstream_status\s+\$blog_image_expires\s*\{[\s\S]*~\^\(200\|206\|304\)\$\s+30d;[\s\S]*default\s+off;[\s\S]*\}/,
+    'image Expires map must enable 30 days only for successful/cache-validation responses');
+  assert.match(nginx, /map\s+\$upstream_status\s+\$blog_image_cache_control\s*\{[\s\S]*~\^\(200\|206\|304\)\$\s+"public, immutable";[\s\S]*default\s+"private, no-store";[\s\S]*\}/,
+    'image Cache-Control map must make every non-success response private and no-store');
+  assert.match(imagesBlock, /expires\s+\$blog_image_expires;/,
+    'images must select Expires by upstream status');
+  assert.match(imagesBlock, /add_header\s+Cache-Control\s+\$blog_image_cache_control\s+always;/,
+    'images must emit success caching or error no-store on every status');
+
+  const troubleshootingStart = deploy.indexOf('#### Nginx `/images/*` 返回 403');
+  const troubleshootingEnd = deploy.indexOf('### 问题 4: Nginx 502 Bad Gateway', troubleshootingStart);
+  assert.notEqual(troubleshootingStart, -1, 'image 403 troubleshooting section missing');
+  assert.notEqual(troubleshootingEnd, -1, 'image 403 troubleshooting section must end before problem 4');
+  const imageTroubleshooting = deploy.slice(troubleshootingStart, troubleshootingEnd);
+  assert.match(imageTroubleshooting,
+    /状态映射的 `add_header Cache-Control \$blog_image_cache_control always;` 必须保留 `always`/,
+    'troubleshooting must preserve always for the status-dependent cache header');
+  assert.match(imageTroubleshooting,
+    /禁止的是固定成功值 `add_header Cache-Control "public, immutable" always;`/,
+    'troubleshooting must distinguish the unsafe constant-success always pattern');
+  assert.doesNotMatch(imageTroubleshooting, /缓存头也不得使用 `always`/,
+    'troubleshooting must not repeat the obsolete no-always guidance');
 
   // The catch-all dynamic proxy is the only location able to serve
   // /zh/tag/Node.js (no static prefix shadows it and no regex captures it).

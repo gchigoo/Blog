@@ -1321,6 +1321,9 @@ test('injected failures after post, article, tag, and FTS writes roll back the n
       markdown({ title: 'Doomed', slug: 'doomed-post', tags: '[nodejs]', body: 'doomed needle' }));
     const body = await response.json();
     assert.equal(response.status, 500, `${injection.name}: ${JSON.stringify(body)}`);
+    assert.equal(response.headers.get('cache-control'), 'no-store', injection.name);
+    assert.equal(response.headers.get('expires'), null, injection.name);
+    assert.match(response.headers.get('content-type') || '', /application\/json/, injection.name);
     assert.equal(body.code, 'audio_publish_failed', injection.name);
 
     const verify = new Database(path.join(root, 'blog.db'));
@@ -2033,6 +2036,78 @@ test('app-level catch-all localized 404s never render dead language-switch targe
   assert.equal(api.status, 404);
   assert.match(api.headers.get('content-type') || '', /application\/json/);
   assert.deepEqual(await api.json(), { error: '接口不存在' });
+});
+
+test('static-looking HTML, API, audio, and parser errors are explicitly no-store', async t => {
+  const { baseUrl } = await seededHarness(t);
+
+  for (const pathname of [
+    '/images/missing-cache-test.webp',
+    '/imagesx/missing-cache-test.webp',
+    '/missing-cache-test.webp'
+  ]) {
+    const response = await fetch(`${baseUrl}${pathname}`);
+    assert.equal(response.status, 404, pathname);
+    assert.match(response.headers.get('content-type') || '', /text\/html/, pathname);
+    assert.equal(response.headers.get('cache-control'), 'private, no-store', pathname);
+    assert.equal(response.headers.get('expires'), null, pathname);
+  }
+
+  for (const pathname of ['/api/missing-cache-test.webp', '/api/articles/missing-cache-test.webp']) {
+    const response = await fetch(`${baseUrl}${pathname}`);
+    assert.equal(response.status, 404, pathname);
+    assert.match(response.headers.get('content-type') || '', /application\/json/, pathname);
+    assert.equal(response.headers.get('cache-control'), 'no-store', pathname);
+    assert.equal(response.headers.get('expires'), null, pathname);
+  }
+
+  const audio = await fetch(`${baseUrl}/audio/missing-cache-test.mp3`);
+  assert.equal(audio.status, 404);
+  assert.equal(audio.headers.get('cache-control'), 'private, no-store');
+  assert.equal(audio.headers.get('expires'), null);
+
+  const htmlParserError = await fetch(`${baseUrl}/missing-cache-test.webp`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{'
+  });
+  assert.equal(htmlParserError.status, 400);
+  assert.equal(htmlParserError.headers.get('cache-control'), 'private, no-store');
+  assert.equal(htmlParserError.headers.get('expires'), null);
+
+  const apiParserError = await fetch(`${baseUrl}/api/missing-cache-test.webp`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{'
+  });
+  assert.equal(apiParserError.status, 400);
+  assert.match(apiParserError.headers.get('content-type') || '', /application\/json/);
+  assert.equal(apiParserError.headers.get('cache-control'), 'no-store');
+  assert.equal(apiParserError.headers.get('expires'), null);
+
+  const successfulApi = await fetch(`${baseUrl}/api/articles`);
+  assert.equal(successfulApi.status, 200);
+  assert.equal(successfulApi.headers.get('cache-control'), 'no-store');
+});
+
+test('static-looking public HTML 500 responses are private no-store', async t => {
+  const { root, baseUrl } = await seededHarness(t);
+
+  // Removing a taxonomy table after startup makes an unknown legacy tag hit
+  // the real database failure path before any localized no-store middleware.
+  // The .webp suffix also reproduces the extension Cloudflare otherwise treats
+  // as cacheable, without adding a production-only test route.
+  const db = new Database(path.join(root, 'blog.db'));
+  db.pragma('foreign_keys = OFF');
+  db.exec('DROP TABLE tag_labels');
+  db.close();
+
+  const response = await fetch(`${baseUrl}/tag/missing-cache-test.webp`);
+  assert.equal(response.status, 500);
+  assert.match(response.headers.get('content-type') || '', /text\/plain/);
+  assert.equal(response.headers.get('cache-control'), 'private, no-store');
+  assert.equal(response.headers.get('expires'), null);
+  assert.equal(await response.text(), '服务器错误');
 });
 
 test('unmatched API paths return JSON 404s and never reach the localized HTML router', async t => {

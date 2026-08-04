@@ -76,6 +76,11 @@ app.use(analyticsModule.publicContextRouter);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+app.use('/api', (req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  res.removeHeader('Expires');
+  next();
+});
 
 let commentsModule = null;
 if (config.comments.enabled && 'googleClientId' in config.comments) {
@@ -120,11 +125,16 @@ app.use(createLegacyRedirectRouter({ config, articleService }));
 
 app.use(analyticsModule.collectorMiddleware);
 app.use('/audio', (req, res, next) => {
+  const sendNotFound = () => {
+    res.set('Cache-Control', 'private, no-store');
+    res.removeHeader('Expires');
+    return res.sendStatus(404);
+  };
   const match = articleAudioPath.exec(req.path);
-  if (!match || !AUDIO_FORMATS[match[2]]) return res.sendStatus(404);
+  if (!match || !AUDIO_FORMATS[match[2]]) return sendNotFound();
   articleAudioStatic(req, res, error => {
     if (error) return next(error);
-    res.sendStatus(404);
+    return sendNotFound();
   });
 });
 app.use(express.static(path.join(__dirname, '..', 'public')));
@@ -153,6 +163,8 @@ app.use((error, req, res, next) => {
     ? error.status
     : error.type === 'entity.parse.failed' ? 400 : 500;
   if (status >= 500) console.error(`[request-error] ${req.method} ${req.originalUrl}:`, error);
+  res.set('Cache-Control', req.originalUrl.startsWith('/api/') ? 'no-store' : 'private, no-store');
+  res.removeHeader('Expires');
   if (req.originalUrl.startsWith('/api/')) {
     return res.status(status).json({ error: status >= 500 ? '服务器错误' : '请求无效' });
   }
