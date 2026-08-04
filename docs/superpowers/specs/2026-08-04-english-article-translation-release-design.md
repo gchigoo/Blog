@@ -188,9 +188,9 @@
 4. 快进生产 Git 到已推送 commit，继续保留生产本地 `ecosystem.config.js`。
 5. 校验并 apply taxonomy sync。
 6. 校验翻译内容包 SHA-256。
-7. 通过 loopback 管理发布接口依次导入 4 篇英文文章。认证令牌只在生产内存中短时生成，不打印、不写入命令历史、文件、PM2 环境或 Git。
-8. 运行数据库迁移、taxonomy/content audit、计数、FTS 和操作残留检查。
-9. 启动 PM2，检查错误日志、PID、重启次数和仅 loopback 监听。
+7. 在维护门保持启用时启动 PM2 候选进程，确认它仅监听 loopback，并完成最小 localhost 健康检查。
+8. 通过 loopback 管理发布接口依次导入 4 篇英文文章。认证令牌只在生产内存中短时生成，通过匿名管道交给发布客户端，不打印、不写入参数、命令历史、文件、PM2 环境或 Git。
+9. 运行数据库迁移、taxonomy/content audit、计数、FTS 和操作残留检查；随后重启最终 PM2 worker，并检查错误日志、PID、重启次数和仅 loopback 监听。
 10. 在维护窗口内完成 Express 和 Nginx localhost 冒烟。
 11. 删除生产临时翻译包和任何临时认证材料。
 12. 开放维护门并立即执行公网验证。
