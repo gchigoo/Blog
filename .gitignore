@@ -23,4 +23,5 @@ articles/en/*
 .cursor/
 *.mmdb
 /test-results/
+.worktrees/
 .superpowers/
