@@ -694,7 +694,7 @@ ssh rn-us-2.5g 'cd /root/Blog && \
   nginx -t && npm run audit-localized-content'
 ```
 
-Require commit `d707cf6` or its descendant, PM2 online, loopback-only listener, schema 3, four posts/articles/FTS rows, and no operation residue.
+Require production HEAD to equal the current pre-release `origin/master` snapshot (expected `860bfe53e54dff4ab78bbfa2f7e5f644a032b9aa` before the release branch is merged and pushed), PM2 online, loopback-only listener, schema 3, four posts/articles/FTS rows, and no operation residue.
 
 - [ ] **Step 3: Open a short source-snapshot maintenance window**
 
@@ -1125,7 +1125,7 @@ fi
 
 No ignored article content may enter the commit.
 
-- [ ] **Step 12: Re-run the full gate on local `master`**
+- [ ] **Step 12: Re-run the full gate on the isolated release branch**
 
 ```bash
 npm test
@@ -1137,7 +1137,19 @@ git status --short
 
 Expected: clean status and zero failures.
 
-- [ ] **Step 13: Push without force**
+- [ ] **Step 13: Fast-forward the reviewed release branch into local `master`**
+
+From the primary checkout, require a clean `master` and fast-forward only:
+
+```bash
+cd /Users/steven/Blog
+git status --short
+git merge --ff-only english-article-release
+```
+
+Then re-run the release-specific tests, typecheck, lint, and `git diff --check` on the merged `master`.
+
+- [ ] **Step 14: Push without force**
 
 ```bash
 git push origin master
