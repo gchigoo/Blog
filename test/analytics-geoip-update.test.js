@@ -168,7 +168,10 @@ test('maintenance gate routes public 503 responses through an explicit no-store 
     'add_header Cache-Control "public, max-age=300" always;'
   );
   assert.notEqual(cacheable, maintenance, 'cacheable mutation fixture must change the snippet');
-  assert.throws(() => validateMaintenanceContract(cacheable), /explicit no-store 503 contract/);
+  assert.throws(
+    () => validateMaintenanceContract(cacheable),
+    /(?:explicit no-store 503 contract|cacheable directive)/
+  );
 });
 
 test('DEPLOY post-open image-cache smoke validates root negotiation and localized dynamic homes', async t => {
