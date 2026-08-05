@@ -5,6 +5,8 @@ const { createHash } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const Database = require('better-sqlite3');
+const matter = require('gray-matter');
+const MarkdownIt = require('markdown-it');
 const { SAFE_SLUG_PATTERN } = require('../server/utils/path-security');
 const markdownUtils = require('../server/utils/markdown');
 
@@ -21,6 +23,7 @@ const MANIFEST_ARTICLE_KEYS = Object.freeze([
 ]);
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const SHA_LINE_PATTERN = /^([a-f0-9]{64}) {2}([^\r\n]+)$/;
+const STRUCTURE_MARKDOWN = new MarkdownIt({ html: false, linkify: true });
 const CHECK_NAMES = Object.freeze([
   'releaseManifest',
   'bundleIntegrity',
@@ -28,6 +31,7 @@ const CHECK_NAMES = Object.freeze([
   'sourceArchives',
   'images',
   'externalUrls',
+  'lists',
   'fencedCode',
   'tableShapes',
   'headingLevels',
@@ -185,6 +189,9 @@ function validateBundleFilename(filename) {
  * @returns {Map<string, string>}
  */
 function loadShaManifest(bundleDir) {
+  const bundleStat = fs.lstatSync(bundleDir);
+  if (bundleStat.isSymbolicLink()) contentError('bundle root must not be a symlink');
+  if (!bundleStat.isDirectory()) contentError('bundle root must be a directory');
   const shaPath = path.join(bundleDir, 'SHA256SUMS');
   const shaStat = fs.lstatSync(shaPath);
   if (shaStat.isSymbolicLink()) contentError('SHA256SUMS must not be a symlink');
@@ -336,42 +343,58 @@ function extractExternalUrls(markdown) {
   return collectLinkDestinationRanges(String(markdown)).map(record => record.url);
 }
 
+function parseStructureTokens(markdown) {
+  return STRUCTURE_MARKDOWN.parse(String(markdown), {});
+}
+
+function splitSourceLines(markdown) {
+  const lines = [];
+  let cursor = 0;
+  while (cursor < markdown.length) {
+    const start = cursor;
+    while (cursor < markdown.length && markdown[cursor] !== '\n' && markdown[cursor] !== '\r') cursor += 1;
+    let ending = '';
+    if (markdown[cursor] === '\r' && markdown[cursor + 1] === '\n') {
+      ending = '\r\n';
+      cursor += 2;
+    } else if (markdown[cursor] === '\r' || markdown[cursor] === '\n') {
+      ending = markdown[cursor];
+      cursor += 1;
+    }
+    lines.push({ start, end: cursor, ending });
+  }
+  return lines;
+}
+
+function restoreFenceLineEndings(content, sourceLines, firstBodyLine) {
+  let lineIndex = firstBodyLine;
+  return content.replace(/\n/g, () => {
+    const ending = sourceLines[lineIndex]?.ending || '\n';
+    lineIndex += 1;
+    return ending;
+  });
+}
+
 function scanFencedCode(markdown) {
+  const sourceLines = splitSourceLines(markdown);
   const records = [];
-  const openingPattern = /^ {0,3}([`~]{3,})([^\r\n]*)(?:\r?\n|$)/gm;
-  let searchIndex = 0;
-  while (searchIndex <= markdown.length) {
-    openingPattern.lastIndex = searchIndex;
-    const opening = openingPattern.exec(markdown);
-    if (!opening) break;
-    const marker = opening[1];
-    if (![...marker].every(character => character === marker[0])) {
-      searchIndex = opening.index + opening[0].length;
-      continue;
-    }
-    if (marker[0] === '`' && opening[2].includes('`')) {
-      searchIndex = opening.index + opening[0].length;
-      continue;
-    }
-    const closingPattern = new RegExp(`^ {0,3}${marker[0]}{${marker.length},}[ \\t]*(?:\\r?\\n|$)`, 'gm');
-    closingPattern.lastIndex = opening.index + opening[0].length;
-    const closing = closingPattern.exec(markdown);
-    const bodyStart = opening.index + opening[0].length;
-    const bodyEnd = closing ? closing.index : markdown.length;
-    const end = closing ? closing.index + closing[0].length : markdown.length;
+  for (const token of parseStructureTokens(markdown)) {
+    if (token.type !== 'fence' || !token.map) continue;
+    const [startLine, endLine] = token.map;
     records.push({
-      info: opening[2].trim(),
-      body: markdown.slice(bodyStart, bodyEnd),
-      start: opening.index,
-      end
+      info: token.info.trim(),
+      body: restoreFenceLineEndings(token.content, sourceLines, startLine + 1),
+      start: sourceLines[startLine]?.start || 0,
+      end: endLine < sourceLines.length ? sourceLines[endLine].start : markdown.length
     });
-    searchIndex = end > opening.index ? end : opening.index + opening[0].length;
   }
   return records;
 }
 
 /**
- * Return ordered fenced code records with exact body bytes.
+ * Return ordered fenced code records with exact logical body bytes.
+ * Container prefixes are removed by the Markdown parser; original body line
+ * endings are restored from the source document.
  *
  * @param {string} markdown
  * @returns {Array<{info: string, body: string}>}
@@ -392,36 +415,6 @@ function blankRanges(value, ranges) {
   return result + value.slice(cursor);
 }
 
-function tableCells(line) {
-  let value = line.trim();
-  if (value.startsWith('|')) value = value.slice(1);
-  if (value.endsWith('|') && !value.endsWith('\\|')) value = value.slice(0, -1);
-  const cells = [];
-  let current = '';
-  let escaped = false;
-  for (const character of value) {
-    if (escaped) {
-      current += character;
-      escaped = false;
-    } else if (character === '\\') {
-      escaped = true;
-      current += character;
-    } else if (character === '|') {
-      cells.push(current.trim());
-      current = '';
-    } else {
-      current += character;
-    }
-  }
-  cells.push(current.trim());
-  return cells;
-}
-
-function isTableDelimiter(line) {
-  const cells = tableCells(line);
-  return cells.length > 0 && cells.every(cell => /^:?-{3,}:?$/.test(cell));
-}
-
 /**
  * Return ordered Markdown table dimensions. Rows include the header row.
  *
@@ -429,42 +422,66 @@ function isTableDelimiter(line) {
  * @returns {Array<{columns: number, rows: number}>}
  */
 function extractTableShapes(markdown) {
-  const withoutFences = blankRanges(String(markdown), scanFencedCode(String(markdown)));
-  const lines = withoutFences.split(/\r?\n/);
   const shapes = [];
-  for (let index = 0; index + 1 < lines.length; index += 1) {
-    if (!lines[index].includes('|') || !isTableDelimiter(lines[index + 1])) continue;
-    const widths = [tableCells(lines[index]).length];
-    let rows = 1;
-    let rowIndex = index + 2;
-    while (rowIndex < lines.length && lines[rowIndex].trim() !== '' && lines[rowIndex].includes('|')) {
-      widths.push(tableCells(lines[rowIndex]).length);
-      rows += 1;
-      rowIndex += 1;
+  let table = null;
+  let columns = 0;
+  for (const token of parseStructureTokens(markdown)) {
+    if (token.type === 'table_open') table = { columns: 0, rows: 0 };
+    else if (token.type === 'tr_open' && table) columns = 0;
+    else if ((token.type === 'th_open' || token.type === 'td_open') && table) columns += 1;
+    else if (token.type === 'tr_close' && table) {
+      table.columns = Math.max(table.columns, columns);
+      table.rows += 1;
+    } else if (token.type === 'table_close' && table) {
+      shapes.push(table);
+      table = null;
     }
-    shapes.push({ columns: Math.max(...widths), rows });
-    index = rowIndex - 1;
   }
   return shapes;
 }
 
 function headingLevels(markdown) {
-  const withoutFences = blankRanges(markdown, scanFencedCode(markdown));
-  const lines = withoutFences.split(/\r?\n/);
-  const headings = [];
-  for (let index = 0; index < lines.length; index += 1) {
-    const atx = /^ {0,3}(#{1,6})(?:[ \t]+|$)/.exec(lines[index]);
-    if (atx) {
-      headings.push({ index, level: atx[1].length });
-      continue;
-    }
-    if (index > 0 && lines[index - 1].trim() !== '') {
-      if (/^ {0,3}=+[ \t]*$/.test(lines[index])) headings.push({ index: index - 0.5, level: 1 });
-      if (/^ {0,3}-+[ \t]*$/.test(lines[index])) headings.push({ index: index - 0.5, level: 2 });
+  return parseStructureTokens(markdown)
+    .filter(token => token.type === 'heading_open')
+    .map(token => Number(token.tag.slice(1)));
+}
+
+function listStructure(markdown) {
+  const structure = [];
+  let depth = 0;
+  for (const token of parseStructureTokens(markdown)) {
+    if (token.type === 'bullet_list_open' || token.type === 'ordered_list_open') {
+      depth += 1;
+      structure.push({
+        event: 'open',
+        kind: token.type === 'ordered_list_open' ? 'ordered' : 'bullet',
+        depth,
+        start: token.type === 'ordered_list_open' ? Number(token.attrGet('start') || 1) : null
+      });
+    } else if (token.type === 'list_item_open') {
+      structure.push({ event: 'item', depth });
+    } else if (token.type === 'bullet_list_close' || token.type === 'ordered_list_close') {
+      structure.push({
+        event: 'close',
+        kind: token.type === 'ordered_list_close' ? 'ordered' : 'bullet',
+        depth
+      });
+      depth -= 1;
     }
   }
-  headings.sort((left, right) => left.index - right.index);
-  return headings.map(heading => heading.level);
+  return structure;
+}
+
+function imageDestinations(markdown) {
+  const destinations = [];
+  const visit = tokens => {
+    for (const token of tokens) {
+      if (token.type === 'image') destinations.push(token.attrGet('src'));
+      if (token.children) visit(token.children);
+    }
+  };
+  visit(parseStructureTokens(markdown));
+  return destinations;
 }
 
 function overlapsRange(start, end, ranges) {
@@ -649,8 +666,67 @@ function exactTagSet(dataTags, expectedTags) {
   return tags.length === new Set(tags).size && setsEqual(new Set(tags), new Set(expectedTags));
 }
 
-function englishMetadataMismatches(data, record) {
+function frontMatterSource(raw) {
+  const opening = /^---[ \t]*\r?\n/.exec(raw);
+  if (!opening) return null;
+  const start = opening[0].length;
+  const closing = /\r?\n---[ \t]*(?:\r?\n|$)/.exec(raw.slice(start));
+  if (!closing) return null;
+  return raw.slice(start, start + closing.index);
+}
+
+function decodeRawScalar(value) {
+  const token = value.trim();
+  try {
+    if (token.startsWith('"') && token.endsWith('"')) return JSON.parse(token);
+  } catch {
+    return null;
+  }
+  if (token.startsWith("'") && token.endsWith("'")) {
+    return token.slice(1, -1).replaceAll("''", "'");
+  }
+  return token;
+}
+
+function exactRawFrontMatterMismatches(raw, normalizedData, expected) {
+  const source = frontMatterSource(raw);
+  if (source === null) return ['frontMatter'];
+  const rawData = matter(raw).data;
+  const expectedScalars = {
+    title: expected.title ?? normalizedData.title,
+    slug: expected.slug,
+    locale: expected.locale,
+    translationKey: expected.translationKey,
+    description: expected.description ?? normalizedData.description,
+    date: expected.date,
+    status: 'published'
+  };
   const mismatches = [];
+  for (const [key, expectedValue] of Object.entries(expectedScalars)) {
+    if (!Object.hasOwn(rawData, key)) {
+      mismatches.push(`raw-${key}`);
+      continue;
+    }
+    const pattern = new RegExp(`^${key}[ \\t]*:[ \\t]*(.*)$`, 'm');
+    const match = pattern.exec(source);
+    if (!match || decodeRawScalar(match[1]) !== expectedValue) mismatches.push(`raw-${key}`);
+  }
+  if (!Object.hasOwn(rawData, 'tags') || !Array.isArray(rawData.tags) || !arraysEqual(rawData.tags, expected.tags)) {
+    mismatches.push('raw-tags');
+  }
+  return mismatches;
+}
+
+function englishMetadataMismatches(data, record, raw) {
+  const mismatches = exactRawFrontMatterMismatches(raw, data, {
+    title: record.enTitle,
+    slug: record.enSlug,
+    locale: 'en',
+    translationKey: record.translationKey,
+    description: record.description,
+    date: record.date,
+    tags: record.tags
+  });
   if (data.title !== record.enTitle) mismatches.push('title');
   if (data.slug !== record.enSlug) mismatches.push('slug');
   if (data.locale !== 'en') mismatches.push('locale');
@@ -663,8 +739,14 @@ function englishMetadataMismatches(data, record) {
   return mismatches;
 }
 
-function sourceMetadataMismatches(data, record) {
-  const mismatches = [];
+function sourceMetadataMismatches(data, record, raw) {
+  const mismatches = exactRawFrontMatterMismatches(raw, data, {
+    slug: record.zhSlug,
+    locale: 'zh',
+    translationKey: record.translationKey,
+    date: record.date,
+    tags: record.tags
+  });
   if (data.slug !== record.zhSlug) mismatches.push('slug');
   if (data.locale !== 'zh') mismatches.push('locale');
   if (data.translationKey !== record.translationKey) mismatches.push('translationKey');
@@ -674,15 +756,41 @@ function sourceMetadataMismatches(data, record) {
   return mismatches;
 }
 
-function loadMarkdownForAudit(filePath, missingCheck, invalidCheck, report, label) {
-  if (!fs.existsSync(filePath)) {
-    markFailure(report, missingCheck, `${label} is missing`);
-    return null;
+function pathIsWithin(root, candidate) {
+  return candidate === root || candidate.startsWith(`${root}${path.sep}`);
+}
+
+function resolveSafeOwnedMarkdown(rootDir, relativeParts, label) {
+  const resolvedRoot = path.resolve(rootDir);
+  const rootStat = fs.lstatSync(resolvedRoot);
+  if (rootStat.isSymbolicLink()) contentError(`${label} root must not be a symlink`);
+  if (!rootStat.isDirectory()) contentError(`${label} root must be a directory`);
+  const realRoot = fs.realpathSync(resolvedRoot);
+  let current = resolvedRoot;
+  for (const [index, segment] of relativeParts.entries()) {
+    current = path.join(current, segment);
+    if (!fs.existsSync(current)) contentError(`${label} is missing`);
+    const stat = fs.lstatSync(current);
+    if (stat.isSymbolicLink()) contentError(`${label} contains a symlinked path component: ${segment}`);
+    const final = index === relativeParts.length - 1;
+    if (!final && !stat.isDirectory()) contentError(`${label} parent component is not a directory: ${segment}`);
+    if (final && !stat.isFile()) contentError(`${label} is not a regular file`);
+    const realCurrent = fs.realpathSync(current);
+    if (!pathIsWithin(realRoot, realCurrent)) contentError(`${label} escapes its owned root`);
   }
-  const stat = fs.lstatSync(filePath);
-  if (stat.isSymbolicLink() || !stat.isFile()) {
-    markFailure(report, missingCheck, `${label} is not a safe regular file`);
-    return null;
+  return current;
+}
+
+function loadMarkdownForAudit(rootDir, relativeParts, missingCheck, invalidCheck, report, label) {
+  let filePath;
+  try {
+    filePath = resolveSafeOwnedMarkdown(rootDir, relativeParts, label);
+  } catch (error) {
+    if (error instanceof TranslationAuditContentError) {
+      markFailure(report, missingCheck, error.message);
+      return null;
+    }
+    throw error;
   }
   const raw = fs.readFileSync(filePath, 'utf8');
   try {
@@ -695,8 +803,9 @@ function loadMarkdownForAudit(filePath, missingCheck, invalidCheck, report, labe
 
 function compareTranslationBodies(report, record, sourceContent, englishContent) {
   const pairs = [
-    ['images', sortedMultiset(markdownUtils.extractImages(sourceContent)), sortedMultiset(markdownUtils.extractImages(englishContent))],
+    ['images', sortedMultiset(imageDestinations(sourceContent)), sortedMultiset(imageDestinations(englishContent))],
     ['externalUrls', sortedMultiset(extractExternalUrls(sourceContent)), sortedMultiset(extractExternalUrls(englishContent))],
+    ['lists', listStructure(sourceContent), listStructure(englishContent)],
     ['fencedCode', extractFencedCode(sourceContent), extractFencedCode(englishContent)],
     ['tableShapes', extractTableShapes(sourceContent), extractTableShapes(englishContent)],
     ['headingLevels', headingLevels(sourceContent), headingLevels(englishContent)],
@@ -842,9 +951,9 @@ function auditTranslationRelease(options) {
   const sourceByKey = new Map();
   const englishByKey = new Map();
   for (const record of manifest.articles) {
-    const sourcePath = path.join(path.resolve(options.articlesDir), 'zh', `${record.zhSlug}.md`);
     const source = loadMarkdownForAudit(
-      sourcePath,
+      path.resolve(options.articlesDir),
+      ['zh', `${record.zhSlug}.md`],
       'sourceArchives',
       'sourceArchives',
       report,
@@ -853,16 +962,16 @@ function auditTranslationRelease(options) {
     if (source) {
       report.counts.sourceArchives += 1;
       sourceByKey.set(record.translationKey, source);
-      const mismatches = sourceMetadataMismatches(source.parsed.data, record);
+      const mismatches = sourceMetadataMismatches(source.parsed.data, record, source.raw);
       if (mismatches.length > 0) {
         markFailure(report, 'sourceArchives', `${record.translationKey}: source metadata mismatch (${mismatches.join(', ')})`);
       }
     }
 
     if (!shaManifest || !shaManifest.has(`${record.enSlug}.md`)) continue;
-    const englishPath = path.join(path.resolve(options.bundleDir), `${record.enSlug}.md`);
     const english = loadMarkdownForAudit(
-      englishPath,
+      path.resolve(options.bundleDir),
+      [`${record.enSlug}.md`],
       'bundleIntegrity',
       'englishMetadata',
       report,
@@ -870,7 +979,7 @@ function auditTranslationRelease(options) {
     );
     if (!english) continue;
     englishByKey.set(record.translationKey, english);
-    const mismatches = englishMetadataMismatches(english.parsed.data, record);
+    const mismatches = englishMetadataMismatches(english.parsed.data, record, english.raw);
     if (mismatches.length > 0) {
       markFailure(report, 'englishMetadata', `${record.translationKey}: English metadata mismatch (${mismatches.join(', ')})`);
     }
@@ -926,9 +1035,9 @@ function auditTranslationRelease(options) {
 
       if (options.mode !== 'published') continue;
       const englishBundle = englishByKey.get(record.translationKey);
-      const publishedPath = path.join(path.resolve(options.articlesDir), 'en', `${record.enSlug}.md`);
       const published = loadMarkdownForAudit(
-        publishedPath,
+        path.resolve(options.articlesDir),
+        ['en', `${record.enSlug}.md`],
         'databaseFiles',
         'databaseFiles',
         report,
@@ -939,7 +1048,7 @@ function auditTranslationRelease(options) {
         if (!englishBundle || published.raw !== englishBundle.raw) {
           markFailure(report, 'databaseFiles', `${record.translationKey}: published English file differs from the signed bundle`);
         }
-        const metadataMismatches = englishMetadataMismatches(published.parsed.data, record);
+        const metadataMismatches = englishMetadataMismatches(published.parsed.data, record, published.raw);
         if (metadataMismatches.length > 0) {
           markFailure(report, 'databaseFiles', `${record.translationKey}: published English metadata mismatch (${metadataMismatches.join(', ')})`);
         }

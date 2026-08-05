@@ -22,7 +22,10 @@ const {
   stripNonProse
 } = require('../scripts/audit-translation-release');
 
-const SCRIPT_PATH = path.resolve(__dirname, '..', 'scripts', 'audit-translation-release.js');
+const PROJECT_ROOT = path.resolve(__dirname, '..');
+const SCRIPT_PATH = path.join(PROJECT_ROOT, 'scripts', 'audit-translation-release.js');
+const TRACKED_RELEASE_PATH = path.join(PROJECT_ROOT, 'content', 'releases', 'english-articles-2026-08-04.json');
+const PACKAGE_PATH = path.join(PROJECT_ROOT, 'package.json');
 const CHECKS = Object.freeze({
   bundle: 'bundleIntegrity',
   cjk: 'cjkProse',
@@ -31,6 +34,7 @@ const CHECKS = Object.freeze({
   fencedCode: 'fencedCode',
   headings: 'headingLevels',
   images: 'images',
+  lists: 'lists',
   metadata: 'englishMetadata',
   rawHtml: 'rawHtml',
   siblings: 'siblings',
@@ -138,11 +142,14 @@ function englishMetadata(record) {
 
 function bodyFor(record, index, locale) {
   const headings = locale === 'zh'
-    ? ['概览', '步骤']
-    : ['Overview', 'Steps'];
+    ? ['概览', '步骤', '引用容器标题', '列表容器标题']
+    : ['Overview', 'Steps', 'Quoted container heading', 'List container heading'];
   const prose = locale === 'zh'
     ? '这是一段经过审核的中文源文。'
     : 'This is reviewed English prose for the release.';
+  const listText = locale === 'zh'
+    ? ['第一项', '嵌套甲', '嵌套乙', '第二项', '列表容器']
+    : ['First item', 'Nested A', 'Nested B', 'Second item', 'List container'];
   return [
     `# ${headings[0]}`,
     '',
@@ -150,7 +157,10 @@ function bodyFor(record, index, locale) {
     '',
     `Read the [shared reference](https://example.com/release/article-${index + 1}?source=audit).`,
     '',
-    `![release diagram](/images/release/article-${index + 1}.png)`,
+    `![release diagram](/images/release/article-${index + 1}.png "shared inline title")`,
+    `![full reference diagram][full-diagram-${index + 1}]`,
+    `![collapsed-diagram-${index + 1}][]`,
+    `![shortcut-diagram-${index + 1}]`,
     '',
     'Use USB-PD 3.0 over HTTP/2 at port 443 with 5V, 1A, 18W, 80%, 10MB/s, 20GB, and retries=3.',
     '',
@@ -167,11 +177,42 @@ function bodyFor(record, index, locale) {
     '| protocol | USB-PD |',
     '| endpoint | shared |',
     '',
+    `1. ${listText[0]}`,
+    `   - ${listText[1]}`,
+    `   - ${listText[2]}`,
+    `2. ${listText[3]}`,
+    '',
+    `> ### ${headings[2]}`,
+    '>',
+    '> ```yaml quoted-fence',
+    '> enabled: true',
+    '> mode: shared',
+    '> ```',
+    '>',
+    '> | Quote | Shape |',
+    '> | --- | --- |',
+    '> | alpha | beta |',
+    '',
+    `- ${listText[4]}`,
+    `    ### ${headings[3]}`,
+    '',
+    '    ```json list-fence',
+    '    {"enabled": true}',
+    '    ```',
+    '',
+    '    | List | Shape |',
+    '    | --- | --- |',
+    '    | gamma | delta |',
+    '',
     '`内联代码中的中文不会被当作英文散文。`',
     '',
     '<script>window.releaseAuditPwned = true;</script>',
     '',
     `Release key: ${record.enSlug}.`,
+    '',
+    `[full-diagram-${index + 1}]: /images/release/article-${index + 1}-full.png "shared full title"`,
+    `[collapsed-diagram-${index + 1}]: /images/release/article-${index + 1}-collapsed.png "shared collapsed title"`,
+    `[shortcut-diagram-${index + 1}]: /images/release/article-${index + 1}-shortcut.png "shared shortcut title"`,
     ''
   ].join('\n');
 }
@@ -322,6 +363,19 @@ function rewriteSource(fixture, index, mutateMetadata, mutateBody = body => body
   );
 }
 
+function rewriteRawEnglish(fixture, index, transform) {
+  const record = RELEASE.articles[index];
+  const filePath = path.join(fixture.bundleDir, `${record.enSlug}.md`);
+  fs.writeFileSync(filePath, transform(fs.readFileSync(filePath, 'utf8')));
+  writeShaManifest(fixture.bundleDir);
+}
+
+function rewriteRawSource(fixture, index, transform) {
+  const record = RELEASE.articles[index];
+  const filePath = path.join(fixture.articlesDir, 'zh', `${record.zhSlug}.md`);
+  fs.writeFileSync(filePath, transform(fs.readFileSync(filePath, 'utf8')));
+}
+
 function openFixtureDb(fixture) {
   return new Database(fixture.dbPath);
 }
@@ -376,6 +430,23 @@ test('published-mode happy path passes with exact sibling and FTS counts', t => 
   assert.equal(report.counts.zhArticles, 4);
   assert.equal(report.counts.enArticles, 4);
   assert.equal(report.counts.publishedArchives, 4);
+});
+
+test('tracked release manifest is the exact approved four-record artifact with no extra keys', () => {
+  const raw = fs.readFileSync(TRACKED_RELEASE_PATH, 'utf8');
+  const tracked = JSON.parse(raw);
+  assert.deepEqual(tracked, RELEASE);
+  assert.deepEqual(Object.keys(tracked), ['version', 'articles']);
+  for (const article of tracked.articles) {
+    assert.deepEqual(Object.keys(article), [
+      'translationKey', 'zhSlug', 'enSlug', 'enTitle', 'description', 'date', 'tags'
+    ]);
+  }
+});
+
+test('package exposes the exact tracked translation release audit command', () => {
+  const pkg = JSON.parse(fs.readFileSync(PACKAGE_PATH, 'utf8'));
+  assert.equal(pkg.scripts['audit-translation-release'], 'node scripts/audit-translation-release.js');
 });
 
 test('release manifest loader validates the exact schema and deeply freezes its result', t => {
@@ -484,6 +555,14 @@ for (const [name, mutate, expected] of invalidBundleCases) {
   });
 }
 
+test('SHA manifest rejects a symlinked bundle root', t => {
+  const fixture = createFixture(t);
+  const realBundle = path.join(fixture.root, 'bundle-real');
+  fs.renameSync(fixture.bundleDir, realBundle);
+  fs.symlinkSync(realBundle, fixture.bundleDir);
+  assert.throws(() => loadShaManifest(fixture.bundleDir), /bundle root.*symlink/i);
+});
+
 test('focused extraction helpers preserve ordered structures and strip non-prose CJK', () => {
   const markdown = [
     '[first](https://one.example/path)',
@@ -530,6 +609,36 @@ test('focused extraction helpers preserve ordered structures and strip non-prose
   assert.doesNotMatch(stripNonProse(markdown), /\p{Script=Han}/u);
   assert.deepEqual(ALLOWED_ENGLISH_CJK_LITERALS, []);
   assert.ok(Object.isFrozen(ALLOWED_ENGLISH_CJK_LITERALS));
+});
+
+test('structure helpers recognize fenced code and tables inside blockquote and list containers', () => {
+  const markdown = [
+    '> ```js quoted',
+    '> const quoted = true;\r',
+    '> ```',
+    '>',
+    '> | A | B |',
+    '> | --- | --- |',
+    '> | one | two |',
+    '',
+    '- item',
+    '',
+    '    ```json listed',
+    '    {"listed": true}',
+    '    ```',
+    '',
+    '    | C | D |',
+    '    | --- | --- |',
+    '    | three | four |'
+  ].join('\n');
+  assert.deepEqual(extractFencedCode(markdown), [
+    { info: 'js quoted', body: 'const quoted = true;\r\n' },
+    { info: 'json listed', body: '{"listed": true}\n' }
+  ]);
+  assert.deepEqual(extractTableShapes(markdown), [
+    { columns: 2, rows: 2 },
+    { columns: 2, rows: 2 }
+  ]);
 });
 
 test('audit rejects a missing bundle Markdown file', t => {
@@ -590,10 +699,80 @@ test('audit rejects legacy-* English tags', t => {
   assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.metadata);
 });
 
+test('source audit rejects omitted raw locale and translationKey instead of accepting parser defaults', t => {
+  const fixture = createFixture(t);
+  rewriteRawSource(fixture, 0, raw => raw
+    .replace(/^locale: .*\n/m, '')
+    .replace(/^translationKey: .*\n/m, ''));
+  assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.sourceArchives);
+});
+
+const rawEnglishMetadataBypasses = [
+  ['omitted status', raw => raw.replace(/^status: .*\n/m, '')],
+  ['noncanonical equivalent date', raw => raw.replace(
+    /^date: .*$/m,
+    'date: "2019-12-14T20:18:00-05:00"'
+  )],
+  ['comma-separated tag string', raw => raw.replace(
+    /^tags: .*$/m,
+    'tags: "consumer-electronics, explainers, charging, apple"'
+  )],
+  ['duplicate tag array', raw => raw.replace(
+    /^tags: .*$/m,
+    'tags: ["consumer-electronics", "explainers", "charging", "apple", "apple"]'
+  )],
+  ['whitespace-normalized tag', raw => raw.replace(
+    /^tags: .*$/m,
+    'tags: [" consumer-electronics ", "explainers", "charging", "apple"]'
+  )]
+];
+
+for (const [name, transform] of rawEnglishMetadataBypasses) {
+  test(`English audit rejects raw front matter with ${name}`, t => {
+    const fixture = createFixture(t);
+    rewriteRawEnglish(fixture, 0, transform);
+    assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.metadata);
+  });
+}
+
 test('audit rejects a source/English image URL multiset mismatch', t => {
   const fixture = createFixture(t);
   rewriteEnglish(fixture, 0, null, body => body.replace('/images/release/article-1.png', '/images/release/different.png'));
   assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.images);
+});
+
+test('audit rejects a full-reference image destination mismatch', t => {
+  const fixture = createFixture(t);
+  rewriteEnglish(fixture, 0, null, body => body.replace(
+    '/images/release/article-1-full.png',
+    '/images/release/different-full.png'
+  ));
+  assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.images);
+});
+
+test('audit rejects a collapsed-reference image destination mismatch', t => {
+  const fixture = createFixture(t);
+  rewriteEnglish(fixture, 0, null, body => body.replace(
+    '/images/release/article-1-collapsed.png',
+    '/images/release/different-collapsed.png'
+  ));
+  assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.images);
+});
+
+test('audit rejects a shortcut-reference image destination mismatch', t => {
+  const fixture = createFixture(t);
+  rewriteEnglish(fixture, 0, null, body => body.replace(
+    '/images/release/article-1-shortcut.png',
+    '/images/release/different-shortcut.png'
+  ));
+  assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.images);
+});
+
+test('audit compares only inline image destinations and permits translated optional titles', t => {
+  const fixture = createFixture(t);
+  rewriteEnglish(fixture, 0, null, body => body.replace('shared inline title', 'translated optional title'));
+  const report = auditTranslationRelease(fixture.options);
+  assert.equal(report.passed, true, JSON.stringify(report.errors));
 });
 
 test('audit rejects an external HTTP(S) URL multiset mismatch', t => {
@@ -602,9 +781,27 @@ test('audit rejects an external HTTP(S) URL multiset mismatch', t => {
   assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.urls);
 });
 
-test('audit rejects fenced code byte or info-string mismatches', t => {
+test('audit rejects fenced code info-string mismatches', t => {
   const fixture = createFixture(t);
   rewriteEnglish(fixture, 0, null, body => body.replace('```js release-sample', '```js changed-info'));
+  assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.fencedCode);
+});
+
+test('audit rejects fenced code body-byte mismatches with unchanged info and technical tokens', t => {
+  const fixture = createFixture(t);
+  rewriteEnglish(fixture, 0, null, body => body.replace('const retries = 3;', 'let retries = 3;'));
+  assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.fencedCode);
+});
+
+test('audit rejects blockquote-contained fenced code body mismatches', t => {
+  const fixture = createFixture(t);
+  rewriteEnglish(fixture, 0, null, body => body.replace('> mode: shared', '> mode: changed'));
+  assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.fencedCode);
+});
+
+test('audit rejects list-contained fenced code body mismatches', t => {
+  const fixture = createFixture(t);
+  rewriteEnglish(fixture, 0, null, body => body.replace('{"enabled": true}', '{"enabled": false}'));
   assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.fencedCode);
 });
 
@@ -614,10 +811,55 @@ test('audit rejects Markdown table shape mismatches', t => {
   assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.tables);
 });
 
+test('audit rejects blockquote-contained Markdown table shape mismatches', t => {
+  const fixture = createFixture(t);
+  rewriteEnglish(fixture, 0, null, body => body.replace(
+    '> | alpha | beta |',
+    '> | alpha | beta |\n> | extra | row |'
+  ));
+  assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.tables);
+});
+
+test('audit rejects list-contained Markdown table shape mismatches', t => {
+  const fixture = createFixture(t);
+  rewriteEnglish(fixture, 0, null, body => body.replace(
+    '    | gamma | delta |',
+    '    | gamma | delta |\n    | extra | row |'
+  ));
+  assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.tables);
+});
+
 test('audit rejects heading-level sequence mismatches', t => {
   const fixture = createFixture(t);
   rewriteEnglish(fixture, 0, null, body => body.replace('## Steps', '### Steps'));
   assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.headings);
+});
+
+test('audit rejects blockquote-contained heading-level mismatches', t => {
+  const fixture = createFixture(t);
+  rewriteEnglish(fixture, 0, null, body => body.replace('> ### Quoted container heading', '> #### Quoted container heading'));
+  assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.headings);
+});
+
+test('audit rejects list-contained heading-level mismatches', t => {
+  const fixture = createFixture(t);
+  rewriteEnglish(fixture, 0, null, body => body.replace('    ### List container heading', '    #### List container heading'));
+  assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.headings);
+});
+
+test('audit rejects ordered list type, nesting, or item-count mismatches', t => {
+  const fixture = createFixture(t);
+  rewriteEnglish(fixture, 0, null, body => body.replace('   - Nested B', '   1. Nested B'));
+  assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.lists);
+});
+
+test('audit rejects blockquote-contained nested-list structure mismatches', t => {
+  const fixture = createFixture(t);
+  rewriteEnglish(fixture, 0, null, body => body.replace(
+    '> | alpha | beta |',
+    '> - nested quote item\n>   - nested quote child\n> | alpha | beta |'
+  ));
+  assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.lists);
 });
 
 test('audit rejects technical-token multiset mismatches', t => {
@@ -658,6 +900,14 @@ test('source mode rejects a missing source archive', t => {
   assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.sourceArchives);
 });
 
+test('source mode rejects a symlinked zh locale parent directory', t => {
+  const fixture = createFixture(t);
+  const outsideZh = path.join(fixture.root, 'outside-zh');
+  fs.renameSync(path.join(fixture.articlesDir, 'zh'), outsideZh);
+  fs.symlinkSync(outsideZh, path.join(fixture.articlesDir, 'zh'));
+  assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.sourceArchives);
+});
+
 test('source mode rejects source archive metadata that does not match the release', t => {
   const fixture = createFixture(t);
   rewriteSource(fixture, 0, metadata => { metadata.tags = metadata.tags.slice(1); });
@@ -668,6 +918,22 @@ test('source mode rejects source database/file metadata mismatches', t => {
   const fixture = createFixture(t);
   const db = openFixtureDb(fixture);
   db.prepare('UPDATE articles SET title = ? WHERE id = ?').run('Database drift', fixture.articleIds[0].zhId);
+  db.close();
+  assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.databaseFiles);
+});
+
+test('source mode rejects exact database content drift independently', t => {
+  const fixture = createFixture(t);
+  const db = openFixtureDb(fixture);
+  db.prepare('UPDATE articles SET content = content || ? WHERE id = ?').run('\ncontent drift', fixture.articleIds[0].zhId);
+  db.close();
+  assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.databaseFiles);
+});
+
+test('source mode rejects exact rendered HTML drift independently', t => {
+  const fixture = createFixture(t);
+  const db = openFixtureDb(fixture);
+  db.prepare('UPDATE articles SET html = html || ? WHERE id = ?').run('<!-- html drift -->', fixture.articleIds[0].zhId);
   db.close();
   assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.databaseFiles);
 });
@@ -713,6 +979,14 @@ test('published mode rejects a missing published English file', t => {
   assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.databaseFiles);
 });
 
+test('published mode rejects a symlinked en locale parent directory', t => {
+  const fixture = createFixture(t, { mode: 'published' });
+  const outsideEn = path.join(fixture.root, 'outside-en');
+  fs.renameSync(path.join(fixture.articlesDir, 'en'), outsideEn);
+  fs.symlinkSync(outsideEn, path.join(fixture.articlesDir, 'en'));
+  assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.databaseFiles);
+});
+
 test('published mode rejects duplicate locale siblings per translation key', t => {
   const fixture = createFixture(t, { mode: 'published' });
   const db = openFixtureDb(fixture);
@@ -751,6 +1025,18 @@ test('published mode rejects wrong FTS counts', t => {
   const fixture = createFixture(t, { mode: 'published' });
   const db = openFixtureDb(fixture);
   db.prepare('DELETE FROM article_fts WHERE rowid = ?').run(fixture.articleIds[0].enId);
+  db.close();
+  assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.databaseCounts);
+});
+
+test('published mode rejects same-count FTS rows with the wrong row-ID set', t => {
+  const fixture = createFixture(t, { mode: 'published' });
+  const db = openFixtureDb(fixture);
+  const removed = db.prepare('SELECT title, content, taxonomy FROM article_fts WHERE rowid = ?')
+    .get(fixture.articleIds[0].enId);
+  db.prepare('DELETE FROM article_fts WHERE rowid = ?').run(fixture.articleIds[0].enId);
+  db.prepare('INSERT INTO article_fts(rowid, title, content, taxonomy) VALUES (?, ?, ?, ?)')
+    .run(9999, removed.title, removed.content, removed.taxonomy);
   db.close();
   assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.databaseCounts);
 });
