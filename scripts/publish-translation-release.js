@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
+const { createHash } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -107,7 +108,13 @@ function safeArticleResponse(payload, filename) {
   };
 }
 
-async function uploadArticle({ baseUrl, token, filename, bytes, fetchImpl = fetch }) {
+async function uploadArticle(options) {
+  if (!options || typeof options !== 'object') throw new TypeError('options must be an object');
+  const baseUrl = validateLoopbackBaseUrl(options.baseUrl);
+  const token = options.token;
+  const filename = options.filename;
+  const bytes = options.bytes;
+  const fetchImpl = options.fetchImpl === undefined ? fetch : options.fetchImpl;
   const form = new FormData();
   form.append('file', new Blob([bytes], { type: 'text/markdown; charset=utf-8' }), filename);
 
@@ -157,6 +164,31 @@ function assertUploadIdentity(article, record, filename) {
   }
 }
 
+function readSignedArticleBytes(bundleDir, filename, expectedHash) {
+  const filePath = path.join(bundleDir, filename);
+  const noFollow = typeof fs.constants.O_NOFOLLOW === 'number' ? fs.constants.O_NOFOLLOW : 0;
+  let fd;
+  try {
+    fd = fs.openSync(filePath, fs.constants.O_RDONLY | noFollow);
+  } catch {
+    throw new Error(`signed bundle entry could not be opened safely: ${filename}`);
+  }
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) {
+      throw new Error(`signed bundle entry is not a regular file: ${filename}`);
+    }
+    const bytes = fs.readFileSync(fd);
+    const actualHash = createHash('sha256').update(bytes).digest('hex');
+    if (actualHash !== expectedHash) {
+      throw new Error(`SHA256SUMS mismatch for ${filename}`);
+    }
+    return bytes;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 function validateBundleFileSet(manifest, hashes) {
   if (manifest.articles.length !== EXPECTED_ARTICLE_COUNT) {
     throw new Error(`release must contain exactly ${EXPECTED_ARTICLE_COUNT} articles`);
@@ -185,7 +217,7 @@ async function publishTranslationRelease(options) {
   const uploads = filenames.map((filename, index) => ({
     filename,
     record: manifest.articles[index],
-    bytes: fs.readFileSync(path.join(bundleDir, filename))
+    bytes: readSignedArticleBytes(bundleDir, filename, hashes.get(filename))
   }));
   const fetchImpl = options.fetchImpl === undefined ? fetch : options.fetchImpl;
   if (typeof fetchImpl !== 'function') throw new TypeError('fetchImpl must be a function');

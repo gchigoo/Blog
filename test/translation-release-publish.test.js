@@ -16,6 +16,7 @@ const {
   parseArguments,
   publishTranslationRelease,
   readTokenFromFd,
+  uploadArticle,
   validateLoopbackBaseUrl
 } = require('../scripts/publish-translation-release');
 
@@ -315,6 +316,36 @@ test('argument, loopback, and bounded inherited-fd boundaries are strict', async
   assert.throws(() => readTokenFromFd(-1), /descriptor.*integer/i);
 });
 
+test('direct upload interface rejects non-loopback before token or fetch access', async () => {
+  let tokenReads = 0;
+  let requests = 0;
+  const options = {
+    baseUrl: 'https://example.com',
+    filename: 'direct-interface.md',
+    bytes: Buffer.from('# Direct interface\n'),
+    fetchImpl: async () => {
+      requests += 1;
+      return fakeResponse({});
+    }
+  };
+  Object.defineProperty(options, 'token', {
+    get() {
+      tokenReads += 1;
+      return VALID_TOKEN;
+    }
+  });
+
+  let error;
+  try {
+    await uploadArticle(options);
+  } catch (caught) {
+    error = caught;
+  }
+  assert.equal(tokenReads, 0);
+  assert.equal(requests, 0);
+  assert.match(error?.message || '', /base URL must be loopback HTTP/);
+});
+
 test('publisher validates the bundle, reads the token once, and uploads sequentially in manifest order', async t => {
   const fixture = createStandaloneBundle(t);
   let tokenReads = 0;
@@ -396,6 +427,50 @@ test('bad SHA fails before reading the bearer token or making any HTTP request',
   assert.equal(requests, 0);
 });
 
+test('publisher rejects bytes changed immediately after the SHA audit before token or fetch', async t => {
+  const fixture = createStandaloneBundle(t);
+  const filename = `${RELEASE.articles[0].enSlug}.md`;
+  const targetPath = path.join(fixture.bundleDir, filename);
+  const originalReadFileSync = fs.readFileSync;
+  let mutated = false;
+  let tokenReads = 0;
+  let requests = 0;
+  fs.readFileSync = function mutateAfterAuditRead(file, ...args) {
+    const bytes = originalReadFileSync.call(this, file, ...args);
+    if (!mutated && typeof file === 'string' && path.resolve(file) === targetPath) {
+      mutated = true;
+      fs.appendFileSync(targetPath, '\nchanged immediately after the audit hash read\n');
+    }
+    return bytes;
+  };
+
+  const options = {
+    baseUrl: 'http://127.0.0.1:3000',
+    bundleDir: fixture.bundleDir,
+    releasePath: fixture.releasePath,
+    fetchImpl: async () => {
+      const index = requests;
+      requests += 1;
+      return fakeResponse(safeUploadResponse(RELEASE.articles[index], index));
+    }
+  };
+  Object.defineProperty(options, 'bearerToken', {
+    get() {
+      tokenReads += 1;
+      return VALID_TOKEN;
+    }
+  });
+
+  try {
+    await assert.rejects(() => publishTranslationRelease(options), /SHA256SUMS mismatch/);
+  } finally {
+    fs.readFileSync = originalReadFileSync;
+  }
+  assert.equal(mutated, true);
+  assert.equal(tokenReads, 0);
+  assert.equal(requests, 0);
+});
+
 test('non-loopback base URL is rejected before reading the token', async t => {
   const fixture = createStandaloneBundle(t);
   const result = await spawnPublisher({
@@ -409,8 +484,46 @@ test('non-loopback base URL is rejected before reading the token', async t => {
   assertNoSensitiveOutput(result);
 });
 
-test('returned locale, translation key, slug, status, and tag set are identity-checked', async t => {
+test('returned identities, locale, translation key, slug, status, and tags are checked safely', async t => {
   const fixture = createStandaloneBundle(t);
+  const responseBodyMarker = 'raw-identity-response-SHOULD-NOT-LEAK';
+  const identityValues = [
+    ['missing', undefined, true],
+    ['zero', 0, false],
+    ['negative', -1, false],
+    ['non-integer', 1.5, false],
+    ['unsafe integer', Number.MAX_SAFE_INTEGER + 1, false],
+    ['wrong type', '1', false]
+  ];
+  for (const field of ['id', 'postId']) {
+    for (const [description, value, remove] of identityValues) {
+      let requests = 0;
+      await assert.rejects(() => publishTranslationRelease({
+        baseUrl: 'http://127.0.0.1:3000',
+        bundleDir: fixture.bundleDir,
+        releasePath: fixture.releasePath,
+        bearerToken: VALID_TOKEN,
+        fetchImpl: async () => {
+          const article = safeUploadResponse(RELEASE.articles[0], 0);
+          if (remove) delete article[field];
+          else article[field] = value;
+          requests += 1;
+          return {
+            status: 200,
+            json: async () => ({ article, debug: responseBodyMarker })
+          };
+        }
+      }), error => {
+        assert.equal(error.message, `upload identity mismatch for ${RELEASE.articles[0].enSlug}.md: ${field}`);
+        assert.equal(error.message.includes(VALID_TOKEN), false);
+        assert.equal(error.message.includes(responseBodyMarker), false);
+        assert.doesNotMatch(error.message, /authorization|bearer|header/i);
+        return true;
+      });
+      assert.equal(requests, 1, `${field} ${description} should stop after the first response`);
+    }
+  }
+
   const cases = [
     ['locale', { locale: 'zh' }],
     ['translationKey', { translationKey: 'wrong-translation-key' }],
