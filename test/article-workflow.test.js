@@ -461,8 +461,10 @@ test('legacy resolver adopts a cross-run tag only when the stored label is equiv
 
   // Simulate a previous resolver run: a legacy tag whose id equals another
   // label's base digest prefix but whose stored visible label differs. A fresh
-  // resolver run must not adopt it for the distinct label.
-  const collisionLabel = '教程';
+  // resolver run must not adopt it for the distinct label. The collision label
+  // must stay outside the catalog: '教程' is now a stable tag name (tutorials),
+  // so use a deterministic unknown label to exercise the digest-collision path.
+  const collisionLabel = '游戏';
   const collisionId = `legacy-${digest(collisionLabel).slice(0, 12)}`;
   const extendedId = `legacy-${digest(collisionLabel).slice(0, 20)}`;
   db.prepare(`
@@ -505,7 +507,7 @@ test('legacy resolver adopts a cross-run tag only when the stored label is equiv
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM tags WHERE id = ?').get(nodeId).count, 1);
 
   // After the extended allocation, the same label dedupes to the extended tag.
-  assert.equal(resolveTagId(' 教程 '), extendedId);
+  assert.equal(resolveTagId(' 游戏 '), extendedId);
   db.close();
 });
 
