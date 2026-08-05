@@ -959,6 +959,218 @@ test('DEPLOY defines a later-priority image bypass and prefix purge for determin
   assert.throws(() => validateRollbackContract(unsafeRollbackOrder), /failed-cutover rollback marker missing or out of order/);
 });
 
+test('English translation release runbook pins candidate publication, fd-3 credentials, audits, and rollback boundaries', async t => {
+  const [deploy, design] = await Promise.all([
+    fs.readFile(path.join(projectRoot, 'DEPLOY.md'), 'utf8'),
+    fs.readFile(
+      path.join(projectRoot, 'docs/superpowers/specs/2026-08-04-english-article-translation-release-design.md'),
+      'utf8'
+    )
+  ]);
+  const stepMarkers = [
+    '#### 生产步骤 1：启用 maintenance',
+    '#### 生产步骤 2：停止 PM2',
+    '#### 生产步骤 3：创建协调备份',
+    '#### 生产步骤 4：更新代码并恢复 production-local ecosystem',
+    '#### 生产步骤 5：执行 migrate-db',
+    '#### 生产步骤 6：执行 taxonomy dry-run 与 apply',
+    '#### 生产步骤 7：启动 PM2 candidate',
+    '#### 生产步骤 8：通过 anonymous pipe 发布',
+    '#### 生产步骤 9：执行 published 与 localized 两项 audit',
+    '#### 生产步骤 10：重启最终 PM2 worker',
+    '#### 生产步骤 11：执行 localhost smoke',
+    '#### 生产步骤 12：清理 temporary bundle',
+    '#### 生产步骤 13：关闭 maintenance',
+    '#### 生产步骤 14：执行 public smoke'
+  ];
+  const exactLauncher = [
+    "const fs = require('node:fs');",
+    "const { execFileSync, spawn } = require('node:child_process');",
+    "const jwt = require('jsonwebtoken');",
+    '',
+    "const pid = execFileSync('pm2', ['pid', 'blog'], { encoding: 'utf8' }).trim();",
+    "if (!/^\\d+$/.test(pid)) throw new Error('blog PM2 process is not running');",
+    "const entries = fs.readFileSync(`/proc/${pid}/environ`).toString('utf8').split('\\0');",
+    'const env = Object.fromEntries(entries.filter(Boolean).map(entry => {',
+    "  const split = entry.indexOf('=');",
+    '  return [entry.slice(0, split), entry.slice(split + 1)];',
+    '}));',
+    "if (!env.JWT_SECRET) throw new Error('JWT_SECRET is unavailable');",
+    'let token = jwt.sign(',
+    "  { id: 0, username: 'release-operator' },",
+    '  env.JWT_SECRET,',
+    "  { algorithm: 'HS256', expiresIn: '5m' }",
+    ');',
+    'const child = spawn(process.execPath, [',
+    "  'scripts/publish-translation-release.js',",
+    "  '--release', 'content/releases/english-articles-2026-08-04.json',",
+    "  '--bundle', '/root/blog-english-release-20260804/incoming',",
+    "  '--base-url', 'http://127.0.0.1:3000',",
+    "  '--token-fd', '3'",
+    "], { stdio: ['ignore', 'inherit', 'inherit', 'pipe'] });",
+    'child.stdio[3].end(token);',
+    "token = '';",
+    'child.once(\'exit\', code => process.exitCode = code ?? 1);'
+  ].join('\n');
+
+  function extractRequiredSection(text, startMarker, endMarker, label) {
+    const start = text.indexOf(startMarker);
+    assert.notEqual(start, -1, `${label} start marker missing`);
+    const end = text.indexOf(endMarker, start + startMarker.length);
+    assert.notEqual(end, -1, `${label} end marker missing`);
+    return text.slice(start, end);
+  }
+
+  function assertOrdered(text, markers, label) {
+    let cursor = -1;
+    for (const marker of markers) {
+      const index = text.indexOf(marker, cursor + 1);
+      assert.ok(index > cursor, `${label} marker missing or out of order: ${marker}`);
+      cursor = index;
+    }
+  }
+
+  function swapOnce(text, left, right) {
+    const sentinel = '__ENGLISH_RELEASE_CONTRACT_SWAP__';
+    assert.equal(text.includes(sentinel), false, 'swap sentinel unexpectedly exists in document');
+    const leftIndex = text.indexOf(left);
+    const rightIndex = text.indexOf(right);
+    assert.notEqual(leftIndex, -1, `left swap marker missing: ${left}`);
+    assert.notEqual(rightIndex, -1, `right swap marker missing: ${right}`);
+    return text.replace(left, sentinel).replace(right, left).replace(sentinel, right);
+  }
+
+  function validateEnglishReleaseContract(text) {
+    const section = extractRequiredSection(
+      text,
+      '### 英文文章翻译发布',
+      '\n## Google 登录评论配置',
+      'English translation release runbook'
+    );
+    assertOrdered(section, stepMarkers, 'critical production sequence');
+
+    const bashBlocks = Array.from(
+      section.matchAll(/```bash[^\S\r\n]*\r?\n([\s\S]*?)\r?\n```/g),
+      match => match[1]
+    );
+    assert.equal(bashBlocks.length, 3, 'expected candidate, production, and pre-open rollback Bash blocks');
+    for (const [index, block] of bashBlocks.entries()) {
+      const syntax = spawnSync('bash', ['-n'], { input: block, encoding: 'utf8' });
+      assert.equal(syntax.status, 0, `English release Bash block ${index + 1} is invalid: ${syntax.stderr}`);
+    }
+    const productionBlocks = bashBlocks.filter(block => block.includes('# english-translation-release-runbook'));
+    assert.equal(productionBlocks.length, 1, 'expected one canonical executable production runbook block');
+
+    assert.ok(
+      section.includes(`node <<'NODE'\n${exactLauncher}\nNODE`),
+      'exact five-minute HS256 fd-3 launcher missing'
+    );
+    assert.ok(
+      section.includes('下面的 here-doc 必须保持单引号定界（`<<\'NODE\'`）；launcher 本身只从 shell 标准输入交给 Node，绝不保存到磁盘。'),
+      'single-quoted in-memory launcher contract missing'
+    );
+    assert.ok(
+      section.includes('发布 token 的值禁止出现在命令行参数、环境变量、文件、shell history、stdout/stderr 或任何应用、PM2、Nginx 日志中。'),
+      'credential non-persistence contract missing'
+    );
+    assert.ok(
+      section.includes('禁止直接 SQL INSERT、UPDATE 或逐篇 DELETE；四篇文章只能由受保护的 loopback publisher 顺序写入。'),
+      'direct-SQL publication prohibition missing'
+    );
+    assert.doesNotMatch(section, /--token(?:[ =]|$)/, 'a bearer token argument must never be documented');
+    assert.doesNotMatch(section, /(?:export\s+)?(?:JWT_)?TOKEN=/, 'a bearer token environment variable must never be documented');
+
+    assert.match(section, /cp --archive -- ecosystem\.config\.js "\$BACKUP_DIR\/ecosystem\.config\.js"/);
+    assert.match(section, /cmp -s -- "\$BACKUP_DIR\/ecosystem\.config\.js" ecosystem\.config\.js/);
+    assert.ok(
+      section.includes('生产本地 `/root/Blog/ecosystem.config.js` 必须在代码更新前用 `cp --archive` 快照，并在代码更新后与开放前回滚时逐字节、权限、owner/group 和 mtime 原样恢复；不得用仓库版本重建。'),
+      'production-local ecosystem preservation contract missing'
+    );
+
+    const preOpenRollback = extractRequiredSection(
+      section,
+      '##### 开放前 rollback',
+      '##### 开放后 forward-fix/reconciliation',
+      'pre-open rollback contract'
+    );
+    const postOpenRecovery = section.slice(section.indexOf('##### 开放后 forward-fix/reconciliation'));
+    assert.ok(
+      preOpenRollback.includes('如果 publisher 在第 2、3 或 4 篇发生部分发布失败，必须在 maintenance 仍启用时恢复整个协调备份集'),
+      'whole coordinated backup restoration after partial publication missing'
+    );
+    assert.match(preOpenRollback, /禁止逐篇删除或只恢复其中一个组件/);
+    assertOrdered(preOpenRollback, [
+      'pm2 stop blog',
+      'sha256sum -c SHA256SUMS',
+      'mv -- articles "$FAILED_STATE_DIR/articles"',
+      'mv -- var/operations "$FAILED_STATE_DIR/operations"',
+      'git reset --hard "$PRE_RELEASE_COMMIT"',
+      'cp --archive -- "$BACKUP_DIR/blog.db" blog.db',
+      'tar --extract --preserve-permissions --file "$BACKUP_DIR/content-state.tar"',
+      'cp --archive --remove-destination -- "$BACKUP_DIR/ecosystem.config.js" ecosystem.config.js',
+      'pm2 start ecosystem.config.js --only blog --update-env'
+    ], 'whole coordinated pre-open restore');
+    assert.match(
+      postOpenRecovery,
+      /maintenance 一旦关闭（包括 public smoke 开始前后的整个 post-open 阶段），绝不能恢复发布前协调备份集；[\s\S]*优先前向修复（forward-fix）与逐项对账（reconciliation）/,
+      'post-open recovery must require forward-fix and reconciliation instead of a pre-release restore'
+    );
+    assert.ok(
+      section.includes('本次发布不改变图片文件，HTML 仍为 `private, no-store`；不得 purge 未变化的 HTML 或 `/images/*`，也不得修改现有 Cache Rule。'),
+      'unchanged HTML/image no-purge contract missing'
+    );
+    return section;
+  }
+
+  validateEnglishReleaseContract(deploy);
+  assertOrdered(design, [
+    '在维护门保持启用时启动 PM2 候选进程',
+    '通过 loopback 管理发布接口依次导入 4 篇英文文章',
+    '运行数据库迁移、taxonomy/content audit',
+    '随后重启最终 PM2 worker'
+  ], 'approved design PM2 publication sequence');
+
+  const reordered = swapOnce(deploy, stepMarkers[5], stepMarkers[6]);
+  assert.throws(() => validateEnglishReleaseContract(reordered), /critical production sequence/);
+
+  for (const [label, from, to] of [
+    ['HS256', "algorithm: 'HS256'", "algorithm: 'HS384'"],
+    [
+      'five-minute expiry',
+      "{ algorithm: 'HS256', expiresIn: '5m' }",
+      "{ algorithm: 'HS256', expiresIn: '15m' }"
+    ],
+    ['fd 3', "'--token-fd', '3'", "'--token-fd', '4'"]
+  ]) {
+    const mutated = deploy.replace(from, to);
+    assert.notEqual(mutated, deploy, `${label} mutation fixture must change the document`);
+    assert.throws(() => validateEnglishReleaseContract(mutated), /five-minute HS256 fd-3 launcher/);
+  }
+
+  const partialRestoreWeakened = deploy.replace(
+    '恢复整个协调备份集',
+    '只删除已经发布的英文文章'
+  );
+  assert.notEqual(partialRestoreWeakened, deploy, 'partial-publication rollback mutation must change the document');
+  assert.throws(() => validateEnglishReleaseContract(partialRestoreWeakened), /whole coordinated backup/);
+
+  const ecosystemRegenerated = deploy.replace(
+    '逐字节、权限、owner/group 和 mtime 原样恢复；不得用仓库版本重建',
+    '按仓库模板重新生成'
+  );
+  assert.notEqual(ecosystemRegenerated, deploy, 'ecosystem mutation fixture must change the document');
+  assert.throws(() => validateEnglishReleaseContract(ecosystemRegenerated), /production-local ecosystem/);
+
+  const postOpenRestoreAllowed = deploy.replace(
+    '绝不能恢复发布前协调备份集',
+    '可以直接恢复发布前协调备份集'
+  );
+  assert.notEqual(postOpenRestoreAllowed, deploy, 'post-open rollback mutation must change the document');
+  assert.throws(() => validateEnglishReleaseContract(postOpenRestoreAllowed), /post-open recovery/);
+
+  t.diagnostic('killed critical-order, HS256, five-minute, fd-3, whole-backup, ecosystem, and post-open rollback mutations');
+});
+
 test('Nginx caches static assets only by explicit prefixes and gates public traffic during maintenance', async () => {
   const [nginx, maintenance, deploy] = await Promise.all([
     fs.readFile(path.join(projectRoot, 'deploy/nginx/blog.conf'), 'utf8'),

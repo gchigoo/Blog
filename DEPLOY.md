@@ -169,6 +169,248 @@ npm run audit-localized-content
 - **公共写入开启后**：绝不盲目恢复发布前备份集（会丢失新评论/上传/Analytics 事件）。先重新启用维护、捕获切换后的 DB/文件，优先前向修复；只有持有经过审查的切换后写入对账/导出计划时才允许回滚。
 - 绝不单独恢复某一个组件，也绝不进行原地 schema 降级。
 
+### 英文文章翻译发布
+
+本节是 `english-articles-2026-08-04.json` 四篇英文文章的唯一生产 runbook。生产 checkout 固定为 `/root/Blog`，PM2 进程固定为 `blog`，应用只能监听 loopback。所有会改变生产代码、数据库、taxonomy、文章文件或 PM2 generation 的步骤，都必须在 Nginx maintenance include 已启用且公网 503 已经由非 allowlist 主机确认后执行；temporary bundle 也必须在 maintenance 仍启用时清理，任何失败都保持 maintenance 启用。
+
+禁止直接 SQL INSERT、UPDATE 或逐篇 DELETE；四篇文章只能由受保护的 loopback publisher 顺序写入。发布 token 的值禁止出现在命令行参数、环境变量、文件、shell history、stdout/stderr 或任何应用、PM2、Nginx 日志中。该 token 必须是仅存于内存、算法固定为 HS256、有效期固定为五分钟（`expiresIn: '5m'`）并只经 fd 3 匿名管道传递的一次性凭据。
+
+#### 候选包门禁（维护窗口前，只读）
+
+在批准的候选 checkout 和候选数据库上准备仅含四个已批准 Markdown 文件及 `SHA256SUMS` 的 flat bundle；不得含隐藏文件、目录、symlink 或额外文件。先运行 source audit，保存 JSON 输出和 exit code，成功后才把同一字节的 bundle 放到生产 `/root/blog-english-release-20260804/incoming`：
+
+```bash
+cd /path/to/approved-candidate-checkout
+npm run audit-translation-release -- \
+  --release content/releases/english-articles-2026-08-04.json \
+  --bundle /private/tmp/blog-english-release-20260804 \
+  --mode source
+```
+
+下面的生产块必须在同一个 root Bash 会话中从上到下执行，不得跳步或调换。`RELEASE_COMMIT` 必须由 operator 预先设置为已经审查、推送且将要发布的完整 40 位 commit；它不是凭据。maintenance/public 状态码必须来自非 allowlist 主机的独立探测。
+
+```bash
+# english-translation-release-runbook
+set -euo pipefail
+cd /root/Blog
+
+RELEASE_COMMIT="${RELEASE_COMMIT:?set RELEASE_COMMIT to the approved 40-hex release commit}"
+[[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+RELEASE_ROOT=/root/blog-english-release-20260804
+INCOMING_DIR="$RELEASE_ROOT/incoming"
+BACKUP_DIR="$RELEASE_ROOT/coordinated-backup"
+NGINX_SITE=/etc/nginx/sites-available/blog.conf
+ACTIVE_MAINTENANCE='^[[:space:]]*include[[:space:]]+/etc/nginx/snippets/blog-maintenance[.]conf;$'
+test -d "$INCOMING_DIR"
+
+#### 生产步骤 1：启用 maintenance
+sudo sed -i 's@^[[:space:]]*#[[:space:]]*include[[:space:]]\+/etc/nginx/snippets/blog-maintenance[.]conf;@    include /etc/nginx/snippets/blog-maintenance.conf;@' "$NGINX_SITE"
+test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
+sudo nginx -t
+sudo systemctl reload nginx
+printf '%s\n' 'From a non-allowlisted host, run: curl -q --proto =https --globoff -sS -o /dev/null -w "%{http_code}" -- https://blog.cokedaily.space/'
+read -r -p 'Confirmed maintenance HTTP status: ' MAINTENANCE_STATUS
+test "$MAINTENANCE_STATUS" = 503
+
+#### 生产步骤 2：停止 PM2
+pm2 stop blog
+test "$(pm2 pid blog)" = 0
+
+#### 生产步骤 3：创建协调备份
+test ! -e "$BACKUP_DIR"
+install -d -m 0700 "$BACKUP_DIR"
+touch "$BACKUP_DIR/.backup-start"
+printf '%s\n' "$(git rev-parse HEAD)" > "$BACKUP_DIR/git-commit"
+cp --archive -- ecosystem.config.js "$BACKUP_DIR/ecosystem.config.js"
+stat -c '%a:%u:%g:%s:%Y' ecosystem.config.js > "$BACKUP_DIR/ecosystem.stat"
+npm run backup-db
+mapfile -d '' DB_SNAPSHOTS < <(find /root/Blog/backups -maxdepth 1 -type f -name 'blog_*.db' -newer "$BACKUP_DIR/.backup-start" -print0)
+test "${#DB_SNAPSHOTS[@]}" -eq 1
+cp --archive -- "${DB_SNAPSHOTS[0]}" "$BACKUP_DIR/blog.db"
+if [[ -e var/operations ]]; then
+  printf 'present\n' > "$BACKUP_DIR/operations-state"
+  tar --create --file "$BACKUP_DIR/content-state.tar" -- articles content/taxonomy.json var/operations
+else
+  printf 'absent\n' > "$BACKUP_DIR/operations-state"
+  tar --create --file "$BACKUP_DIR/content-state.tar" -- articles content/taxonomy.json
+fi
+rm -f -- "$BACKUP_DIR/.backup-start"
+(
+  cd "$BACKUP_DIR"
+  sha256sum blog.db content-state.tar ecosystem.config.js ecosystem.stat git-commit operations-state > SHA256SUMS
+  sha256sum -c SHA256SUMS
+)
+
+#### 生产步骤 4：更新代码并恢复 production-local ecosystem
+PRE_RELEASE_COMMIT="$(cat "$BACKUP_DIR/git-commit")"
+git diff --quiet -- . ':(exclude)ecosystem.config.js'
+git diff --cached --quiet
+test -z "$(git ls-files --others --exclude-standard)"
+git fetch --prune origin
+git cat-file -e "$RELEASE_COMMIT^{commit}"
+git merge-base --is-ancestor "$PRE_RELEASE_COMMIT" "$RELEASE_COMMIT"
+git reset --hard "$RELEASE_COMMIT"
+npm ci --omit=dev
+cp --archive --remove-destination -- "$BACKUP_DIR/ecosystem.config.js" ecosystem.config.js
+cmp -s -- "$BACKUP_DIR/ecosystem.config.js" ecosystem.config.js
+test "$(stat -c '%a:%u:%g:%s:%Y' ecosystem.config.js)" = "$(cat "$BACKUP_DIR/ecosystem.stat")"
+
+#### 生产步骤 5：执行 migrate-db
+test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
+npm run migrate-db
+
+#### 生产步骤 6：执行 taxonomy dry-run 与 apply
+test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
+npm run sync-taxonomy -- --dry-run
+npm run sync-taxonomy
+
+#### 生产步骤 7：启动 PM2 candidate
+test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
+pm2 start ecosystem.config.js --only blog --update-env
+CANDIDATE_PID="$(pm2 pid blog)"
+[[ "$CANDIDATE_PID" =~ ^[1-9][0-9]*$ ]]
+ss -ltn | grep -Eq '127[.]0[.]0[.]1:3000|\[::1\]:3000'
+! ss -ltn | grep -E ':3000[[:space:]]' | grep -Eq '0[.]0[.]0[.]0:3000|\[::\]:3000'
+test "$(curl -q --proto '=http' --globoff -sS -o /dev/null -w '%{http_code}' -- http://127.0.0.1:3000/)" = 302
+
+#### 生产步骤 8：通过 anonymous pipe 发布
+test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
+# 下列 single-quoted here-doc 不做 shell expansion；launcher 与 token 都不落盘。
+node <<'NODE'
+const fs = require('node:fs');
+const { execFileSync, spawn } = require('node:child_process');
+const jwt = require('jsonwebtoken');
+
+const pid = execFileSync('pm2', ['pid', 'blog'], { encoding: 'utf8' }).trim();
+if (!/^\d+$/.test(pid)) throw new Error('blog PM2 process is not running');
+const entries = fs.readFileSync(`/proc/${pid}/environ`).toString('utf8').split('\0');
+const env = Object.fromEntries(entries.filter(Boolean).map(entry => {
+  const split = entry.indexOf('=');
+  return [entry.slice(0, split), entry.slice(split + 1)];
+}));
+if (!env.JWT_SECRET) throw new Error('JWT_SECRET is unavailable');
+let token = jwt.sign(
+  { id: 0, username: 'release-operator' },
+  env.JWT_SECRET,
+  { algorithm: 'HS256', expiresIn: '5m' }
+);
+const child = spawn(process.execPath, [
+  'scripts/publish-translation-release.js',
+  '--release', 'content/releases/english-articles-2026-08-04.json',
+  '--bundle', '/root/blog-english-release-20260804/incoming',
+  '--base-url', 'http://127.0.0.1:3000',
+  '--token-fd', '3'
+], { stdio: ['ignore', 'inherit', 'inherit', 'pipe'] });
+child.stdio[3].end(token);
+token = '';
+child.once('exit', code => process.exitCode = code ?? 1);
+NODE
+
+#### 生产步骤 9：执行 published 与 localized 两项 audit
+npm run audit-translation-release -- \
+  --release content/releases/english-articles-2026-08-04.json \
+  --bundle "$INCOMING_DIR" \
+  --mode published
+npm run audit-localized-content
+
+#### 生产步骤 10：重启最终 PM2 worker
+test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
+pm2 restart blog --update-env
+FINAL_PID="$(pm2 pid blog)"
+[[ "$FINAL_PID" =~ ^[1-9][0-9]*$ ]]
+test "$FINAL_PID" != "$CANDIDATE_PID"
+ss -ltn | grep -Eq '127[.]0[.]0[.]1:3000|\[::1\]:3000'
+! ss -ltn | grep -E ':3000[[:space:]]' | grep -Eq '0[.]0[.]0[.]0:3000|\[::\]:3000'
+
+#### 生产步骤 11：执行 localhost smoke
+test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
+LOCAL_ROUTES=(
+  /en/
+  /en/understanding-fast-charging
+  /en/baidu-netdisk-speed-limit-guide
+  /en/my-essential-iphone-apps
+  /en/migrating-home-assistant-from-nuc9-to-mac-mini
+)
+for route in "${LOCAL_ROUTES[@]}"; do
+  test "$(curl -q --proto '=http' --globoff -sS -o /dev/null -w '%{http_code}' -- "http://127.0.0.1:3000$route")" = 200
+  test "$(curl -q --insecure --resolve blog.cokedaily.space:443:127.0.0.1 --globoff -sS -o /dev/null -w '%{http_code}' -- "https://blog.cokedaily.space$route")" = 200
+done
+
+#### 生产步骤 12：清理 temporary bundle
+test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
+rm -rf -- "$INCOMING_DIR"
+test ! -e "$INCOMING_DIR"
+test -z "$(find "$RELEASE_ROOT" -maxdepth 1 -type f -iname '*token*' -print -quit)"
+
+#### 生产步骤 13：关闭 maintenance
+sudo sed -i 's@^[[:space:]]*include[[:space:]]\+/etc/nginx/snippets/blog-maintenance[.]conf;@    # include /etc/nginx/snippets/blog-maintenance.conf;@' "$NGINX_SITE"
+test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 0
+sudo nginx -t
+sudo systemctl reload nginx
+
+#### 生产步骤 14：执行 public smoke
+for route in "${LOCAL_ROUTES[@]}"; do
+  test "$(curl -q --proto '=https' --globoff -sS --max-time 30 -o /dev/null -w '%{http_code}' -- "https://blog.cokedaily.space$route")" = 200
+done
+```
+
+生产本地 `/root/Blog/ecosystem.config.js` 必须在代码更新前用 `cp --archive` 快照，并在代码更新后与开放前回滚时逐字节、权限、owner/group 和 mtime 原样恢复；不得用仓库版本重建。上面的 localhost `--insecure` 只用于 loopback 命中 Nginx origin 的维护态 smoke，不改变公网 TLS 验收。完成 public smoke 后还必须执行本文既有的完整 root negotiation、localized HTML、真实 WebP `MISS → HIT` 和 error no-store 检查。
+
+下面的 here-doc 必须保持单引号定界（`<<'NODE'`）；launcher 本身只从 shell 标准输入交给 Node，绝不保存到磁盘。它从正在运行的 `blog` 进程读取既有 `JWT_SECRET` 到当前 Node 内存，只在内存中签发五分钟 HS256 token，经 child fd 3 匿名管道发送后立即清空本地引用；不得把 launcher 改成 `node -e` 参数、token 参数、token 环境变量、命名 pipe 或临时文件。
+
+#### 失败边界与恢复
+
+##### 开放前 rollback
+
+如果 publisher 在第 2、3 或 4 篇发生部分发布失败，必须在 maintenance 仍启用时恢复整个协调备份集（数据库、`articles/`、taxonomy、operation state、发布前 Git commit 和 production-local `ecosystem.config.js`），禁止逐篇删除或只恢复其中一个组件。恢复前把失败现场的数据库、`articles/`、taxonomy 和 `var/operations` 移到只读取证目录，不得用通用清理删除 operation journal。任何 migrate、taxonomy、publish、audit、final restart、localhost smoke 或 temporary cleanup 失败都走同一条开放前 rollback；maintenance 只有在旧 generation 的 localhost smoke 通过后才能关闭。
+
+```bash
+set -euo pipefail
+cd /root/Blog
+BACKUP_DIR=/root/blog-english-release-20260804/coordinated-backup
+INCOMING_DIR=/root/blog-english-release-20260804/incoming
+NGINX_SITE=/etc/nginx/sites-available/blog.conf
+ACTIVE_MAINTENANCE='^[[:space:]]*include[[:space:]]+/etc/nginx/snippets/blog-maintenance[.]conf;$'
+test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
+pm2 stop blog
+(
+  cd "$BACKUP_DIR"
+  sha256sum -c SHA256SUMS
+)
+PRE_RELEASE_COMMIT="$(cat "$BACKUP_DIR/git-commit")"
+FAILED_STATE_DIR=/root/blog-english-release-20260804/pre-open-failed-state
+test ! -e "$FAILED_STATE_DIR"
+install -d -m 0700 "$FAILED_STATE_DIR"
+cp --archive -- content/taxonomy.json "$FAILED_STATE_DIR/taxonomy.json"
+mv -- articles "$FAILED_STATE_DIR/articles"
+if [[ -e var/operations ]]; then
+  mv -- var/operations "$FAILED_STATE_DIR/operations"
+fi
+for db_file in blog.db blog.db-wal blog.db-shm; do
+  if [[ -e "$db_file" ]]; then mv -- "$db_file" "$FAILED_STATE_DIR/$db_file"; fi
+done
+git reset --hard "$PRE_RELEASE_COMMIT"
+npm ci --omit=dev
+cp --archive -- "$BACKUP_DIR/blog.db" blog.db
+tar --extract --preserve-permissions --file "$BACKUP_DIR/content-state.tar"
+cp --archive --remove-destination -- "$BACKUP_DIR/ecosystem.config.js" ecosystem.config.js
+cmp -s -- "$BACKUP_DIR/ecosystem.config.js" ecosystem.config.js
+test "$(stat -c '%a:%u:%g:%s:%Y' ecosystem.config.js)" = "$(cat "$BACKUP_DIR/ecosystem.stat")"
+if [[ "$(cat "$BACKUP_DIR/operations-state")" = absent ]]; then test ! -e var/operations; fi
+npm run audit-localized-content
+pm2 start ecosystem.config.js --only blog --update-env
+[[ "$(pm2 pid blog)" =~ ^[1-9][0-9]*$ ]]
+test "$(curl -q --proto '=http' --globoff -sS -o /dev/null -w '%{http_code}' -- http://127.0.0.1:3000/)" = 302
+rm -rf -- "$INCOMING_DIR"
+# 旧版本 localhost smoke 全部通过后，才按生产步骤 13 关闭 maintenance，并重新执行旧版本 public smoke。
+```
+
+##### 开放后 forward-fix/reconciliation
+
+maintenance 一旦关闭（包括 public smoke 开始前后的整个 post-open 阶段），绝不能恢复发布前协调备份集；先重新启用 maintenance、冻结并备份开放后状态，优先前向修复（forward-fix）与逐项对账（reconciliation）。只有经过审查的开放后写入导出/重放计划才允许回滚。原因是开放后的评论、上传和 Analytics 写入不在发布前备份中，直接恢复会丢数据；此边界与开放前 whole-backup rollback 不得混用。
+
+本次发布不改变图片文件，HTML 仍为 `private, no-store`；不得 purge 未变化的 HTML 或 `/images/*`，也不得修改现有 Cache Rule。只有另行确认发生真实图片缓存事故时，才进入本文既有的 Emergency bypass + prefix purge 事故流程；该流程不是本次英文内容发布的常规步骤。
+
 ## Google 登录评论配置
 
 ### 配置契约
