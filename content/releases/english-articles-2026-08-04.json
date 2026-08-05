@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "articles": [
+    {
+      "translationKey": "9102",
+      "zhSlug": "9102",
+      "enSlug": "understanding-fast-charging",
+      "enTitle": "It’s 2019—Are You Still Using Apple’s 5V/1A Charger?",
+      "description": "A practical introduction to fast charging, the electrical principles behind it, and the major charging protocols in use in 2019.",
+      "date": "2019-12-15T01:18:00.000Z",
+      "tags": ["consumer-electronics", "explainers", "charging", "apple"]
+    },
+    {
+      "translationKey": "baiduyun-speed-limit",
+      "zhSlug": "baiduyun-speed-limit",
+      "enSlug": "baidu-netdisk-speed-limit-guide",
+      "enTitle": "Baidu Netdisk Throttling You? You May Be Downloading the Wrong Way!",
+      "description": "A step-by-step guide to downloading Baidu Netdisk files with Chrome, IDM, Tampermonkey, and a download-assistant script.",
+      "date": "2019-09-08T09:12:00.000Z",
+      "tags": ["tutorials", "tools", "baidu-netdisk", "idm", "tampermonkey"]
+    },
+    {
+      "translationKey": "apps-in-my-iphone-1784032269347",
+      "zhSlug": "apps-in-my-iphone-1784032269347",
+      "enSlug": "my-essential-iphone-apps",
+      "enTitle": "Apps on My iPhone",
+      "description": "A personal list of recommended iPhone apps for tools, daily life, media, learning, finance, and productivity.",
+      "date": "2019-09-01T16:02:00.000Z",
+      "tags": ["app", "iphone", "ios", "tools", "productivity"]
+    },
+    {
+      "translationKey": "home-assistant-nuc9-to-mac-mini-homekit",
+      "zhSlug": "home-assistant-nuc9-to-mac-mini-homekit",
+      "enSlug": "migrating-home-assistant-from-nuc9-to-mac-mini",
+      "enTitle": "I Moved Home Assistant from a NUC9 to a Mac mini—and HomeKit Taught Me a Lesson",
+      "description": "Lessons from moving Home Assistant from a NUC9 to a Mac mini with UTM, HAOS, HomeKit Bridge, and bridged networking.",
+      "date": "2026-05-10T16:00:00.000Z",
+      "tags": ["home-assistant", "homekit", "mac-mini", "utm", "smart-home"]
+    }
+  ]
+}

@@ -24,6 +24,7 @@
     "sync-taxonomy": "node scripts/sync-taxonomy.js",
     "migrate-localized-content": "node scripts/migrate-localized-content.js",
     "audit-localized-content": "node scripts/audit-localized-content.js",
+    "audit-translation-release": "node scripts/audit-translation-release.js",
     "change-password": "node scripts/change-password.js"
   },
   "engines": {
