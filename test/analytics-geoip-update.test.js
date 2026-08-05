@@ -960,10 +960,14 @@ test('DEPLOY defines a later-priority image bypass and prefix purge for determin
 });
 
 test('English translation release runbook pins candidate publication, fd-3 credentials, audits, and rollback boundaries', async t => {
-  const [deploy, design] = await Promise.all([
+  const [deploy, design, plan] = await Promise.all([
     fs.readFile(path.join(projectRoot, 'DEPLOY.md'), 'utf8'),
     fs.readFile(
       path.join(projectRoot, 'docs/superpowers/specs/2026-08-04-english-article-translation-release-design.md'),
+      'utf8'
+    ),
+    fs.readFile(
+      path.join(projectRoot, 'docs/superpowers/plans/2026-08-04-english-article-translation-release.md'),
       'utf8'
     )
   ]);
@@ -1012,6 +1016,20 @@ test('English translation release runbook pins candidate publication, fd-3 crede
     "token = '';",
     'child.once(\'exit\', code => process.exitCode = code ?? 1);'
   ].join('\n');
+  const exactListenerFunction = [
+    'assert_port_3000_loopback_only() {',
+    '  local listener',
+    '  local -a listeners=()',
+    "  mapfile -t listeners < <(ss -H -ltn 'sport = :3000' | awk '{print $4}')",
+    '  test "${#listeners[@]}" -ge 1',
+    '  for listener in "${listeners[@]}"; do',
+    '    case "$listener" in',
+    "      '127.0.0.1:3000'|'[::1]:3000') ;;",
+    "      *) printf 'non-loopback port 3000 listener: %s\\n' \"$listener\" >&2; return 1 ;;",
+    '    esac',
+    '  done',
+    '}'
+  ].join('\n');
 
   function extractRequiredSection(text, startMarker, endMarker, label) {
     const start = text.indexOf(startMarker);
@@ -1040,7 +1058,7 @@ test('English translation release runbook pins candidate publication, fd-3 crede
     return text.replace(left, sentinel).replace(right, left).replace(sentinel, right);
   }
 
-  function validateEnglishReleaseContract(text) {
+  function validateEnglishReleaseContract(text, planText = plan) {
     const section = extractRequiredSection(
       text,
       '### 英文文章翻译发布',
@@ -1048,6 +1066,27 @@ test('English translation release runbook pins candidate publication, fd-3 crede
       'English translation release runbook'
     );
     assertOrdered(section, stepMarkers, 'critical production sequence');
+
+    const candidateSection = extractRequiredSection(
+      section,
+      '#### 候选包门禁（维护窗口前，只读）',
+      '下面的生产块必须',
+      'local-only candidate bundle gate'
+    );
+    assert.ok(
+      candidateSection.includes('维护窗口前只允许在候选机执行只读审计和记录独立 digest；禁止创建、传输或修改任何生产 bundle 路径。'),
+      'candidate gate must forbid every pre-maintenance production staging write'
+    );
+    assert.match(candidateSection, /APPROVED_DIGEST_RECORD=\/private\/tmp\/blog-english-release-20260804[.]SHA256SUMS[.]approved/);
+    assert.match(candidateSection, /shasum -a 256 "\$CANDIDATE_BUNDLE\/SHA256SUMS"/);
+    assert.match(candidateSection, /chmod 0444 -- "\$APPROVED_DIGEST_RECORD"/);
+    const candidateBash = /```bash[^\S\r\n]*\r?\n([\s\S]*?)\r?\n```/.exec(candidateSection)?.[1] || '';
+    assert.doesNotMatch(candidateBash, /(?:^|\s)(?:scp|ssh)(?:\s|$)/m, 'candidate commands must not stage production');
+    assert.doesNotMatch(
+      candidateSection,
+      /(?:\/root\/blog-english-release-20260804|rn-us-2[.]5g)/,
+      'candidate-only work must not address production before maintenance'
+    );
 
     const bashBlocks = Array.from(
       section.matchAll(/```bash[^\S\r\n]*\r?\n([\s\S]*?)\r?\n```/g),
@@ -1060,6 +1099,119 @@ test('English translation release runbook pins candidate publication, fd-3 crede
     }
     const productionBlocks = bashBlocks.filter(block => block.includes('# english-translation-release-runbook'));
     assert.equal(productionBlocks.length, 1, 'expected one canonical executable production runbook block');
+    const productionBlock = productionBlocks[0];
+
+    assertOrdered(productionBlock, [
+      'test "$MAINTENANCE_STATUS" = 503',
+      'pm2 stop blog',
+      '#### 生产步骤 3：创建协调备份',
+      '#### 生产步骤 4：更新代码并恢复 production-local ecosystem',
+      '#### 生产步骤 4A：在 maintenance 下 staging、activation 并验证 bundle provenance',
+      'install -o root -g root -m 0700 -d "$BUNDLE_STAGING_DIR"',
+      "cat <<'TRANSFER_INSTRUCTIONS'",
+      'test "$TRANSFER_STATE" = TRANSFERRED',
+      'sha256sum -c SHA256SUMS',
+      'test "$PRODUCTION_SHA256SUMS_DIGEST" = "$APPROVED_SHA256SUMS_DIGEST"',
+      'mv -- "$BUNDLE_STAGING_DIR" "$INCOMING_DIR"',
+      'npm run sync-taxonomy',
+      '--mode source',
+      'pm2 start ecosystem.config.js --only blog --update-env',
+      'node <<\'NODE\''
+    ], 'maintenance-only production bundle staging and verification');
+    assert.match(productionBlock, /BUNDLE_FILES=\([\s\S]*SHA256SUMS[\s\S]*understanding-fast-charging[.]md[\s\S]*baidu-netdisk-speed-limit-guide[.]md[\s\S]*my-essential-iphone-apps[.]md[\s\S]*migrating-home-assistant-from-nuc9-to-mac-mini[.]md[\s\S]*\)/);
+    assert.match(productionBlock, /test ! -L "\$BUNDLE_STAGING_DIR"/);
+    assert.match(productionBlock, /find "\$BUNDLE_STAGING_DIR" -mindepth 1 -maxdepth 1 -printf x/);
+    assert.match(productionBlock, /test ! -L "\$INCOMING_DIR"/);
+    assert.match(productionBlock, /test "\$\(stat -c '%u:%g:%a:%F' "\$BUNDLE_STAGING_DIR"\)" = '0:0:500:directory'/);
+    assert.match(productionBlock, /test "\$\(stat -c '%u:%g:%a:%F' "\$bundle_path"\)" = '0:0:400:regular file'/);
+    assert.equal(
+      productionBlock.split('test "$PRODUCTION_SHA256SUMS_DIGEST" = "$APPROVED_SHA256SUMS_DIGEST"').length - 1,
+      2,
+      'independent SHA256SUMS digest must be compared after staging and immediately before publication'
+    );
+
+    assert.ok(productionBlock.includes(exactListenerFunction), 'exhaustive exact-port listener function missing');
+    assert.equal(
+      productionBlock.split('\n').filter(line => line === 'assert_port_3000_loopback_only').length,
+      2,
+      'exhaustive listener proof must run after candidate start and final restart'
+    );
+    assert.doesNotMatch(productionBlock, /ss -ltn \| grep/, 'substring listener matching must not be used');
+
+    const postOpenHandler = extractRequiredSection(
+      productionBlock,
+      'post_open_failure() {',
+      "\ntrap 'post_open_failure",
+      'automatic post-open failure handler'
+    );
+    assertOrdered(postOpenHandler, [
+      '[[ "${POST_OPEN_ACTIVE:-0}" = 1 ]]',
+      'enable_maintenance',
+      'confirm_public_maintenance_no_cache "$POST_OPEN_CAPTURE_DIR"',
+      'capture_post_open_state "$POST_OPEN_CAPTURE_DIR"',
+      'exit "$exit_code"'
+    ], 'automatic post-open maintenance re-entry');
+    assert.doesNotMatch(
+      postOpenHandler,
+      /PRE_RELEASE_COMMIT|coordinated-backup|git reset --hard/,
+      'post-open handler must never invoke pre-open coordinated restore'
+    );
+    for (const signalTrap of [
+      "trap 'post_open_failure \"$?\" ERR' ERR",
+      "trap 'post_open_failure 130 INT' INT",
+      "trap 'post_open_failure 143 TERM' TERM",
+      "trap 'post_open_failure 129 HUP' HUP"
+    ]) assert.ok(productionBlock.includes(signalTrap), `missing post-open trap: ${signalTrap}`);
+    assert.match(productionBlock, /confirm_public_maintenance_no_cache\(\)[\s\S]*%\{http_code\}[\s\S]*= 503[\s\S]*CF-Cache-Status:[^\n]*HIT[\s\S]*\^Age:/);
+    assert.match(productionBlock, /response="\$\(curl[\s\S]*-D -[\s\S]*public-503-\$attempt[.]evidence[\s\S]*response=''/);
+    assert.doesNotMatch(productionBlock, /public-503-[^\s"']+[.]headers/, 'raw public response headers must not be persisted');
+    assert.match(productionBlock, /capture_post_open_state\(\)[\s\S]*pm2 stop blog[\s\S]*npm run backup-db[\s\S]*post-open-state[\s\S]*sha256sum/);
+    assertOrdered(productionBlock, [
+      'POST_OPEN_ACTIVE=1',
+      '#### 生产步骤 13：关闭 maintenance',
+      '#### 生产步骤 14：执行 public smoke',
+      'PUBLIC_SMOKE_RESULT',
+      'test "$PUBLIC_SMOKE_RESULT" = PASS',
+      'POST_OPEN_ACTIVE=0',
+      'trap - ERR INT TERM HUP'
+    ], 'armed post-open public smoke');
+
+    const task11 = extractRequiredSection(
+      planText,
+      '### Task 11: Deploy the English release and obtain production PASS',
+      '\n---\n\n## Plan Self-Review',
+      'Task 11 production release plan'
+    );
+    assertOrdered(task11, [
+      'Step 1: Record local-only bundle approval evidence',
+      'Step 3: Enable maintenance and verify no-store 503',
+      'Step 4: Stop PM2 and create the coordinated pre-release backup',
+      'Step 5: Fast-forward code while preserving production-local config',
+      'Step 6: Stage, activate, and verify the production bundle under confirmed maintenance',
+      'Step 7: Migrate and apply taxonomy while PM2 is stopped'
+    ], 'Task 11 maintenance-only staging order');
+    const task11LocalOnly = extractRequiredSection(
+      task11,
+      'Step 1: Record local-only bundle approval evidence',
+      'Step 2: Record production preflight',
+      'Task 11 local-only bundle evidence'
+    );
+    assert.match(task11LocalOnly, /audit-translation-release[\s\S]*--mode source/);
+    assert.match(task11LocalOnly, /SHA256SUMS[.]approved/);
+    const task11LocalBash = /```bash[^\S\r\n]*\r?\n([\s\S]*?)\r?\n```/.exec(task11LocalOnly)?.[1] || '';
+    assert.doesNotMatch(task11LocalBash, /(?:^|\s)(?:scp|ssh)(?:\s|$)/m);
+    assert.doesNotMatch(task11LocalOnly, /\/root\/blog-english-release-20260804\/incoming/);
+    const task11Staging = extractRequiredSection(
+      task11,
+      'Step 6: Stage, activate, and verify the production bundle under confirmed maintenance',
+      'Step 7: Migrate and apply taxonomy while PM2 is stopped',
+      'Task 11 hardened production staging'
+    );
+    assert.match(task11Staging, /operator workstation\/second terminal/);
+    assert.match(task11Staging, /root-owned[\s\S]*0700[\s\S]*0400/);
+    assert.match(task11Staging, /exact five-file flat set/);
+    assert.match(task11Staging, /independently approved local digest/);
+    assert.match(task11Staging, /production source audit before publication/);
 
     assert.ok(
       section.includes(`node <<'NODE'\n${exactLauncher}\nNODE`),
@@ -1133,6 +1285,54 @@ test('English translation release runbook pins candidate publication, fd-3 crede
   const reordered = swapOnce(deploy, stepMarkers[5], stepMarkers[6]);
   assert.throws(() => validateEnglishReleaseContract(reordered), /critical production sequence/);
 
+  const preMaintenanceStaging = deploy.replace(
+    '维护窗口前只允许在候选机执行只读审计和记录独立 digest；禁止创建、传输或修改任何生产 bundle 路径。',
+    '维护窗口前先把 bundle 复制到生产 incoming，稍后再启用 maintenance。'
+  );
+  assert.notEqual(preMaintenanceStaging, deploy, 'pre-maintenance staging mutation must change the document');
+  assert.throws(() => validateEnglishReleaseContract(preMaintenanceStaging), /pre-maintenance production staging write/);
+
+  const digestComparisonRemoved = deploy.replace(
+    'test "$PRODUCTION_SHA256SUMS_DIGEST" = "$APPROVED_SHA256SUMS_DIGEST"',
+    'test -n "$PRODUCTION_SHA256SUMS_DIGEST"'
+  );
+  assert.notEqual(digestComparisonRemoved, deploy, 'out-of-band digest mutation must change the document');
+  assert.throws(
+    () => validateEnglishReleaseContract(digestComparisonRemoved),
+    /(?:independent SHA256SUMS digest|maintenance-only production bundle staging)/
+  );
+
+  const planStagesBeforeMaintenance = swapOnce(
+    plan,
+    'Step 3: Enable maintenance and verify no-store 503',
+    'Step 6: Stage, activate, and verify the production bundle under confirmed maintenance'
+  );
+  assert.throws(
+    () => validateEnglishReleaseContract(deploy, planStagesBeforeMaintenance),
+    /Task 11 maintenance-only staging order/
+  );
+
+  const nonLoopbackListenerAccepted = deploy.replace(
+    "'127.0.0.1:3000'|'[::1]:3000') ;;",
+    "'127.0.0.1:3000'|'[::1]:3000'|'10.0.0.5:3000') ;;"
+  );
+  assert.notEqual(nonLoopbackListenerAccepted, deploy, 'non-loopback listener mutation must change the document');
+  assert.throws(() => validateEnglishReleaseContract(nonLoopbackListenerAccepted), /exact-port listener function/);
+
+  const postOpenMaintenanceReentryRemoved = deploy.replace(
+    '\n    enable_maintenance\n    maintenance_status=$?',
+    '\n    : # automatic maintenance re-entry bypassed\n    maintenance_status=0'
+  );
+  assert.notEqual(postOpenMaintenanceReentryRemoved, deploy, 'post-open handler mutation must change the document');
+  assert.throws(
+    () => validateEnglishReleaseContract(postOpenMaintenanceReentryRemoved),
+    /automatic post-open maintenance re-entry/
+  );
+
+  const postOpenHandlerDisarmed = deploy.replace('POST_OPEN_ACTIVE=1', 'POST_OPEN_ACTIVE=0');
+  assert.notEqual(postOpenHandlerDisarmed, deploy, 'post-open arming mutation must change the document');
+  assert.throws(() => validateEnglishReleaseContract(postOpenHandlerDisarmed), /armed post-open public smoke/);
+
   for (const [label, from, to] of [
     ['HS256', "algorithm: 'HS256'", "algorithm: 'HS384'"],
     [
@@ -1168,7 +1368,7 @@ test('English translation release runbook pins candidate publication, fd-3 crede
   assert.notEqual(postOpenRestoreAllowed, deploy, 'post-open rollback mutation must change the document');
   assert.throws(() => validateEnglishReleaseContract(postOpenRestoreAllowed), /post-open recovery/);
 
-  t.diagnostic('killed critical-order, HS256, five-minute, fd-3, whole-backup, ecosystem, and post-open rollback mutations');
+  t.diagnostic('killed critical-order, pre-maintenance staging, independent digest, plan-order, explicit non-loopback listener, post-open re-entry/arming, HS256, five-minute, fd-3, whole-backup, ecosystem, and post-open rollback mutations');
 });
 
 test('Nginx caches static assets only by explicit prefixes and gates public traffic during maintenance', async () => {

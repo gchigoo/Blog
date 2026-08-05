@@ -177,37 +177,140 @@ npm run audit-localized-content
 
 #### 候选包门禁（维护窗口前，只读）
 
-在批准的候选 checkout 和候选数据库上准备仅含四个已批准 Markdown 文件及 `SHA256SUMS` 的 flat bundle；不得含隐藏文件、目录、symlink 或额外文件。先运行 source audit，保存 JSON 输出和 exit code，成功后才把同一字节的 bundle 放到生产 `/root/blog-english-release-20260804/incoming`：
+在批准的候选 checkout 和候选数据库上准备仅含四个已批准 Markdown 文件及 `SHA256SUMS` 的 flat bundle；不得含隐藏文件、目录、symlink 或额外文件。维护窗口前只允许在候选机执行只读审计和记录独立 digest；禁止创建、传输或修改任何生产 bundle 路径。source audit 通过后，对 `SHA256SUMS` 文件本身计算 SHA-256，把 digest 记录到 bundle 目录之外的只读 approval evidence，并由批准者独立保存；bundle 内的 `SHA256SUMS` 不能自证 provenance：
 
 ```bash
+set -euo pipefail
 cd /path/to/approved-candidate-checkout
+CANDIDATE_BUNDLE=/private/tmp/blog-english-release-20260804
+APPROVED_DIGEST_RECORD=/private/tmp/blog-english-release-20260804.SHA256SUMS.approved
 npm run audit-translation-release -- \
   --release content/releases/english-articles-2026-08-04.json \
-  --bundle /private/tmp/blog-english-release-20260804 \
+  --bundle "$CANDIDATE_BUNDLE" \
   --mode source
+APPROVED_SHA256SUMS_DIGEST="$(shasum -a 256 "$CANDIDATE_BUNDLE/SHA256SUMS" | awk '{print $1}')"
+[[ "$APPROVED_SHA256SUMS_DIGEST" =~ ^[a-f0-9]{64}$ ]]
+test ! -e "$APPROVED_DIGEST_RECORD"
+printf '%s\n' "$APPROVED_SHA256SUMS_DIGEST" > "$APPROVED_DIGEST_RECORD"
+chmod 0444 -- "$APPROVED_DIGEST_RECORD"
+printf 'approved SHA256SUMS digest: %s\n' "$APPROVED_SHA256SUMS_DIGEST"
 ```
+
+此时停止：不得运行 `ssh`/`scp`，不得预建 production incoming/staging 目录。批准者只把 64 位 digest 作为独立证据带入维护窗口；实际 transfer/activation 必须等主生产终端确认 maintenance 公网 503 后，由 operator workstation/second terminal 按生产块暂停点的逐文件命令发起。
 
 下面的生产块必须在同一个 root Bash 会话中从上到下执行，不得跳步或调换。`RELEASE_COMMIT` 必须由 operator 预先设置为已经审查、推送且将要发布的完整 40 位 commit；它不是凭据。maintenance/public 状态码必须来自非 allowlist 主机的独立探测。
 
 ```bash
 # english-translation-release-runbook
-set -euo pipefail
+set -Eeuo pipefail
 cd /root/Blog
 
 RELEASE_COMMIT="${RELEASE_COMMIT:?set RELEASE_COMMIT to the approved 40-hex release commit}"
 [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
 RELEASE_ROOT=/root/blog-english-release-20260804
+BUNDLE_STAGING_DIR="$RELEASE_ROOT/incoming.staging"
 INCOMING_DIR="$RELEASE_ROOT/incoming"
 BACKUP_DIR="$RELEASE_ROOT/coordinated-backup"
 NGINX_SITE=/etc/nginx/sites-available/blog.conf
 ACTIVE_MAINTENANCE='^[[:space:]]*include[[:space:]]+/etc/nginx/snippets/blog-maintenance[.]conf;$'
-test -d "$INCOMING_DIR"
+POST_OPEN_ACTIVE=0
+test ! -e "$BUNDLE_STAGING_DIR"
+test ! -e "$INCOMING_DIR"
+
+assert_port_3000_loopback_only() {
+  local listener
+  local -a listeners=()
+  mapfile -t listeners < <(ss -H -ltn 'sport = :3000' | awk '{print $4}')
+  test "${#listeners[@]}" -ge 1
+  for listener in "${listeners[@]}"; do
+    case "$listener" in
+      '127.0.0.1:3000'|'[::1]:3000') ;;
+      *) printf 'non-loopback port 3000 listener: %s\n' "$listener" >&2; return 1 ;;
+    esac
+  done
+}
+
+enable_maintenance() {
+  sudo sed -i 's@^[[:space:]]*#[[:space:]]*include[[:space:]]\+/etc/nginx/snippets/blog-maintenance[.]conf;@    include /etc/nginx/snippets/blog-maintenance.conf;@' "$NGINX_SITE" || return 1
+  test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1 || return 1
+  sudo nginx -t || return 1
+  sudo systemctl reload nginx || return 1
+}
+
+confirm_public_maintenance_no_cache() {
+  local evidence_dir="$1"
+  local attempt response status
+  local nonce="post-open-recovery-$(date -u +%s%N)"
+  for attempt in 1 2; do
+    response="$(curl -q --proto '=https' --globoff -sS --max-time 30 -D - -o /dev/null -w $'\n__STATUS__:%{http_code}\n' -- "https://blog.cokedaily.space/$nonce")" || return 1
+    status="$(printf '%s\n' "$response" | sed -n 's/^__STATUS__://p' | tail -n 1)"
+    test "$status" = 503 || return 1
+    ! printf '%s\n' "$response" | grep -Eiq '^CF-Cache-Status:[[:space:]]*(HIT|STALE|UPDATING|REVALIDATED)' || return 1
+    ! printf '%s\n' "$response" | grep -Eiq '^Age:' || return 1
+    {
+      printf 'status=%s\n' "$status"
+      printf '%s\n' "$response" | tr -d '\r' | grep -Ei '^(Cache-Control|CF-Cache-Status|Age|Expires):' || true
+    } > "$evidence_dir/public-503-$attempt.evidence"
+    response=''
+  done
+}
+
+capture_post_open_state() {
+  local capture_dir="$1"
+  local -a db_snapshots=()
+  pm2 stop blog
+  touch "$capture_dir/.backup-start"
+  npm run backup-db
+  mapfile -d '' db_snapshots < <(find /root/Blog/backups -maxdepth 1 -type f -name 'blog_*.db' -newer "$capture_dir/.backup-start" -print0)
+  test "${#db_snapshots[@]}" -eq 1
+  cp --archive -- "${db_snapshots[0]}" "$capture_dir/blog.db"
+  printf '%s\n' "$(git rev-parse HEAD)" > "$capture_dir/git-commit"
+  cp --archive -- ecosystem.config.js "$capture_dir/ecosystem.config.js"
+  if [[ -e var/operations ]]; then
+    printf 'present\n' > "$capture_dir/operations-state"
+    tar --create --file "$capture_dir/post-open-state.tar" -- articles content/taxonomy.json var/operations
+  else
+    printf 'absent\n' > "$capture_dir/operations-state"
+    tar --create --file "$capture_dir/post-open-state.tar" -- articles content/taxonomy.json
+  fi
+  rm -f -- "$capture_dir/.backup-start"
+  (
+    cd "$capture_dir"
+    sha256sum blog.db post-open-state.tar ecosystem.config.js git-commit operations-state \
+      public-503-1.evidence public-503-2.evidence > SHA256SUMS
+    sha256sum -c SHA256SUMS
+  )
+}
+
+post_open_failure() {
+  local exit_code="${1:-1}"
+  local maintenance_status=1 stop_status=1 probe_status=1 capture_status=1
+  trap - ERR INT TERM HUP
+  if [[ "${POST_OPEN_ACTIVE:-0}" = 1 ]]; then
+    set +e
+    enable_maintenance
+    maintenance_status=$?
+    pm2 stop blog
+    stop_status=$?
+    POST_OPEN_CAPTURE_DIR="$RELEASE_ROOT/post-open-failure-$(date -u +%Y%m%dT%H%M%S%N)"
+    install -o root -g root -m 0700 -d "$POST_OPEN_CAPTURE_DIR"
+    confirm_public_maintenance_no_cache "$POST_OPEN_CAPTURE_DIR"
+    probe_status=$?
+    capture_post_open_state "$POST_OPEN_CAPTURE_DIR"
+    capture_status=$?
+    printf 'post-open failure contained: maintenance=%s stop=%s probe=%s capture=%s evidence=%s\n' \
+      "$maintenance_status" "$stop_status" "$probe_status" "$capture_status" "$POST_OPEN_CAPTURE_DIR" >&2
+  fi
+  exit "$exit_code"
+}
+
+trap 'post_open_failure "$?" ERR' ERR
+trap 'post_open_failure 130 INT' INT
+trap 'post_open_failure 143 TERM' TERM
+trap 'post_open_failure 129 HUP' HUP
 
 #### 生产步骤 1：启用 maintenance
-sudo sed -i 's@^[[:space:]]*#[[:space:]]*include[[:space:]]\+/etc/nginx/snippets/blog-maintenance[.]conf;@    include /etc/nginx/snippets/blog-maintenance.conf;@' "$NGINX_SITE"
-test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
-sudo nginx -t
-sudo systemctl reload nginx
+enable_maintenance
 printf '%s\n' 'From a non-allowlisted host, run: curl -q --proto =https --globoff -sS -o /dev/null -w "%{http_code}" -- https://blog.cokedaily.space/'
 read -r -p 'Confirmed maintenance HTTP status: ' MAINTENANCE_STATUS
 test "$MAINTENANCE_STATUS" = 503
@@ -255,6 +358,67 @@ cp --archive --remove-destination -- "$BACKUP_DIR/ecosystem.config.js" ecosystem
 cmp -s -- "$BACKUP_DIR/ecosystem.config.js" ecosystem.config.js
 test "$(stat -c '%a:%u:%g:%s:%Y' ecosystem.config.js)" = "$(cat "$BACKUP_DIR/ecosystem.stat")"
 
+#### 生产步骤 4A：在 maintenance 下 staging、activation 并验证 bundle provenance
+test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
+read -r -p 'Paste the independently approved local SHA-256 of SHA256SUMS: ' APPROVED_SHA256SUMS_DIGEST
+[[ "$APPROVED_SHA256SUMS_DIGEST" =~ ^[a-f0-9]{64}$ ]]
+test ! -e "$BUNDLE_STAGING_DIR"
+test ! -e "$INCOMING_DIR"
+install -o root -g root -m 0700 -d "$BUNDLE_STAGING_DIR"
+cat <<'TRANSFER_INSTRUCTIONS'
+Only now, after the main production terminal confirmed maintenance 503, run this exact command in the operator workstation/second terminal:
+scp -- \
+  /private/tmp/blog-english-release-20260804/understanding-fast-charging.md \
+  /private/tmp/blog-english-release-20260804/baidu-netdisk-speed-limit-guide.md \
+  /private/tmp/blog-english-release-20260804/my-essential-iphone-apps.md \
+  /private/tmp/blog-english-release-20260804/migrating-home-assistant-from-nuc9-to-mac-mini.md \
+  /private/tmp/blog-english-release-20260804/SHA256SUMS \
+  rn-us-2.5g:/root/blog-english-release-20260804/incoming.staging/
+Do not transfer to incoming directly. Return to the paused main production terminal only after scp exits 0.
+TRANSFER_INSTRUCTIONS
+read -r -p 'Type TRANSFERRED after the second-terminal scp exits 0: ' TRANSFER_STATE
+test "$TRANSFER_STATE" = TRANSFERRED
+test -d "$BUNDLE_STAGING_DIR"
+test ! -L "$BUNDLE_STAGING_DIR"
+BUNDLE_FILES=(
+  SHA256SUMS
+  understanding-fast-charging.md
+  baidu-netdisk-speed-limit-guide.md
+  my-essential-iphone-apps.md
+  migrating-home-assistant-from-nuc9-to-mac-mini.md
+)
+test "$(find "$BUNDLE_STAGING_DIR" -mindepth 1 -maxdepth 1 -printf x | wc -c)" -eq 5
+for bundle_file in "${BUNDLE_FILES[@]}"; do
+  bundle_path="$BUNDLE_STAGING_DIR/$bundle_file"
+  test -f "$bundle_path"
+  test ! -L "$bundle_path"
+done
+chown root:root -- "$BUNDLE_STAGING_DIR"
+for bundle_file in "${BUNDLE_FILES[@]}"; do
+  bundle_path="$BUNDLE_STAGING_DIR/$bundle_file"
+  chown root:root -- "$bundle_path"
+  chmod 0600 -- "$bundle_path"
+done
+(
+  cd "$BUNDLE_STAGING_DIR"
+  sha256sum -c SHA256SUMS
+)
+PRODUCTION_SHA256SUMS_DIGEST="$(sha256sum "$BUNDLE_STAGING_DIR/SHA256SUMS" | awk '{print $1}')"
+test "$PRODUCTION_SHA256SUMS_DIGEST" = "$APPROVED_SHA256SUMS_DIGEST"
+for bundle_file in "${BUNDLE_FILES[@]}"; do
+  chmod 0400 -- "$BUNDLE_STAGING_DIR/$bundle_file"
+done
+chmod 0500 -- "$BUNDLE_STAGING_DIR"
+test "$(stat -c '%u:%g:%a:%F' "$BUNDLE_STAGING_DIR")" = '0:0:500:directory'
+for bundle_file in "${BUNDLE_FILES[@]}"; do
+  bundle_path="$BUNDLE_STAGING_DIR/$bundle_file"
+  test "$(stat -c '%u:%g:%a:%F' "$bundle_path")" = '0:0:400:regular file'
+done
+mv -- "$BUNDLE_STAGING_DIR" "$INCOMING_DIR"
+test -d "$INCOMING_DIR"
+test ! -L "$INCOMING_DIR"
+test "$(stat -c '%u:%g:%a:%F' "$INCOMING_DIR")" = '0:0:500:directory'
+
 #### 生产步骤 5：执行 migrate-db
 test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
 npm run migrate-db
@@ -263,18 +427,27 @@ npm run migrate-db
 test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
 npm run sync-taxonomy -- --dry-run
 npm run sync-taxonomy
+npm run audit-translation-release -- \
+  --release content/releases/english-articles-2026-08-04.json \
+  --bundle "$INCOMING_DIR" \
+  --mode source
 
 #### 生产步骤 7：启动 PM2 candidate
 test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
 pm2 start ecosystem.config.js --only blog --update-env
 CANDIDATE_PID="$(pm2 pid blog)"
 [[ "$CANDIDATE_PID" =~ ^[1-9][0-9]*$ ]]
-ss -ltn | grep -Eq '127[.]0[.]0[.]1:3000|\[::1\]:3000'
-! ss -ltn | grep -E ':3000[[:space:]]' | grep -Eq '0[.]0[.]0[.]0:3000|\[::\]:3000'
+assert_port_3000_loopback_only
 test "$(curl -q --proto '=http' --globoff -sS -o /dev/null -w '%{http_code}' -- http://127.0.0.1:3000/)" = 302
 
 #### 生产步骤 8：通过 anonymous pipe 发布
 test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
+(
+  cd "$INCOMING_DIR"
+  sha256sum -c SHA256SUMS
+)
+PRODUCTION_SHA256SUMS_DIGEST="$(sha256sum "$INCOMING_DIR/SHA256SUMS" | awk '{print $1}')"
+test "$PRODUCTION_SHA256SUMS_DIGEST" = "$APPROVED_SHA256SUMS_DIGEST"
 # 下列 single-quoted here-doc 不做 shell expansion；launcher 与 token 都不落盘。
 node <<'NODE'
 const fs = require('node:fs');
@@ -319,8 +492,7 @@ pm2 restart blog --update-env
 FINAL_PID="$(pm2 pid blog)"
 [[ "$FINAL_PID" =~ ^[1-9][0-9]*$ ]]
 test "$FINAL_PID" != "$CANDIDATE_PID"
-ss -ltn | grep -Eq '127[.]0[.]0[.]1:3000|\[::1\]:3000'
-! ss -ltn | grep -E ':3000[[:space:]]' | grep -Eq '0[.]0[.]0[.]0:3000|\[::\]:3000'
+assert_port_3000_loopback_only
 
 #### 生产步骤 11：执行 localhost smoke
 test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
@@ -342,6 +514,7 @@ rm -rf -- "$INCOMING_DIR"
 test ! -e "$INCOMING_DIR"
 test -z "$(find "$RELEASE_ROOT" -maxdepth 1 -type f -iname '*token*' -print -quit)"
 
+POST_OPEN_ACTIVE=1
 #### 生产步骤 13：关闭 maintenance
 sudo sed -i 's@^[[:space:]]*include[[:space:]]\+/etc/nginx/snippets/blog-maintenance[.]conf;@    # include /etc/nginx/snippets/blog-maintenance.conf;@' "$NGINX_SITE"
 test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 0
@@ -352,9 +525,16 @@ sudo systemctl reload nginx
 for route in "${LOCAL_ROUTES[@]}"; do
   test "$(curl -q --proto '=https' --globoff -sS --max-time 30 -o /dev/null -w '%{http_code}' -- "https://blog.cokedaily.space$route")" = 200
 done
+printf '%s\n' 'Run the complete documented root negotiation, localized HTML, real WebP MISS → HIT, and error no-store public smoke now; keep this main shell waiting.'
+read -r -p 'Type PASS only after every public smoke check passes; type anything else to trigger containment: ' PUBLIC_SMOKE_RESULT
+test "$PUBLIC_SMOKE_RESULT" = PASS
+POST_OPEN_ACTIVE=0
+trap - ERR INT TERM HUP
 ```
 
-生产本地 `/root/Blog/ecosystem.config.js` 必须在代码更新前用 `cp --archive` 快照，并在代码更新后与开放前回滚时逐字节、权限、owner/group 和 mtime 原样恢复；不得用仓库版本重建。上面的 localhost `--insecure` 只用于 loopback 命中 Nginx origin 的维护态 smoke，不改变公网 TLS 验收。完成 public smoke 后还必须执行本文既有的完整 root negotiation、localized HTML、真实 WebP `MISS → HIT` 和 error no-store 检查。
+生产本地 `/root/Blog/ecosystem.config.js` 必须在代码更新前用 `cp --archive` 快照，并在代码更新后与开放前回滚时逐字节、权限、owner/group 和 mtime 原样恢复；不得用仓库版本重建。上面的 localhost `--insecure` 只用于 loopback 命中 Nginx origin 的维护态 smoke，不改变公网 TLS 验收。主生产 shell 的 post-open trap 必须一直保持 armed，直到同一 operator 已执行本文既有的完整 root negotiation、localized HTML、真实 WebP `MISS → HIT` 和 error no-store 检查并在提示符输入 `PASS`；输入其他值、任一命令 ERR、Ctrl-C、TERM 或 HUP 都会自动重新启用 maintenance。
+
+生产主机用于 `confirm_public_maintenance_no_cache` 的公网出口必须不在 maintenance allowlist；若这一点不能在 preflight 证明，则不得开放，必须先准备一个可由主 shell 调用的等价非 allowlist public probe。post-open handler 首先重新启用 include、执行 `nginx -t` 和 reload，并立即停止 PM2 关闭剩余写入口，再用 fresh nonce 连续两次确认公网 503、无缓存态 `CF-Cache-Status` 且无 `Age`；随后把开放后数据库、文章、taxonomy、operation state、Git/config 和仅含 status/cache 字段的脱敏 probe evidence 保存到新的 `post-open-failure-*` 目录供 forward-fix/reconciliation；原始响应头只在 shell 内存中检查并立即清空，不落盘。该 handler 不读取或恢复 pre-open coordinated backup。
 
 下面的 here-doc 必须保持单引号定界（`<<'NODE'`）；launcher 本身只从 shell 标准输入交给 Node，绝不保存到磁盘。它从正在运行的 `blog` 进程读取既有 `JWT_SECRET` 到当前 Node 内存，只在内存中签发五分钟 HS256 token，经 child fd 3 匿名管道发送后立即清空本地引用；不得把 launcher 改成 `node -e` 参数、token 参数、token 环境变量、命名 pipe 或临时文件。
 

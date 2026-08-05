@@ -1176,19 +1176,28 @@ Expected: equal SHAs.
 - Consumes: pushed Git commit and reviewed four-file bundle.
 - Produces: production state with 4 posts, 8 articles, 8 FTS rows, stable taxonomy, and all English routes public.
 
-- [ ] **Step 1: Transfer and verify the bundle before maintenance**
+- [ ] **Step 1: Record local-only bundle approval evidence**
+
+Before maintenance, perform only local/read-only candidate work. Do not run `ssh`/`scp`, create a production incoming/staging directory, or transfer any bundle byte. Run the source audit and record an independently approved SHA-256 of the `SHA256SUMS` file itself outside the mutable bundle directory:
 
 ```bash
-ssh rn-us-2.5g 'rm -rf /root/blog-english-release-20260804/incoming && \
-  install -d -m 700 /root/blog-english-release-20260804/incoming'
-scp /private/tmp/blog-english-release-20260804/*.md \
-  /private/tmp/blog-english-release-20260804/SHA256SUMS \
-  rn-us-2.5g:/root/blog-english-release-20260804/incoming/
-ssh rn-us-2.5g 'cd /root/blog-english-release-20260804/incoming && \
-  chmod 600 *.md SHA256SUMS && sha256sum -c SHA256SUMS'
+set -euo pipefail
+cd /private/tmp/blog-english-candidate-20260804
+bundle=/private/tmp/blog-english-release-20260804
+approval=/private/tmp/blog-english-release-20260804.SHA256SUMS.approved
+npm run audit-translation-release -- \
+  --release content/releases/english-articles-2026-08-04.json \
+  --bundle "$bundle" \
+  --mode source
+digest="$(shasum -a 256 "$bundle/SHA256SUMS" | awk '{print $1}')"
+[[ "$digest" =~ ^[a-f0-9]{64}$ ]]
+test ! -e "$approval"
+printf '%s\n' "$digest" > "$approval"
+chmod 0444 -- "$approval"
+printf 'approved SHA256SUMS digest: %s\n' "$digest"
 ```
 
-Expected: exactly four `OK` lines.
+Expected: source audit exit 0 and one 64-hex digest preserved in independent approval evidence, not inside the bundle.
 
 - [ ] **Step 2: Record production preflight**
 
@@ -1229,7 +1238,13 @@ npm ci
 
 Require production HEAD equals `origin/master`; do not clean or overwrite the intentional ecosystem delta.
 
-- [ ] **Step 6: Migrate and apply taxonomy while PM2 is stopped**
+- [ ] **Step 6: Stage, activate, and verify the production bundle under confirmed maintenance**
+
+This step is forbidden until Step 3 has confirmed public maintenance 503/no-cache and Steps 4–5 have completed. In the paused main production shell, follow the exact `DEPLOY.md` handshake: paste the independently approved local digest, create root-owned `incoming.staging` with mode `0700`, then pause. Only then may the operator workstation/second terminal transfer the five explicitly named files (four Markdown files plus `SHA256SUMS`) to `incoming.staging`; globs and direct transfer to `incoming` are forbidden.
+
+The main production shell must then enforce the exact five-file flat set, regular-file/non-symlink status, root ownership, file mode `0400`, directory mode `0500`, `sha256sum -c`, and equality between production’s `SHA256SUMS` digest and the independently approved local digest. Atomically rename verified `incoming.staging` to `incoming`; do not activate an unverified directory. Keep maintenance enabled. After taxonomy is applied in Step 7, run the production source audit before publication and repeat checksum plus independent-digest comparison immediately before the publisher.
+
+- [ ] **Step 7: Migrate and apply taxonomy while PM2 is stopped**
 
 ```bash
 npm run migrate-db
@@ -1241,21 +1256,25 @@ Assert exact counts, then:
 ```bash
 npm run sync-taxonomy
 npm run audit-localized-content
+npm run audit-translation-release -- \
+  --release content/releases/english-articles-2026-08-04.json \
+  --bundle /root/blog-english-release-20260804/incoming \
+  --mode source
 ```
 
-Expected: 18 legacy tags promoted, 4 Chinese Markdown files rewritten, 4 source articles/FTS rows remain coherent, no operation residue.
+Expected: 18 legacy tags promoted, 4 Chinese Markdown files rewritten, 4 source articles/FTS rows remain coherent, production source audit PASS, and no operation residue.
 
-- [ ] **Step 7: Start the candidate PM2 worker under maintenance**
+- [ ] **Step 8: Start the candidate PM2 worker under maintenance**
 
-Start/restart `blog`, confirm a new online PID, no new error-log bytes, and only `127.0.0.1:3000`. Run direct Express and Nginx localhost `/zh/` smoke.
+Start/restart `blog`, confirm a new online PID and no new error-log bytes. Use the exact `DEPLOY.md` `ss -H -ltn 'sport = :3000'` enumerator: require at least one listener and reject unless every exact local endpoint is `127.0.0.1:3000` or `[::1]:3000`; do not use substring matching that can confuse port 3000 with 30000 or overlook a simultaneous explicit non-loopback address. Run direct Express and Nginx localhost `/zh/` smoke.
 
-- [ ] **Step 8: Publish the bundle with an in-memory five-minute token**
+- [ ] **Step 9: Publish the bundle with an in-memory five-minute token**
 
 Run the exact single-quoted Node here-doc from `DEPLOY.md`. It reads `JWT_SECRET` from `/proc/<pm2-pid>/environ`, signs an HS256 token with `expiresIn: '5m'`, sends it only through fd 3 to the loopback publisher, clears the local token reference, and exits with the publisher status.
 
 Expected: four safe publication success records; no token, secret, cookie, or header output.
 
-- [ ] **Step 9: Run production audits and exact count gates**
+- [ ] **Step 10: Run production audits and exact count gates**
 
 ```bash
 npm run audit-localized-content
@@ -1269,15 +1288,17 @@ npm run lint
 
 Query SQLite read-only and require posts/articles/FTS/comments `4/8/8/<unchanged>`, no foreign-key violations, integrity `ok`, and zero operation residue.
 
-- [ ] **Step 10: Restart the final PM2 worker and run maintenance-window smoke**
+- [ ] **Step 11: Restart the final PM2 worker and run maintenance-window smoke**
 
-Restart once more so the public worker generation is clearly attributable. Record PID, restart count, log offsets, loopback listener, and localhost HTTP matrix for all four English pages, feeds, sitemap, searches, taxonomy pages, and images.
+Restart once more so the public worker generation is clearly attributable. Record PID, restart count, and log offsets; rerun the same exhaustive exact-port listener enumerator and reject any endpoint other than `127.0.0.1:3000` or `[::1]:3000`. Then run the localhost HTTP matrix for all four English pages, feeds, sitemap, searches, taxonomy pages, and images.
 
-- [ ] **Step 11: Delete temporary credential/material state before opening**
+- [ ] **Step 12: Delete temporary credential/material state before opening**
 
 Delete `/root/blog-english-release-20260804/incoming` only after audits and localhost smoke pass. Confirm no token-bearing file exists and the PM2 environment contains no release token.
 
-- [ ] **Step 12: Disable maintenance and run immediate public verification**
+- [ ] **Step 13: Disable maintenance and run immediate public verification**
+
+Arm the exact `DEPLOY.md` post-open handler before changing the maintenance include. It must trap ERR, INT, TERM, and HUP through the entire public smoke. Any failure immediately re-enables maintenance, runs `nginx -t` and reload, stops PM2 to close any remaining write path, confirms two fresh non-allowlisted public 503 responses with no cache hit/Age, captures the post-open DB/articles/taxonomy/operation/config/probe evidence for forward-fix/reconciliation, and never invokes the pre-open backup restore. Disarm it only after every public check below reports PASS.
 
 Require:
 
@@ -1295,7 +1316,7 @@ one real image unique query -> MISS then HIT
 fresh missing image/root/API *.webp twice -> no HIT and no Age
 ```
 
-- [ ] **Step 13: Run independent production content/security/final reviews**
+- [ ] **Step 14: Run independent production content/security/final reviews**
 
 Require, in separate reviewer contexts:
 
@@ -1307,7 +1328,7 @@ FINAL RELEASE PASS
 
 Critical or Important findings require maintenance reactivation and the documented rollback/forward-fix decision.
 
-- [ ] **Step 14: Close the release or roll back**
+- [ ] **Step 15: Close the release or roll back**
 
 If all reviews pass, record final Git SHA, PM2 PID, DB counts, public URLs, and cleanup state. If failure occurs before public opening, restore the entire coordinated backup and old Git SHA. If failure occurs after opening, re-enable maintenance and preserve post-open writes; do not blindly overwrite the database without a reviewed reconciliation plan.
 
@@ -1322,6 +1343,8 @@ If all reviews pass, record final Git SHA, PM2 PID, DB counts, public URLs, and 
 - The production token is five-minute HS256, generated in memory, sent on fd 3, and never stored in arguments, environment, files, or logs.
 - Candidate isolation accounts for the application’s working-directory-relative database and content paths.
 - The four translations are separately reviewable and their exact metadata is fixed.
+- Production bundle transfer/activation starts only after confirmed maintenance and is tied to an independently approved `SHA256SUMS` digest.
+- Candidate and final listener proofs enumerate exact port-3000 endpoints and reject every non-loopback address.
 - Partial four-file publication is handled by full coordinated backup restore rather than unsafe automatic deletes.
-- Pre-open rollback and post-open reconciliation are explicitly different.
+- Pre-open rollback and post-open reconciliation are explicitly different; the public-smoke handler automatically re-enters maintenance and captures post-open state on ERR/signals.
 - No incomplete marker or unspecified test command remains.
