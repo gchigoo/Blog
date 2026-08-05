@@ -1030,6 +1030,17 @@ test('English translation release runbook pins candidate publication, fd-3 crede
     '  done',
     '}'
   ].join('\n');
+  const exactPostOpenArtifactArray = [
+    '  local -a expected_artifacts=(',
+    '    blog.db',
+    '    ecosystem.config.js',
+    '    git-commit',
+    '    operations-state',
+    '    post-open-state.tar',
+    '    public-503-1.evidence',
+    '    public-503-2.evidence',
+    '  )'
+  ].join('\n');
 
   function extractRequiredSection(text, startMarker, endMarker, label) {
     const start = text.indexOf(startMarker);
@@ -1138,6 +1149,39 @@ test('English translation release runbook pins candidate publication, fd-3 crede
     );
     assert.doesNotMatch(productionBlock, /ss -ltn \| grep/, 'substring listener matching must not be used');
 
+    const postOpenCapture = extractRequiredSection(
+      productionBlock,
+      'capture_post_open_state() (',
+      '\n\npost_open_failure() {',
+      'strict post-open capture'
+    );
+    assert.match(
+      postOpenCapture,
+      /^capture_post_open_state\(\) \(\n[ ]{2}trap - ERR INT TERM HUP\n[ ]{2}set -Eeuo pipefail\n/,
+      'post-open capture must restore strict mode inside an ERR/signal-trap-free subshell'
+    );
+    assert.ok(
+      postOpenCapture.includes(exactPostOpenArtifactArray),
+      'post-open capture must pin the exact seven-artifact evidence set'
+    );
+    assertOrdered(postOpenCapture, [
+      'npm run backup-db || return 1',
+      'find /root/Blog/backups -maxdepth 1 -type f -name \'blog_*.db\' -newer "$capture_dir/.backup-start" -print0 > "$capture_dir/.db-snapshots" || return 1',
+      'mapfile -d \'\' db_snapshots < "$capture_dir/.db-snapshots" || return 1',
+      'rm -f -- "$capture_dir/.db-snapshots" || return 1',
+      'test "${#db_snapshots[@]}" -eq 1 || return 1',
+      'cp --archive -- "${db_snapshots[0]}" "$capture_dir/blog.db" || return 1'
+    ], 'post-open DB snapshot count before indexing');
+    assertOrdered(postOpenCapture, [
+      'actual_artifact_list="$(find "$capture_dir" -mindepth 1 -maxdepth 1 -printf \'%f\\n\' | LC_ALL=C sort)" || return 1',
+      'test "$actual_artifact_list" = "$expected_artifact_list" || return 1',
+      'manifest_tmp="$capture_dir/.SHA256SUMS.tmp.$$"',
+      'sha256sum "${expected_artifacts[@]}" > "$manifest_tmp" || return 1',
+      'test "$manifest_line_count" -eq "${#expected_artifacts[@]}" || return 1',
+      'mv -- "$manifest_tmp" SHA256SUMS || return 1',
+      'sha256sum -c SHA256SUMS || return 1'
+    ], 'exact post-open artifact set and atomic manifest');
+
     const postOpenHandler = extractRequiredSection(
       productionBlock,
       'post_open_failure() {',
@@ -1151,6 +1195,13 @@ test('English translation release runbook pins candidate publication, fd-3 crede
       'capture_post_open_state "$POST_OPEN_CAPTURE_DIR"',
       'exit "$exit_code"'
     ], 'automatic post-open maintenance re-entry');
+    assert.match(
+      postOpenHandler,
+      /if capture_post_open_state "\$POST_OPEN_CAPTURE_DIR"; then\n[ ]+capture_status=0\n[ ]+else\n[ ]+capture_status=\$\?\n[ ]+fi/,
+      'outer containment must explicitly record either capture success or capture failure'
+    );
+    assert.match(postOpenHandler, /post-open failure containment results:/);
+    assert.doesNotMatch(postOpenHandler, /post-open failure contained:/, 'containment must not claim success unconditionally');
     assert.doesNotMatch(
       postOpenHandler,
       /PRE_RELEASE_COMMIT|coordinated-backup|git reset --hard/,
@@ -1165,7 +1216,7 @@ test('English translation release runbook pins candidate publication, fd-3 crede
     assert.match(productionBlock, /confirm_public_maintenance_no_cache\(\)[\s\S]*%\{http_code\}[\s\S]*= 503[\s\S]*CF-Cache-Status:[^\n]*HIT[\s\S]*\^Age:/);
     assert.match(productionBlock, /response="\$\(curl[\s\S]*-D -[\s\S]*public-503-\$attempt[.]evidence[\s\S]*response=''/);
     assert.doesNotMatch(productionBlock, /public-503-[^\s"']+[.]headers/, 'raw public response headers must not be persisted');
-    assert.match(productionBlock, /capture_post_open_state\(\)[\s\S]*pm2 stop blog[\s\S]*npm run backup-db[\s\S]*post-open-state[\s\S]*sha256sum/);
+    assert.match(postOpenCapture, /pm2 stop blog[\s\S]*npm run backup-db[\s\S]*post-open-state[\s\S]*sha256sum/);
     assertOrdered(productionBlock, [
       'POST_OPEN_ACTIVE=1',
       '#### 生产步骤 13：关闭 maintenance',
@@ -1319,6 +1370,36 @@ test('English translation release runbook pins candidate publication, fd-3 crede
   assert.notEqual(nonLoopbackListenerAccepted, deploy, 'non-loopback listener mutation must change the document');
   assert.throws(() => validateEnglishReleaseContract(nonLoopbackListenerAccepted), /exact-port listener function/);
 
+  const captureIsolationRemoved = deploy
+    .replace('capture_post_open_state() (', 'capture_post_open_state() {')
+    .replace('\n)\n\npost_open_failure() {', '\n}\n\npost_open_failure() {');
+  assert.notEqual(captureIsolationRemoved, deploy, 'capture-isolation mutation must change the document');
+  assert.throws(() => validateEnglishReleaseContract(captureIsolationRemoved), /strict post-open capture start marker missing/);
+
+  const snapshotIndexedBeforeCount = swapOnce(
+    deploy,
+    '  test "${#db_snapshots[@]}" -eq 1 || return 1',
+    '  cp --archive -- "${db_snapshots[0]}" "$capture_dir/blog.db" || return 1'
+  );
+  assert.throws(() => validateEnglishReleaseContract(snapshotIndexedBeforeCount), /snapshot count before indexing/);
+
+  const reducedCaptureArtifacts = deploy.replace(
+    '    public-503-1.evidence\n    public-503-2.evidence\n  )',
+    '    public-503-1.evidence\n  )'
+  );
+  assert.notEqual(reducedCaptureArtifacts, deploy, 'reduced-artifact mutation must change the document');
+  assert.throws(() => validateEnglishReleaseContract(reducedCaptureArtifacts), /exact seven-artifact evidence set/);
+
+  const explicitCaptureStatusBypassed = deploy.replace(
+    '    if capture_post_open_state "$POST_OPEN_CAPTURE_DIR"; then\n      capture_status=0\n    else\n      capture_status=$?\n    fi',
+    '    capture_post_open_state "$POST_OPEN_CAPTURE_DIR"\n    capture_status=$?'
+  );
+  assert.notEqual(explicitCaptureStatusBypassed, deploy, 'capture-status mutation must change the document');
+  assert.throws(
+    () => validateEnglishReleaseContract(explicitCaptureStatusBypassed),
+    /explicitly record either capture success or capture failure/
+  );
+
   const postOpenMaintenanceReentryRemoved = deploy.replace(
     '\n    enable_maintenance\n    maintenance_status=$?',
     '\n    : # automatic maintenance re-entry bypassed\n    maintenance_status=0'
@@ -1368,7 +1449,7 @@ test('English translation release runbook pins candidate publication, fd-3 crede
   assert.notEqual(postOpenRestoreAllowed, deploy, 'post-open rollback mutation must change the document');
   assert.throws(() => validateEnglishReleaseContract(postOpenRestoreAllowed), /post-open recovery/);
 
-  t.diagnostic('killed critical-order, pre-maintenance staging, independent digest, plan-order, explicit non-loopback listener, post-open re-entry/arming, HS256, five-minute, fd-3, whole-backup, ecosystem, and post-open rollback mutations');
+  t.diagnostic('killed critical-order, pre-maintenance staging, independent digest, plan-order, explicit non-loopback listener, strict capture isolation, snapshot count-before-index, exact capture artifacts/manifest, explicit capture status, post-open re-entry/arming, HS256, five-minute, fd-3, whole-backup, ecosystem, and post-open rollback mutations');
 });
 
 test('Nginx caches static assets only by explicit prefixes and gates public traffic during maintenance', async () => {

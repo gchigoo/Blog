@@ -255,32 +255,59 @@ confirm_public_maintenance_no_cache() {
   done
 }
 
-capture_post_open_state() {
+capture_post_open_state() (
+  trap - ERR INT TERM HUP
+  set -Eeuo pipefail
   local capture_dir="$1"
+  local actual_artifact_list expected_artifact_list manifest_line_count manifest_tmp
+  local artifact
   local -a db_snapshots=()
-  pm2 stop blog
-  touch "$capture_dir/.backup-start"
-  npm run backup-db
-  mapfile -d '' db_snapshots < <(find /root/Blog/backups -maxdepth 1 -type f -name 'blog_*.db' -newer "$capture_dir/.backup-start" -print0)
-  test "${#db_snapshots[@]}" -eq 1
-  cp --archive -- "${db_snapshots[0]}" "$capture_dir/blog.db"
-  printf '%s\n' "$(git rev-parse HEAD)" > "$capture_dir/git-commit"
-  cp --archive -- ecosystem.config.js "$capture_dir/ecosystem.config.js"
-  if [[ -e var/operations ]]; then
-    printf 'present\n' > "$capture_dir/operations-state"
-    tar --create --file "$capture_dir/post-open-state.tar" -- articles content/taxonomy.json var/operations
-  else
-    printf 'absent\n' > "$capture_dir/operations-state"
-    tar --create --file "$capture_dir/post-open-state.tar" -- articles content/taxonomy.json
-  fi
-  rm -f -- "$capture_dir/.backup-start"
-  (
-    cd "$capture_dir"
-    sha256sum blog.db post-open-state.tar ecosystem.config.js git-commit operations-state \
-      public-503-1.evidence public-503-2.evidence > SHA256SUMS
-    sha256sum -c SHA256SUMS
+  local -a expected_artifacts=(
+    blog.db
+    ecosystem.config.js
+    git-commit
+    operations-state
+    post-open-state.tar
+    public-503-1.evidence
+    public-503-2.evidence
   )
-}
+
+  pm2 stop blog || return 1
+  touch "$capture_dir/.backup-start" || return 1
+  npm run backup-db || return 1
+  find /root/Blog/backups -maxdepth 1 -type f -name 'blog_*.db' -newer "$capture_dir/.backup-start" -print0 > "$capture_dir/.db-snapshots" || return 1
+  mapfile -d '' db_snapshots < "$capture_dir/.db-snapshots" || return 1
+  rm -f -- "$capture_dir/.db-snapshots" || return 1
+  test "${#db_snapshots[@]}" -eq 1 || return 1
+  cp --archive -- "${db_snapshots[0]}" "$capture_dir/blog.db" || return 1
+  git rev-parse HEAD > "$capture_dir/git-commit" || return 1
+  cp --archive -- ecosystem.config.js "$capture_dir/ecosystem.config.js" || return 1
+  if [[ -e var/operations ]]; then
+    printf 'present\n' > "$capture_dir/operations-state" || return 1
+    tar --create --file "$capture_dir/post-open-state.tar" -- articles content/taxonomy.json var/operations || return 1
+  else
+    printf 'absent\n' > "$capture_dir/operations-state" || return 1
+    tar --create --file "$capture_dir/post-open-state.tar" -- articles content/taxonomy.json || return 1
+  fi
+  rm -f -- "$capture_dir/.backup-start" || return 1
+
+  expected_artifact_list="$(printf '%s\n' "${expected_artifacts[@]}" | LC_ALL=C sort)" || return 1
+  actual_artifact_list="$(find "$capture_dir" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)" || return 1
+  test "$actual_artifact_list" = "$expected_artifact_list" || return 1
+  for artifact in "${expected_artifacts[@]}"; do
+    test -f "$capture_dir/$artifact" || return 1
+    test ! -L "$capture_dir/$artifact" || return 1
+  done
+
+  manifest_tmp="$capture_dir/.SHA256SUMS.tmp.$$"
+  test ! -e "$manifest_tmp" || return 1
+  cd "$capture_dir" || return 1
+  sha256sum "${expected_artifacts[@]}" > "$manifest_tmp" || return 1
+  manifest_line_count="$(wc -l < "$manifest_tmp")" || return 1
+  test "$manifest_line_count" -eq "${#expected_artifacts[@]}" || return 1
+  mv -- "$manifest_tmp" SHA256SUMS || return 1
+  sha256sum -c SHA256SUMS || return 1
+)
 
 post_open_failure() {
   local exit_code="${1:-1}"
@@ -296,9 +323,12 @@ post_open_failure() {
     install -o root -g root -m 0700 -d "$POST_OPEN_CAPTURE_DIR"
     confirm_public_maintenance_no_cache "$POST_OPEN_CAPTURE_DIR"
     probe_status=$?
-    capture_post_open_state "$POST_OPEN_CAPTURE_DIR"
-    capture_status=$?
-    printf 'post-open failure contained: maintenance=%s stop=%s probe=%s capture=%s evidence=%s\n' \
+    if capture_post_open_state "$POST_OPEN_CAPTURE_DIR"; then
+      capture_status=0
+    else
+      capture_status=$?
+    fi
+    printf 'post-open failure containment results: maintenance=%s stop=%s probe=%s capture=%s evidence=%s\n' \
       "$maintenance_status" "$stop_status" "$probe_status" "$capture_status" "$POST_OPEN_CAPTURE_DIR" >&2
   fi
   exit "$exit_code"
