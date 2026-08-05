@@ -104,6 +104,73 @@ test('GeoIP deployment files pin weekly scheduling, hardening, canonical paths, 
   assert.match(nginx, /proxy_set_header X-Forwarded-For \$remote_addr;/);
 });
 
+test('maintenance gate routes public 503 responses through an explicit no-store location', async () => {
+  const [maintenance, nginx] = await Promise.all([
+    fs.readFile(path.join(projectRoot, 'deploy/nginx/blog-maintenance.conf'), 'utf8'),
+    fs.readFile(path.join(projectRoot, 'deploy/nginx/blog.conf'), 'utf8')
+  ]);
+
+  function validateMaintenanceContract(text) {
+    assert.doesNotMatch(text, /^\s*(?:http|server|map|upstream)\s*\{/m,
+      'maintenance snippet must remain includable inside the HTTPS server block');
+    assert.match(text, /^set \$blog_maintenance_reject 1;$/m);
+    for (const address of ['127.0.0.1', '::1', '23.254.158.109']) {
+      const escapedAddress = address.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      assert.match(
+        text,
+        new RegExp(`^if \\(\\$remote_addr = "${escapedAddress}"\\) \\{ set \\$blog_maintenance_reject 0; \\}$`, 'm'),
+        `${address} must continue to bypass maintenance`
+      );
+    }
+    assert.match(text, /^if \(\$blog_maintenance_reject = 1\) \{ return 503; \}$/m,
+      'public requests must continue to return 503');
+
+    const errorRoutes = text.match(/^error_page\s+503\s*=\s*@blog_maintenance_response;$/gm) || [];
+    assert.equal(errorRoutes.length, 1, 'maintenance 503 must route once to its named response location');
+    const responseLocation = /^location\s+@blog_maintenance_response\s*\{([\s\S]*?)^\}$/m.exec(text);
+    assert.ok(responseLocation, 'dedicated named maintenance response location missing');
+    const responseDirectives = responseLocation[1]
+      .split(/\r?\n/)
+      .map(line => line.replace(/\s+#.*$/, '').trim())
+      .filter(Boolean);
+    assert.deepEqual(responseDirectives, [
+      'add_header Cache-Control "private, no-store" always;',
+      'add_header Expires "0" always;',
+      'return 503;'
+    ], 'maintenance response location must contain only the explicit no-store 503 contract');
+    assert.doesNotMatch(responseLocation[1], /^\s*(?:proxy_pass|proxy_cache\w*|expires)\b/im,
+      'maintenance response location must not proxy or enable Nginx caching');
+    assert.doesNotMatch(responseLocation[1], /\b(?:public|s-maxage|max-age|immutable)\b/i,
+      'maintenance response location must not contain a cacheable directive');
+  }
+
+  validateMaintenanceContract(maintenance);
+
+  for (const route of ['/css/', '/js/', '/vendor/', '/fonts/', '/images/', '/favicon.ico']) {
+    const escapedRoute = route.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    assert.match(nginx, new RegExp(`location (?:= )?${escapedRoute}\\s*\\{`),
+      `${route} static success-cache location missing`);
+  }
+  assert.ok(
+    nginx.indexOf('# include /etc/nginx/snippets/blog-maintenance.conf;') < nginx.indexOf('location /css/ {'),
+    'maintenance snippet must be included at server scope before static success-cache locations'
+  );
+
+  const withoutAlways = maintenance.replace(
+    'add_header Cache-Control "private, no-store" always;',
+    'add_header Cache-Control "private, no-store";'
+  );
+  assert.notEqual(withoutAlways, maintenance, 'missing-always mutation fixture must change the snippet');
+  assert.throws(() => validateMaintenanceContract(withoutAlways), /explicit no-store 503 contract/);
+
+  const cacheable = maintenance.replace(
+    'add_header Cache-Control "private, no-store" always;',
+    'add_header Cache-Control "public, max-age=300" always;'
+  );
+  assert.notEqual(cacheable, maintenance, 'cacheable mutation fixture must change the snippet');
+  assert.throws(() => validateMaintenanceContract(cacheable), /explicit no-store 503 contract/);
+});
+
 test('DEPLOY post-open image-cache smoke validates root negotiation and localized dynamic homes', async t => {
   const deploy = await fs.readFile(path.join(projectRoot, 'DEPLOY.md'), 'utf8');
   const smokeBlocks = Array.from(
