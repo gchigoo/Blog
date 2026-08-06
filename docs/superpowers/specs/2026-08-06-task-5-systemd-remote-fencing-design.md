@@ -2,177 +2,212 @@
 
 Date: 2026-08-06
 
-User approval date: 2026-08-06
+Prior architecture-direction approval date: 2026-08-06
 
-Status: user-approved design; implementation requires independent review and separate authorization
+Status: corrected exact revision pending independent security and architecture approval and user re-review; implementation planning and production work remain prohibited
 
-## 1. Context and problem
+Review isolation: independent-required; this documentation execution provides self-review only and is not an independent approval
 
-Task 5 of the English article release must capture a consistent production source snapshot, restore the old public service, transfer the verified snapshot, and create an isolated detached candidate. The original release design and implementation plan remain authoritative for the content, snapshot, candidate, service-restoration, opaque-configuration, and production-safety boundaries.
+## 1. Context, current state, and authority
 
-The current Task 5 production state is safely blocked:
+Task 5 of the English article release must capture a consistent production source snapshot, restore the old public service, transfer the verified snapshot, and create an isolated detached candidate. The original release design and Task 5 plan remain authoritative for content, snapshot, candidate, restoration, taxonomy, opaque-configuration, secret-handling, and release boundaries. This specification changes only the remote execution ownership and fencing architecture.
+
+The prior systemd architecture direction was user-approved on 2026-08-06. Independent security and architecture review rejected exact commit `7b1feccac5af2e9c8a3d206fab4285dd7db1de44` because its post-terminal cgroup-path proof, delegated-operation ownership, boot identity, cancellation, environment, state, retry, and deadline contracts were incomplete or invalid. This corrected exact revision requires fresh independent security and architecture approval and user re-review before implementation-plan writing.
+
+The current Task 5 production state remains unchanged and safely blocked:
 
 - The old public service was restored and independently verified.
 - Maintenance is inactive, PM2 is online, the application listens only on `127.0.0.1:3000`, production remains at the expected pre-release commit, and the localized-content audit passed at `4/4/4/4` in the retained review evidence.
-- `/root/blog-english-release-20260804` contains an invalid partial snapshot with no `SHA256SUMS`.
+- `/root/blog-english-release-20260804` contains the exact invalid partial snapshot recorded in section 22 and has no `SHA256SUMS`.
 - No local source transfer, detached candidate, candidate worktree, or release bundle exists.
-- The round-5 retry executable is blocked and must not be executed.
+- The round-5 retry executable remains blocked and must not be executed.
 
-The final round-5 security and govern breaker reviews found the same load-bearing defect: proving that the operator-side SSH process group is empty does not prove that the privileged production-side command and all of its descendants are terminal. A client timeout, killed SSH process, disconnect, or lost completion acknowledgement can leave the remote mutator running after the local process is gone. Starting restoration in that state could overlap snapshot mutation, PM2 changes, or maintenance changes.
-
-Task 5 therefore requires a server-owned execution identity, cancellation path, terminal acknowledgement, and cgroup proof. Restoration must never depend on the lifetime or exit status of the client-side SSH process.
+This documentation correction changes no implementation plan, runbook, code, test, production file, production state, ignored historical evidence, or release artifact. It authorizes no production access or action.
 
 ## 2. Decision summary
 
-The chosen architecture runs each governed production attempt as transient systemd services on the production host:
+Each governed remote attempt is owned by deterministic transient systemd services on the production host:
 
-1. A transient controller service owns orchestration and durable state reconciliation.
-2. A transient mutator service owns maintenance enablement, PM2 freeze, invalid-partial quarantine, and fresh snapshot creation.
-3. One or, only when required, two transient restoration service attempts restore and verify the old public service.
-4. Every phase has a deterministic unit name and a systemd-generated `InvocationID` bound into root-only durable evidence.
-5. The mutator and restoration phase units use `Type=exec`, `ExitType=cgroup`, `KillMode=control-group`, `Restart=no`, `RemainAfterExit=yes`, fixed `RuntimeMaxSec`, and fixed `TimeoutStopSec`.
-6. The client and controller start transient services asynchronously. They do not use `systemd-run --wait`, `--pipe`, or `--collect`.
-7. A phase is fenced only after the exact unit and `InvocationID` have no current job, are in an allowed terminal state, and their exact cgroup has `cgroup.events` with `populated 0`.
-8. Restoration is forbidden until the mutator's immutable `FENCE_PROVED` marker exists.
-9. The design survives SSH/client death through host-side services and durable state. Automatic recovery after a host reboot is explicitly out of scope.
+1. One transient controller service owns orchestration, the global run lock, durable reconciliation, phase creation, cancellation, and run classification.
+2. One transient mutator service owns maintenance enablement, PM2 stop, invalid-partial quarantine, and fresh snapshot creation.
+3. One or, only for a closed retry class, two transient restoration services restore and verify the old public service.
+4. Every phase is bound to the exact controller unit through reviewed `BindsTo=` and `After=` dependencies, and to the controller's exact `InvocationID` through immutable records and gate checks.
+5. Every phase uses `Type=exec`, `ExitType=cgroup`, `RemainAfterExit=no`, `Restart=no`, `Delegate=yes`, `DelegateSubgroup=worker`, and an exact common `ExecStopPost` finalizer.
+6. The phase main process and all descendants execute in `${ControlGroup}/worker`; systemd control processes, including the finalizer, execute in `${ControlGroup}/.control`.
+7. While alive in `.control`, the finalizer proves the exact bound `worker` subgroup recursively empty and durably records that observation before the unit root can be pruned.
+8. Every PM2 or Nginx operation delegated outside the phase cgroup has immutable `BEGIN` and exact matching `QUIESCED` records. An unmatched `BEGIN` prevents a full fence.
+9. A root-only per-phase gate linearizes binding, entry, cancellation, every production mutation, and every delegated dispatch through durable completion.
+10. The controller retains the global run lock across the complete normal mutator/restoration interval and never releases it between phases.
+11. Boot identity is durable and mandatory. A run never crosses a boot.
+12. Client and transport results are request evidence only. They never prove phase completion, external-operation completion, fencing, restoration, or run success.
 
-The systemd manager, rather than an SSH session or shell process group on the operator workstation, becomes the authority for process ownership and lifecycle. The cgroup v2 `populated` field is the final live-process proof because it covers the unit's cgroup and descendants recursively.
+The design distinguishes two safety states:
+
+- `PROCESS_TERMINAL_WITNESSED`: the finalizer has proved that the phase's mutation-capable main process and all descendants are absent from the exact bound `worker` subgroup and has durably recorded the proof.
+- `FENCE_PROVED`: `PROCESS_TERMINAL_WITNESSED` plus exact unit/result reconciliation, unchanged boot identity, valid marker invariants, cancellation linearization when applicable, and closure of every externally delegated PM2/Nginx operation.
+
+A missing unit or cgroup pathname after a valid durable witness is a neutral post-witness condition, not proof. A unit or subgroup that disappears before the witness makes automatic fencing unavailable.
 
 ## 3. Goals
 
 The design must:
 
-- prevent mutator/restoration overlap after a timeout, disconnect, lost acknowledgement, client death, or controller death;
-- assign every reviewed production attempt a deterministic run identity;
-- bind every service execution to the exact expected unit name, staged script bytes, and systemd `InvocationID`;
-- keep root-only durable state that can be reconciled from a new SSH connection;
-- serialize all Task 5 production mutation through one global `flock` boundary;
-- make fencing and restoration transitions one-way and append-only;
-- preserve the current invalid partial snapshot exactly before creating a fresh snapshot;
-- preserve every accepted control from the blocked Task 5 retry, including preflight, no-replace moves, exact-three snapshot publication, opaque ecosystem handling, restoration validation, transfer, candidate provenance, and evidence retention;
-- restore the old public service after every started mutator attempt when, and only when, the mutator has been proved terminal;
-- produce explicit operator-escalation evidence instead of claiming safety when terminal proof or restoration proof is unavailable;
-- provide production-shaped integration evidence on systemd 255 with a unified cgroup v2 hierarchy before production authorization.
+- prevent mutator/restoration overlap after timeout, disconnect, lost acknowledgement, client death, controller death, delayed launch, or cancellation;
+- bind every run, controller, phase, process group, result, external operation, and transition to exact identities;
+- obtain recursive process-terminal evidence before systemd can prune an empty phase cgroup;
+- prevent a late PM2 or Nginx action from taking effect after a claimed fence;
+- keep root-only durable state that a same-run controller can reconcile without rerunning a phase;
+- serialize cooperating Task 5 control through one controller-owned global `flock` interval plus immutable state and per-phase gates;
+- preserve the exact current invalid partial before any fresh snapshot publication;
+- restore and verify the old public service after every accepted and fully fenced mutator attempt;
+- fail closed when process, delegate, identity, boot, evidence, or restoration proof is unavailable;
+- preserve all original Task 5 transfer, detached-candidate, taxonomy, opaque-config, evidence, and release boundaries;
+- require a minimal real systemd-255/PID-1/cgroup-v2 architecture exercise before implementation-plan writing and a later full integration suite before production review.
 
-## 4. Non-goals
+## 4. Non-goals and prohibited effects
 
 This design does not:
 
-- authorize production execution, SSH/SCP, Nginx, PM2, backup, snapshot, transfer, publication, push, or deletion;
-- change the English release product scope, translation rules, taxonomy behavior, publication flow, or Task 5 candidate outputs;
-- edit or replace the original release design, implementation plan, runbook, production configuration, ignored SDD evidence, scripts, or tests;
-- install a permanent daemon or static Task 5 unit on production;
-- make `ecosystem.config.js` non-opaque or permit its contents, secrets, or process environment to be displayed;
-- accept PID-only proof, local SSH process-group proof, SSH exit status, or a successful `systemctl stop` return as terminal proof;
-- treat an invalid or partial snapshot as transferable input;
-- automatically retry a terminally failed production run under the same reviewed identity;
-- automatically recover after a production host reboot.
+- authorize production execution, SSH, SCP, public probing, transient-unit creation, PM2 or Nginx mutation, backup, snapshot, transfer, publication, deployment, deletion, cleanup, or push;
+- change the English release product scope, translation rules, taxonomy behavior, publication flow, Task 5 candidate outputs, or later release tasks;
+- edit or replace the original release design, implementation plan, runbook, scripts, tests, production configuration, or retained historical evidence;
+- install a permanent daemon or static/enabled service, timer, socket, path unit, package, boot-recovery mechanism, Nginx configuration change, or PM2 configuration change;
+- make `ecosystem.config.js` or `pm2_env` readable, serializable, transferable as evidence, or non-opaque;
+- trust SSH/client lifetime, transport acknowledgement, PID-only evidence, process-name searches, a stop command return, or later unit/cgroup absence;
+- automatically continue a run after reboot;
+- automatically clean failed units, markers, witnesses, operation records, quarantine, backups, staging, or local partial evidence.
 
-**Host reboot automatic recovery is out of scope.** A reboot can remove transient unit and cgroup evidence while leaving durable Task 5 markers. Reboot recovery requires explicit operator escalation, fresh state verification, and a separately approved recovery or retry decision; reboot alone must never create `FENCE_PROVED` or authorize restoration.
+## 5. Threat model and trust boundary
 
-## 5. Required capabilities and prerequisites
+### 5.1 Trusted components
 
-### 5.1 Production host
+This one-time protocol trusts:
 
-The implementation requires all of the following before any Task 5 mutation:
+- the production kernel, procfs, unified cgroup v2 hierarchy, and filesystem atomicity/fsync durability primitives;
+- systemd v255 PID 1, its D-Bus API, transient-unit behavior, service control-process placement, and job/result reporting;
+- the exact reviewed root-owned launchers, scripts, finalizer, system tools, Nginx binary/unit, PM2 daemon/client/RPC implementation, Node.js runtime, and validation tools;
+- the approved Git, maintenance, snapshot, candidate, taxonomy, secret, and opaque-configuration boundaries;
+- exclusive governed privileged change ownership from `RUN_RESERVED` until a terminal run marker.
 
-- Linux with systemd exactly version 255 for the reviewed production implementation;
+### 5.2 Not trusted
+
+The protocol does not trust:
+
+- SSH or client lifetime, status, buffering, or acknowledgement;
+- transport success or failure as evidence of remote completion;
+- a PID without start-time and executable/owner identity;
+- unprivileged application processes;
+- the mutable `active-run` pointer;
+- unsanitized command output;
+- polling alone as replacement for a lost external-manager acknowledgement.
+
+### 5.3 Explicitly out of scope
+
+The protocol does not claim safety against:
+
+- a malicious or compromised root user, kernel, PID 1, Nginx, PM2, or reviewed toolchain after validation;
+- privileged cgroup migration or replacement of immutable marker/evidence files;
+- storage that violates the assumed atomic-create, rename, and fsync semantics.
+
+From reservation to terminal run state, uncoordinated root, `systemctl`, PM2, Nginx, Task-5-path, tool, or cgroup activity is unsupported. Unexpected jobs, identity changes, file drift, cgroup movement, or unexplained lock ownership creates `FAULT_PENDING`. Productive forward progress stops; automation may perform only exact containment, witness/fence construction, and an already-authorized restoration path needed to reach a safe terminal result. A trusted-boundary violation ends in `OPERATOR_REQUIRED`.
+
+## 6. Required platform capabilities and semantic basis
+
+Before any implementation is accepted, the architecture requires:
+
+- Linux with systemd exactly version 255 for the reviewed deployment target;
+- systemd v255 running as PID 1;
 - a unified cgroup v2 hierarchy mounted at `/sys/fs/cgroup`;
-- systemd support for transient services, `Type=exec`, `ExitType=cgroup`, `InvocationID`, and the required service properties;
-- root access through the existing governed SSH path;
-- root-owned, non-group-writable system tool paths and the previously reviewed exact tools, including `systemd-run`, `systemctl`, `flock`, `sha256sum`, GNU `mv` with no-clobber/no-target semantics, Nginx, PM2, Node.js, tar, and the existing application audit/backup commands;
-- the reviewed maintenance no-store prerequisite, exact inactive site, exact retained maintenance backups, expected production Git boundary, loopback listener, passing audit, empty operation registry, and adequate disk;
-- the exact invalid partial snapshot identity recorded in section 17.
+- transient services, `Type=exec`, `ExitType=cgroup`, `InvocationID`, `ControlGroupId`, `Delegate=`, `DelegateSubgroup=`, `BindsTo=`, `After=`, `ExecStopPost=`, and the required D-Bus job/property APIs;
+- a root-owned reviewed filesystem location with atomic exclusive create, atomic no-replace rename, and file/directory fsync behavior;
+- the previously reviewed maintenance no-store prerequisite, exact inactive site, retained maintenance backups, expected production Git boundary, loopback listener, passing audit, empty operation registry, and sufficient disk;
+- the exact current invalid-partial identity in section 22;
+- an existing PM2 daemon protocol that can issue identity-bound RPC without auto-spawning a daemon;
+- an Nginx systemd reload path that exposes exact D-Bus job completion and an observable applied worker generation.
 
-A version mismatch, cgroup v1 or hybrid-only environment, absent `cgroup.events`, unexpected tool identity, or missing transient property is a pre-mutation blocker.
+The load-bearing semantics are:
 
-### 5.2 Architectural properties relied upon
+- `Type=exec` reports process setup and executable failures rather than treating a pre-`execve` fork as successful start.
+- `ExitType=cgroup` keeps a phase running while any process remains in its service cgroup.
+- `DelegateSubgroup=worker` places the main service process and descendants in the delegated `worker` subgroup while systemd control processes run in `.control`.
+- `KillMode=control-group` with the fixed signal policy contains all phase-owned processes.
+- `Restart=no` prevents manager-driven re-entry.
+- `RemainAfterExit=no` permits successful units to become inactive and transient units/cgroups to be pruned after finalization; the design does not rely on terminal retention.
+- cgroup v2 `cgroup.events` reports recursive `populated 0` for an existing cgroup and all descendants.
+- systemd v255 may prune an empty service cgroup while transitioning to successful, failed, or inactive state. `RemainAfterExit=yes` and omission of `--collect` do not retain the pathname.
 
-The design relies on these official systemd and cgroup semantics:
+These semantics require the future real-systemd exercise in section 26. They are not asserted as completed implementation evidence by this document.
 
-- `Type=exec` reports process setup and executable failures rather than considering the service started before `execve` succeeds.
-- `ExitType=cgroup` keeps the service running while any process remains in the service cgroup, including descendants after the original main process exits.
-- `KillMode=control-group` applies stop handling to all remaining processes in the unit cgroup.
-- `Restart=no` prevents manager-driven re-entry after failure or timeout.
-- `RemainAfterExit=yes` keeps a successful phase represented as `active/exited` for inspection rather than immediately collapsing successful completion into an unobservable client result.
-- A unit `InvocationID` uniquely identifies one runtime cycle and is available both as a unit property and as `$INVOCATION_ID` inside the service.
-- On cgroup v2, `cgroup.events` reports `populated 0` only when the cgroup and all descendants contain no live process.
-
-These assumptions are not accepted solely from documentation. Section 20 requires them to be demonstrated on systemd 255/cgroup v2 integration infrastructure.
-
-## 6. Alternatives and trade-offs
-
-### 6.1 Continue local process-group supervision
-
-Rejected. It proves only local descendants and cannot account for the production-side command after SSH transport death. This is the exact round-5 breaker.
-
-### 6.2 Depend on SSH disconnect, SIGHUP, keepalives, or command exit
-
-Rejected. None proves that the exact privileged remote process tree is terminal. A lost acknowledgement also makes completed and still-running commands indistinguishable.
-
-### 6.3 Use `systemd-run --wait`, `--pipe`, or `--collect`
-
-Rejected.
-
-- `--wait` recouples completion to the calling connection and does not make the client acknowledgement authoritative.
-- `--pipe` ties service standard I/O to the initiating process and adds another client-lifetime dependency.
-- `--collect` can remove the unit state needed for reconciliation and exact terminal proof.
-
-The design starts units asynchronously, routes output to the journal, retains inspectable units, and performs all acknowledgement through separate read-only queries.
-
-### 6.4 Use `nohup`, `setsid`, tmux, cron, or `at`
-
-Rejected. These mechanisms do not provide the required exact unit identity, `InvocationID`, manager-owned cgroup, declarative kill behavior, job state, or queryable terminal proof.
-
-### 6.5 Install permanent Task 5 units or a custom daemon
-
-Rejected for this one-time governed release. Permanent units broaden production configuration and lifecycle scope. Transient units provide the required host-owned lifecycle without leaving a new enabled service. Durable run evidence is stored separately from transient unit definitions.
-
-### 6.6 Chosen trade-off
-
-The chosen architecture is more complex than a single SSH script and can deliberately leave maintenance active or PM2 stopped when terminal proof is unavailable. That fail-closed availability cost is accepted because starting restoration against a possibly live mutator is unsafe. Every such branch ends in explicit operator escalation and does not claim Task 5 safe or complete.
-
-## 7. Deterministic identities
-
-### 7.1 Review manifest and run ID
+## 7. Deterministic manifest, run identity, and symbolic notation
 
 Each independently reviewed implementation bundle has one canonical `review.manifest`:
 
 - UTF-8, LF-only, sorted key/value records;
-- no comments, timestamps, random values, credentials, or host-fetched data;
-- exact hashes, sizes, and modes for the controller, mutator, restoration, reconciliation, and upload-verifier scripts;
+- no comments, timestamps, random values, credentials, host-fetched secret data, or opaque configuration content;
+- exact hashes, sizes, modes, owners, and absolute paths for the controller, launcher, mutator, restoration, finalizer, reconciliation, upload verifier, PM2 RPC helper, Nginx control helper, and every production tool;
 - exact feature HEAD `1ee3fbc3ebc43f552d3f592bf41d79751ca6a731`;
 - expected production HEAD `860bfe53e54dff4ab78bbfa2f7e5f644a032b9aa`;
-- fixed systemd properties and deadlines from section 10;
-- exact canonical paths and the invalid partial identity from section 17;
+- exact systemd properties, dependency arrays, command arrays, environment contract, marker/result schemas, operation families, and deadlines from this specification;
+- exact canonical paths, exact installed PM2 version and required byte identities, exact `nginx.service` definition identity, and the invalid-partial identity from section 22;
 - exact reviewed maintenance snippet/site/backup identities inherited from the blocked Task 5 controls.
 
 The deterministic run ID is:
 
 `run_id = "t5-20260804-" + lowercase_hex(SHA-256(review.manifest bytes))`
 
-The required syntax is `^t5-20260804-[0-9a-f]{64}$`. The manifest does not contain the derived run ID, avoiding recursive identity. A separate root-only `run.id` contains the derived value.
+Its syntax is `^t5-20260804-[0-9a-f]{64}$`. The manifest does not contain the derived run ID. A separate root-only `run.id` contains the derived value.
 
-The same reviewed manifest always produces the same run ID. Lost acknowledgements and client reconnects must reuse that ID. Any implementation byte, property, deadline, expected-state, or manifest change produces a new ID and requires fresh independent review. A terminal production failure may not be rerun in place under the same ID.
+Notation such as `${RUN_ID}`, `${PHASE}`, `${PHASE_UNIT}`, `${CONTROLLER_UNIT}`, `${INVOCATION_ID}`, and `${ControlGroup}` denotes a value already validated and resolved by the controller or launcher. The literal notation is never passed to a shell or systemd for interpolation.
 
-### 7.2 Unit names
+Any implementation byte, dependency, environment field, property, path, deadline, expected state, PM2 identity, Nginx identity, or manifest change produces a new run ID and requires fresh independent review. A terminal production outcome is never rerun in place under the same ID.
 
-For run ID `${RUN_ID}`, the exact transient unit names are:
+## 8. Exact names, boot identity, and immutable identity records
+
+### 8.1 Unit names
+
+For `${RUN_ID}`, the exact transient unit names are:
 
 - controller: `blog-task5-${RUN_ID}-controller.service`
 - mutator: `blog-task5-${RUN_ID}-mutator.service`
 - restoration attempt 1: `blog-task5-${RUN_ID}-restore-1.service`
 - restoration attempt 2: `blog-task5-${RUN_ID}-restore-2.service`
 
-No aliases, templates, wildcard targets, scopes, user units, or alternate names are allowed. The implementation must query the cgroup path from the exact unit property; it must not construct or guess the escaped cgroup path.
+No aliases, templates, wildcard targets, scopes, user units, or alternate names are allowed. The controller reads `ControlGroup`; it never guesses the escaped cgroup path.
 
-### 7.3 Invocation identities
+### 8.2 Authoritative boot ID
 
-Every controller and phase start gets a systemd-generated 32-lowercase-hex `InvocationID`. As its first actions, each phase script self-verifies its exact unit properties and staged bytes, acquires the global flock, rechecks the one-way state, and then exclusively creates its own bound marker followed by its entered marker using `$INVOCATION_ID`, exact unit name, run ID, and script hash. Only after those steps may it mutate production. The controller independently reads the unit's `InvocationID` and properties and requires an exact match with both phase markers before accepting the binding.
+`010-RUN_RESERVED` establishes the authoritative boot ID by reading `/proc/sys/kernel/random/boot_id`, strictly validating UUID syntax, removing hyphens, and storing exactly 32 lowercase hexadecimal characters.
 
-A unit-name match with an unexpected `InvocationID` is not the same execution. It is an identity conflict and forces operator escalation.
+The boot ID is included in every:
 
-## 8. Root-only paths and permissions
+- controller invocation record;
+- phase intent, start-request, bound, entered, result, terminal witness, fence, and outcome/classification record;
+- cancellation, fault, delegated-operation, restoration-verification, and terminal run record;
+- reconciliation read and evidence digest.
+
+Every actor reads and compares the boot ID:
+
+1. before querying or creating any unit;
+2. after acquiring the global run lock or any phase gate;
+3. immediately before every transition marker, delegated-operation record, witness acceptance, fence, classification, restoration, or production mutation.
+
+Any boot-ID change after reservation creates terminal `OPERATOR_REQUIRED` with `reason=BOOT_ID_CHANGED`. It suppresses lost-start reissue, unit adoption or stop, witness acceptance, fence creation, restoration, and every production mutation. A run never spans boots.
+
+### 8.3 Invocation and controller coupling identity
+
+Every controller and phase start receives a systemd-generated 32-lowercase-hex `InvocationID`. A phase binding names:
+
+- run ID and manifest hash;
+- boot ID;
+- exact phase and attempt;
+- phase unit and `InvocationID`;
+- controller unit and controller `InvocationID`;
+- exact dependency/property digest;
+- exact launcher, phase script, and finalizer hashes.
+
+A same-name unit with a different invocation is a conflict. A new same-run controller invocation is a reconciliation actor, not a continuation of the prior invocation and never authorizes a phase rerun.
+
+## 9. Root-only paths and permissions
 
 The durable root is:
 
@@ -180,45 +215,98 @@ The durable root is:
 
 Required layout:
 
-- `global.lock` — global flock file, root:root `0600`;
-- `active-run` — atomically updated convenience pointer; never authoritative over immutable markers;
+- `global.lock` — controller-owned advisory lock file, root:root `0600`;
+- `active-run` — atomically updated convenience pointer, never authoritative;
 - `incoming/${RUN_ID}/` — upload staging, root:root `0700`;
-- `runs/${RUN_ID}/bundle/` — verified immutable run bundle, root:root `0700`;
-- `runs/${RUN_ID}/markers/` — one-way transition records, root:root `0700`;
-- `runs/${RUN_ID}/evidence/` — sanitized property, cgroup, public, and command-result evidence, root:root `0700`;
-- `runs/${RUN_ID}/controller-invocations/` — one record per explicit controller runtime cycle;
-- `runs/${RUN_ID}/phase-invocations/` — exact phase/unit/InvocationID bindings.
+- `runs/${RUN_ID}/bundle/` — verified immutable implementation bundle, root:root `0700`;
+- `runs/${RUN_ID}/markers/` — immutable transition records, root:root `0700`;
+- `runs/${RUN_ID}/gates/` — one lock file per phase, root:root `0700` directory and `0600` files;
+- `runs/${RUN_ID}/evidence/` — sanitized property, job, operation, witness, result, and validation evidence, root:root `0700`;
+- `runs/${RUN_ID}/controller-invocations/` — one immutable record per controller runtime cycle;
+- `runs/${RUN_ID}/phase-invocations/` — exact phase/controller/unit bindings.
 
-Regular manifests and evidence files are root:root `0600`. Executable scripts are root:root `0500`. No symlink, hardlink, device, FIFO, socket, group/other-writable directory, or unexpected extra entry is accepted anywhere in the run bundle or marker tree.
+Regular manifests, records, and evidence files are root:root `0600`. Executable bundle files are root:root `0500`. No symlink, hardlink, device, FIFO, socket, group/other-writable directory, or unexpected entry is accepted in the governed tree.
 
-All service units run with `User=root`, `Group=root`, and `UMask=0077`. No Task 5 durable state is stored under `/tmp`, `/private/tmp`, a home directory, the Git checkout, the journal alone, or the production release tree.
+All transient units run with `User=root`, `Group=root`, and `UMask=0077`. No durable state is stored under `/tmp`, `/private/tmp`, a home directory, the Git checkout, the journal alone, or the production release tree.
 
 The production release and quarantine paths remain:
 
 - canonical release: `/root/blog-english-release-20260804`
-- invalid-partial quarantine for this run: `/root/blog-english-release-20260804.failed-${RUN_ID}`
+- invalid-partial quarantine: `/root/blog-english-release-20260804.failed-${RUN_ID}`
 
-The quarantine destination must be absent and must be created only by the reviewed atomic no-replace whole-root rename.
+The quarantine destination must be absent and is created only by the reviewed atomic no-replace whole-root rename.
 
-## 9. Upload and provenance
+### 9.1 Upload and bundle provenance
 
-1. The client computes the canonical manifest hash and deterministic run ID locally from the independently approved bundle.
-2. A fixed bootstrap command using only reviewed absolute system tools creates the absent `incoming/${RUN_ID}` directory with root:root `0700`.
-3. Files are transferred as regular files to unique temporary basenames. No script is executed from standard input, a here-document, a pipe, `/tmp`, or an unverified upload path.
-4. Before executing uploaded code, the client invokes only absolute remote `stat` and `sha256sum` tools, reads back the upload-verifier and manifest identities, and requires exact equality with the independently approved local values.
-5. The now-verified server-side upload verifier inventories every entry without following symlinks, rejects extras and unsafe types, and verifies exact filename, byte size, mode, and SHA-256 against `review.manifest`.
-6. The verifier recomputes the run ID and requires it to equal the requested path and unit-name identity.
-7. The verified incoming directory is atomically published with no replacement as `runs/${RUN_ID}/bundle`.
-8. Before every service start, the controller rechecks the target script, complete manifest, bundle directory identity, run ID, and exact unit definition. After start, the executing script independently rechecks its own regular-file identity, manifest, bundle, run ID, exact unit name, and `$INVOCATION_ID` before every production mutation boundary.
-9. No mutation occurs before both controller-side and phase-side checks pass.
+The future governed upload path retains these boundaries:
 
-The exact script path and safe arguments are present in `ExecStart` and are read back as part of unit identity. No credential, token, cookie, password, ecosystem content, or secret-bearing environment value appears in the manifest, unit name, command line, journal identifier, or evidence.
+1. the client computes the canonical manifest hash and deterministic run ID from the independently approved local bundle;
+2. a fixed bootstrap using only reviewed absolute tools creates the absent `incoming/${RUN_ID}` directory with root:root `0700`;
+3. files transfer as regular files to unique temporary basenames, never as a script from standard input, a here-document, a pipe, `/tmp`, or an unverified execution path;
+4. before uploaded code executes, exact remote `stat` and `sha256sum` identities are compared with independently approved local values;
+5. the verified upload verifier inventories every entry without following symlinks, rejects extras and unsafe types, and checks exact name, size, mode, owner, and SHA-256 against `review.manifest`;
+6. the verifier recomputes the run ID and requires it to equal the requested path and unit-name identity;
+7. the verified incoming directory is atomically published without replacement as `runs/${RUN_ID}/bundle`;
+8. before every service creation, the controller rechecks the complete bundle, manifest, target script, finalizer, helpers, run ID, and exact unit contract;
+9. no production mutation occurs before controller-side and phase-side identity checks pass.
 
-## 10. Transient unit contract
+No credential, token, cookie, password, opaque ecosystem content, or secret-bearing value appears in the manifest, upload path, unit name, command line, journal identifier, marker, or evidence.
 
-### 10.1 Shared phase properties
+## 10. Exact environment and command provenance
 
-Every mutator and restoration unit has these exact properties:
+Every transient creation path uses either `systemd-run --expand-environment=no` or exact D-Bus command arrays with no client, manager, or shell interpolation. `--wait`, `--pipe`, and `--collect` remain forbidden.
+
+The manifest and unit read-back bind exact absolute `ExecStart` and `ExecStopPost` command arrays. The phase command enters through the exact reviewed launcher at:
+
+`/var/lib/blog/task-5-systemd-fencing/runs/${RUN_ID}/bundle/bin/task5-phase-launcher`
+
+The controller launcher and common finalizer are:
+
+- `/var/lib/blog/task-5-systemd-fencing/runs/${RUN_ID}/bundle/bin/task5-controller-launcher`
+- `/var/lib/blog/task-5-systemd-fencing/runs/${RUN_ID}/bundle/bin/task5-phase-finalizer`
+
+Before unit creation, the manifest resolves these exact NUL-free argument vectors to concrete values and absolute paths:
+
+- controller `ExecStart`: controller launcher, `--run-id`, `${RUN_ID}`, `--manifest-hash`, `${MANIFEST_HASH}`, `--boot-id`, `${BOOT_ID}`, `--unit`, `${CONTROLLER_UNIT}`, `--script`, `${CONTROLLER_SCRIPT_ABSOLUTE}`;
+- phase `ExecStart`: phase launcher, `--run-id`, `${RUN_ID}`, `--manifest-hash`, `${MANIFEST_HASH}`, `--boot-id`, `${BOOT_ID}`, `--phase`, `${PHASE}`, `--unit`, `${PHASE_UNIT}`, `--controller-unit`, `${CONTROLLER_UNIT}`, `--controller-invocation`, `${CONTROLLER_INVOCATION_ID}`, `--script`, `${PHASE_SCRIPT_ABSOLUTE}`;
+- phase `ExecStopPost`: common finalizer, `--run-id`, `${RUN_ID}`, `--manifest-hash`, `${MANIFEST_HASH}`, `--boot-id`, `${BOOT_ID}`, `--phase`, `${PHASE}`, `--unit`, `${PHASE_UNIT}`, `--controller-unit`, `${CONTROLLER_UNIT}`, `--controller-invocation`, `${CONTROLLER_INVOCATION_ID}`, `--bound-record`, `${BOUND_RECORD_ABSOLUTE}`, `--result-record`, `${RESULT_RECORD_ABSOLUTE}`, `--witness-record`, `${WITNESS_RECORD_ABSOLUTE}`.
+
+The arrays contain no shell metacharacter processing, empty argument, relative path, or runtime interpolation. Their concrete byte sequences and digests are read back and compared with the manifest. Controller and phase services are created asynchronously; every creation return is request evidence only and never completion evidence.
+
+The launcher validates the systemd invocation identity it must preserve, then immediately executes `/usr/bin/env -i` and passes only this exact clean environment:
+
+- `PATH=/usr/sbin:/usr/bin:/sbin:/bin`
+- `LANG=C`
+- `LC_ALL=C`
+- `TZ=UTC`
+- `HOME=/root`
+- `USER=root`
+- `LOGNAME=root`
+- `SHELL=/bin/bash`
+- the exact reviewed `PM2_HOME` only in the PM2 helper path that requires it;
+- the validated systemd invocation identity required by the script.
+
+The reviewed launcher invokes `/bin/bash -p --noprofile --norc` with the exact absolute script path and fixed argument array. Every production tool is invoked by an absolute, root-owned, hash-pinned path.
+
+The contract prohibits:
+
+- `EnvironmentFile` and nonempty `EnvironmentFiles`;
+- `PassEnvironment`;
+- PAM environment sources or login-environment synthesis;
+- client environment pass-through;
+- nonempty `ExecSearchPath`;
+- loader variables, shell startup variables, exported shell functions, `BASH_ENV`, `ENV`, `CDPATH`, `GLOBIGNORE`, or shell option injection;
+- `NODE_OPTIONS`, `NODE_PATH`, npm configuration variables, and ambient PM2 variables;
+- command substitution or variable expansion by `systemd-run`;
+- secret-bearing values in unit properties, command lines, markers, evidence, or logs.
+
+Required unit read-back includes `SetLoginEnvironment=no`, empty `EnvironmentFiles`, empty `PassEnvironment`, empty `ExecSearchPath`, exact `Environment` and `UnsetEnvironment` arrays, exact command arrays, and exact launcher/script/finalizer hashes. Runtime evidence never prints environment values or secret-bearing data.
+
+## 11. Transient-unit topology and properties
+
+### 11.1 Controller unit
+
+The controller unit uses:
 
 | Property | Required value |
 |---|---|
@@ -229,265 +317,508 @@ Every mutator and restoration unit has these exact properties:
 | `SendSIGKILL` | `yes` |
 | `FinalKillSignal` | `SIGKILL` |
 | `Restart` | `no` |
-| `RemainAfterExit` | `yes` |
-| `TimeoutStopSec` | `5s` |
+| `RemainAfterExit` | `no` |
+| `RuntimeMaxSec` | `1800s` |
+| `TimeoutStopSec` | `60s` |
 | `User` / `Group` | `root` / `root` |
 | `UMask` | `0077` |
 | `WorkingDirectory` | `/` |
 | `StandardInput` | `null` |
 | `StandardOutput` / `StandardError` | `journal` / `journal` |
+| `SetLoginEnvironment` | `no` |
 
-The fixed phase runtimes are:
+The controller has no manager-driven restart. A later same-run invocation is explicit reconciliation and receives a new `InvocationID`.
 
-| Unit | `RuntimeMaxSec` |
-|---|---:|
-| mutator | `660s` |
-| restoration attempt 1 | `180s` |
-| restoration attempt 2 | `180s` |
+### 11.2 Shared phase properties
 
-The mutator retains internal fixed stage budgets of `60s` for maintenance enablement and `600s` for snapshot mutation. An internal deadline result never authorizes restoration; systemd terminal/cgroup proof remains mandatory.
+Every mutator and restoration unit uses:
 
-### 10.2 Controller properties
+| Property | Required value |
+|---|---|
+| `Type` | `exec` |
+| `ExitType` | `cgroup` |
+| `KillMode` | `control-group` |
+| `KillSignal` | `SIGTERM` |
+| `SendSIGKILL` | `yes` |
+| `FinalKillSignal` | `SIGKILL` |
+| `Restart` | `no` |
+| `RemainAfterExit` | `no` |
+| `Delegate` | `yes` |
+| `DelegateSubgroup` | `worker` |
+| `TimeoutStopSec` | `10s` |
+| `User` / `Group` | `root` / `root` |
+| `UMask` | `0077` |
+| `WorkingDirectory` | `/` |
+| `StandardInput` | `null` |
+| `StandardOutput` / `StandardError` | `journal` / `journal` |
+| `SetLoginEnvironment` | `no` |
+| `BindsTo` | exact deterministic controller unit |
+| `After` | contains the exact controller unit; complete read-back equals the reviewed dependency array |
+| `ExecStopPost` | exact common finalizer command array |
 
-The controller uses the same process-identity, kill, restart, retention, root, umask, working-directory, and journal properties, with `RuntimeMaxSec=1200s` and `TimeoutStopSec=5s`. `Restart=no` is mandatory. Controller recovery is explicit reconciliation, not automatic restart.
+Phase runtimes are:
 
-The controller's fixed reconciliation budgets are:
+| Unit | Internal work budget | `RuntimeMaxSec` | Protocol margin |
+|---|---:|---:|---:|
+| mutator | `60s + 600s` | `720s` | `60s` |
+| restoration attempt 1 | `180s` | `240s` | `60s` |
+| restoration attempt 2 | `180s` | `240s` | `60s` |
 
-| Control | Fixed value |
-|---|---:|
-| unit visibility after an ambiguous start | `10s` |
-| terminal-property/cgroup proof after observed completion | `10s` |
-| cancellation request through completed terminal proof | `15s` |
-| property/cgroup poll interval | `250ms` |
-| same-name start reissue after lost acknowledgement | `1` maximum |
-| restoration attempts | `2` maximum |
+The phase main process and every descendant execute in `${ControlGroup}/worker`. Systemd control processes, including `ExecStopPost`, execute in `${ControlGroup}/.control`. No phase process may migrate out of `worker`, create an alternate delegated subgroup, or move an unrelated process into the unit.
 
-Budget expiry never relaxes proof. It creates pre-mutation blocked state when no mutator intent exists, or `OPERATOR_REQUIRED` after mutator intent.
+### 11.3 Exact dependency and property read-back
 
-### 10.3 Start behavior
+Before accepting a phase start, the controller reads through systemd D-Bus and requires:
 
-The client starts the controller with one asynchronous `systemd-run` request. The controller starts phase units with asynchronous `systemd-run` requests. Neither path may use:
+- exact unit ID, canonical name, `Transient=yes`, and exact transient fragment identity;
+- exact nonempty phase `InvocationID` and current authoritative boot ID;
+- exact `BindsTo=` containing only the deterministic controller unit and the complete reviewed `After=` array containing that unit plus only the pinned manager-added dependencies;
+- the controller unit loaded with the expected controller `InvocationID` and no terminal/cancellation state that forbids continuation;
+- every property in sections 10 and 11, exact `ExecStart` and `ExecStopPost` arrays, exact runtime/stop deadlines, and `NRestarts=0`;
+- exact `ControlGroup`, nonzero `ControlGroupId`, and no unexpected job or dependency;
+- exact unit-property digest equal to the manifest and phase binding.
 
-- `--wait`;
-- `--pipe` or `-P`;
-- `--collect` or `-G`;
-- a transient scope;
-- inherited standard input;
-- a shell script delivered through stdin.
+The phase launcher repeats these checks before `BOUND`, before `ENTERED`, and under its gate before every mutation boundary. A controller invocation mismatch stops productive work and creates `FAULT_PENDING`; the phase may then participate only in safe cancellation and reconciliation.
 
-A `systemd-run` return value is request evidence only. It is never phase-completion evidence. All start and completion acknowledgement comes from exact unit read-back, immutable phase markers, and terminal/cgroup proof.
+`BindsTo=` plus `After=` must cause PID 1 to stop a live phase when the bound controller unit becomes inactive. A new controller invocation never cancels that stop or treats the old phase as normally continuable. Tests must verify controller death before phase entry, during every phase stage, and during finalization, including same-name controller recreation.
 
-### 10.4 Required unit read-back
+## 12. Phase bound record and finalizer terminal witness
 
-After every start or reconciliation, the controller captures a sanitized property set including:
+### 12.1 Phase bound record
 
-- exact unit ID and names;
-- `LoadState=loaded`, `Transient=yes`, `UnitFileState=transient`, and exact `FragmentPath=/run/systemd/transient/${UNIT_NAME}` read back without following a symlink;
-- exact `ExecStart` path and non-secret arguments;
-- `Type`, `ExitType`, `KillMode`, `Restart`, `RemainAfterExit`, runtime, and stop timeout;
-- `InvocationID`;
-- current job identity;
-- `ActiveState`, `SubState`, and `Result`;
-- `MainPID`, `ControlPID`, and `ControlGroup`;
-- restart count.
+The immutable phase bound record binds at least:
 
-Any property drift blocks the run before mutation or blocks the next transition after mutation.
+- run ID and manifest hash;
+- authoritative boot ID;
+- exact phase/attempt and unit name;
+- exact phase `InvocationID`;
+- exact controller unit and controller `InvocationID`;
+- exact `ControlGroup` and nonzero `ControlGroupId`;
+- `worker` subgroup device and inode identity obtained without symlink traversal;
+- exact unit-property digest;
+- launcher, phase script, and finalizer hashes;
+- exact expected phase-result path and schema digest;
+- exact terminal-witness path and schema digest;
+- gate identity and current marker-state digest.
 
-## 11. Global lock
+The launcher creates `BOUND` under the phase gate after validating the unit, boot, controller, cgroup topology, worker identity, and cancellation state. It creates `ENTERED` under the same gate only after a second complete recheck. A failure before a valid bound record cannot produce an automatic full fence.
 
-All Task 5 production mutation is serialized by an exclusive `flock` on:
+### 12.2 Finalizer witness procedure
+
+The exact common `ExecStopPost` finalizer has a `5s` internal deadline. Within that deadline it must:
+
+1. verify fixed run, phase, unit, controller, result-path, witness-path, and schema arguments and compare the current boot ID;
+2. query the exact unit and require the bound `InvocationID`, `ControlGroup`, nonzero `ControlGroupId`, `Delegate=yes`, `DelegateSubgroup=worker`, exact unit-property digest, and exact finalizer command;
+3. require `SubState=stop-post`, `ControlPID` equal to its own PID, and the normalized unified entry in `/proc/self/cgroup` equal to `${ControlGroup}/.control`;
+4. open the exact validated `worker` subgroup through a reviewed no-symlink-traversal path operation and require the bound device/inode identity;
+5. read `worker/cgroup.events`, require exactly one `populated` field with value `0`, and require `worker/cgroup.procs` empty;
+6. revalidate the worker subgroup device/inode identity after both reads;
+7. capture `Result`, `ExecMainPID`, `ExecMainCode`, `ExecMainStatus`, `ExecMainStartTimestampMonotonic`, `ExecMainExitTimestampMonotonic`, `ActiveState`, `SubState`, `MainPID`, `ControlPID`, `ControlGroup`, `ControlGroupId`, `NRestarts`, and the phase-owned immutable result record when present;
+8. capture the exact start/stop job ID, path, type, state, and `JobRemoved` result evidence available for the invocation;
+9. enumerate every phase-owned external-operation `BEGIN`, validate any exact matching `QUIESCED`, and record unmatched operations without claiming they are closed;
+10. exclusively create the immutable terminal witness, fsync the file, and fsync its parent directory;
+11. perform no production mutation, delegated operation, marker authorization, or evidence rewrite after the durable witness, then exit.
+
+A valid witness establishes `PROCESS_TERMINAL_WITNESSED` only. It does not by itself establish `FENCE_PROVED`.
+
+A missing or malformed witness, wrong finalizer PID/cgroup, changed boot, unit/invocation/property mismatch, nonzero `populated`, nonempty `cgroup.procs`, subgroup recreation, device/inode drift, symlink traversal, contradictory phase result, or witness-create collision blocks automatic fencing.
+
+### 12.3 Post-witness controller reconciliation
+
+The controller validates the witness while holding the global run lock and after comparing boot identity and marker invariants.
+
+If the unit remains loaded, it must have:
+
+- the same unit name and `InvocationID`;
+- the exact property digest and no current job;
+- `MainPID=0` and `ControlPID=0` after finalizer completion;
+- `NRestarts=0`;
+- an allowed terminal result consistent with the phase result, witness, cancellation, and job evidence.
+
+If the unit is unloaded, exact lookup by name and lookup by the bound invocation must both report absence. The durable witness remains the process-terminal evidence. Later pathname or unit absence is neutral and never upgrades an invalid or missing witness.
+
+Same-name recreation with another invocation, worker subgroup recreation or inode drift, malformed or missing witness, result contradiction, or an unexplained loaded/invocation lookup prevents `FENCE_PROVED`.
+
+## 13. External PM2 and Nginx operation ownership
+
+The phase cgroup does not contain the pre-existing PM2 daemon or Nginx master. The global advisory lock does not identify, contain, or make those actors descendants. Every delegated operation therefore uses immutable operation records.
+
+### 13.1 Common operation record contract
+
+Each operation has one deterministic operation ID bound to run, boot, phase, unit, `InvocationID`, family, sequence, target identity, exact command/request digest, gate identity, and prior marker digest.
+
+While holding the phase gate, the phase:
+
+1. exclusively creates and fsyncs `BEGIN` before dispatch;
+2. retains the gate through dispatch, manager acknowledgement, identity-bound completion checks, stable samples, exclusive `QUIESCED` creation, and parent-directory fsync;
+3. releases the gate only after durable `QUIESCED` or phase containment interrupts the operation.
+
+An idempotent no-op still receives `BEGIN` and `QUIESCED` with `operation_mode=noop-verified`.
+
+Required operation families are:
+
+Mutator:
+
+- maintenance/Nginx reload `BEGIN` and `QUIESCED`;
+- PM2 stop `BEGIN` and `QUIESCED`.
+
+Each restoration attempt:
+
+- PM2 start/restart `BEGIN` and `QUIESCED`;
+- maintenance-open/Nginx reload `BEGIN` and `QUIESCED`.
+
+A `BEGIN` without its exact matching valid `QUIESCED` permanently blocks that phase's `FENCE_PROVED` and automatic restoration. Polling a desired state does not reconstruct a lost delegate acknowledgement.
+
+### 13.2 PM2 existing-daemon RPC contract
+
+The implementation must use a reviewed existing-daemon RPC helper. A high-level client path that may auto-spawn a daemon is forbidden.
+
+The manifest pins the exact installed PM2 version and relevant helper, client, RPC, and daemon bytes or identities. The helper binds:
+
+- exact reviewed `PM2_HOME`;
+- exact RPC socket path, device, inode, mode, and owner;
+- daemon PID plus `/proc/PID/stat` start time, executable identity, UID, and version;
+- the sole preflight `blog` entry's exact `pm_id`;
+- the exact command and callback received in the same helper session.
+
+Stop targets that exact `pm_id`. Restoration uses daemon-retained configuration for the same entry and never reads, prints, copies, hashes for output, or serializes `ecosystem.config.js` or `pm2_env`.
+
+`QUIESCED` is allowed only after the RPC callback and two filtered stable samples one second apart:
+
+- stopped: exactly one `blog`, the same `pm_id`, status `stopped`, PID zero, and no loopback listener;
+- restored: exactly one `blog`, the same `pm_id`, status `online`, a stable positive PID/start time, and exactly one `127.0.0.1:3000` listener.
+
+The daemon and socket identity must remain unchanged. If the helper or phase dies after dispatch but before durable `QUIESCED`, automatic fencing and restoration are forbidden.
+
+If the exact installed PM2 version cannot support this existing-daemon completion protocol without auto-spawn, the architecture is blocked and must be redesigned rather than weakened to polling.
+
+### 13.3 Nginx D-Bus reload contract
+
+The manifest and preflight bind:
+
+- exact `nginx.service` unit identity and property digest;
+- master PID and `/proc/PID/stat` start time;
+- pre-reload worker generation;
+- targeted maintenance/open config identities without exposing secret-bearing content;
+- exact `ExecReload` definition and binary identities.
+
+The helper issues exact D-Bus `ReloadUnit("nginx.service", "fail")`, retaining the returned job ID/path and matching `JobRemoved` result. `QUIESCED` requires:
+
+- `JobRemoved` result `done` for that exact job;
+- `nginx.service` active/running;
+- unchanged master PID/start-time identity;
+- `ControlPID=0`;
+- `ReloadResult=success`;
+- a clean `ExecReload` runtime record created after `BEGIN`;
+- a new worker generation observed after dispatch;
+- old workers absent or identity-bound as gracefully shutting down;
+- exact expected maintenance/open config identity;
+- expected loopback and public probe state using only approved sanitized fields;
+- two stable filtered samples one second apart.
+
+Concurrent, substituted, or ambiguous reload jobs block `QUIESCED` and the phase fence.
+
+If the existing Nginx unit/master cannot produce an identity-bound job plus an observable applied generation, the architecture is blocked pending a separately approved synchronous Nginx control change.
+
+## 14. Global run lock and per-phase gates
+
+### 14.1 Controller-owned global lock
+
+The controller acquires an exclusive `flock` on:
 
 `/var/lib/blog/task-5-systemd-fencing/global.lock`
 
-Rules:
+It holds the lock from run reservation through the complete normal remote mutator/restoration interval and terminal run-marker creation. It never releases the lock between mutator and restoration phases.
 
-1. Initial run reservation and every transition that authorizes production mutation, fence creation, a next phase, restoration verification, or run success are performed while holding the lock.
-2. The mutator holds the lock for its full process-tree lifetime. Its lock descriptor is intentionally inherited across its phase descendants.
-3. Each restoration attempt holds the same lock for its full process-tree lifetime.
-4. A different run may inspect sanitized state but may not reserve, start, cancel, restore, quarantine, publish, or clear state while a nonterminal run exists.
-5. A same-run controller may inspect or request cancellation without first acquiring the lock, because a live phase intentionally holds it. The same-run controller may exclusively create only the monotonic cancellation-request or `OPERATOR_REQUIRED` marker without the lock; neither marker authorizes mutation or a next phase.
-6. After terminal/cgroup proof, the controller must acquire the lock before writing a terminal-observed/fence marker or starting the next phase.
-7. Lock acquisition alone never proves a phase terminal. A prematurely released descriptor, script failure, or manager action cannot replace the exact unit/cgroup proof.
-8. Failure to acquire the lock when no exact live phase explains ownership is an inconsistent-state escalation.
+The lock is advisory serialization for cooperating governed actors. It does not identify or contain PM2, Nginx, or an uncoordinated privileged actor. Durable nonterminal markers reserve the run independently of lock ownership.
 
-The immutable markers are authoritative. `active-run` is only an atomically updated index and may be repaired from marker state while holding the lock.
+If the controller dies, the lock is released. PID 1 stops any bound live phase. Another run remains forbidden by durable state. A new same-run controller invocation may acquire the lock only for reconciliation. While any old phase is nonterminal, the new controller is stop/reconcile-only and never reruns a phase.
 
-## 12. One-way markers and state invariants
+Unexplained lock ownership creates `FAULT_PENDING`. Lock acquisition alone is never process-terminal, delegate-terminal, or fence evidence.
 
-Every marker is created exactly once with an atomic exclusive-create operation, then file and parent directory synchronization. Markers are never rewritten, truncated, renamed over, or deleted by the run. Each record contains the run ID, manifest hash, actor type, actor unit and `InvocationID`, the phase unit and phase `InvocationID` for every phase transition, UTC time, prior-state name, next-state name, and hashes of the evidence records supporting the transition. Phase-owned bound/entered markers identify the phase as actor; controller-owned intent, observation, fence, and terminal markers identify the current controller invocation as actor.
+### 14.2 Linearized phase gates
 
-Required safety markers are:
+Each phase has one root-only gate file:
+
+- `runs/${RUN_ID}/gates/mutator.lock`
+- `runs/${RUN_ID}/gates/restore-1.lock`
+- `runs/${RUN_ID}/gates/restore-2.lock`
+
+For binding, entry, every production mutation, and every PM2/Nginx dispatch, the phase:
+
+1. acquires its gate exclusively;
+2. while holding it, rechecks boot ID, run/unit/controller identity, cancellation intent/fence, `FAULT_PENDING`, phase fence, all later-phase markers, and terminal run markers;
+3. holds the gate through the mutation or delegated operation and durable completion/quiescence record;
+4. releases the gate before the next separately authorized boundary.
+
+No check followed by an unlocked mutation is permitted.
+
+## 15. Cancellation and containment
+
+Each phase has two immutable cancellation records:
+
+- `*_CANCEL_INTENT`: a monotonic, non-authorizing request that immediately forbids productive continuation;
+- `*_CANCEL_FENCE`: a linearization record proving no further phase binding, entry, mutation, or delegated dispatch is possible.
+
+Controller cancellation rules are:
+
+1. write and fsync `CANCEL_INTENT` first;
+2. a delayed launch checks it before `BOUND`, before `ENTERED`, and under the gate before every boundary;
+3. if the controller acquires the gate while the phase is live and no delegated operation is open, it may write and fsync `CANCEL_FENCE` before requesting exact-unit stop;
+4. if the gate is held by a hung operation, the controller may request exact-unit containment stop after `CANCEL_INTENT`; after a valid terminal witness it acquires the gate and writes `CANCEL_FENCE`;
+5. an unmatched external-operation `BEGIN` still blocks `FENCE_PROVED` even if process cancellation and `CANCEL_FENCE` succeed;
+6. a controller seeing either cancellation record adopts the unit only for stop/reconciliation, never normal continuation.
+
+Cancellation targets only the exact deterministic unit and expected invocation. No PID-only kill, process-name search, wildcard, slice-wide action, or guessed cgroup is permitted.
+
+The cancellation/containment-through-witness/fence budget is `45s` after cancellation linearization or exact containment start. It accounts for the `10s` worker stop path, separately bounded `5s` finalizer, terminal query, gate/lock/marker/fsync operations, polling, and scheduling margin. If an external operation still holds the gate, that operation's own stage deadline governs. Controller shutdown writes a durable handoff record and does not claim work it cannot finish.
+
+## 16. Marker schema and one-way invariants
+
+Every marker is exclusively created once, then file- and parent-directory-fsynced. Markers are never rewritten, truncated, renamed over, or deleted by the run. Every record includes run ID, manifest hash, boot ID, actor unit and invocation, phase unit and invocation when applicable, schema digest, monotonic and UTC timestamps, prior/next state, and hashes of supporting evidence.
+
+Required records are:
+
+Run and fault:
 
 1. `000-RUN_STAGED`
 2. `010-RUN_RESERVED`
-3. `100-MUTATOR_INTENT`
-4. `110-MUTATOR_BOUND`
-5. `120-MUTATOR_ENTERED`
-6. `125-MUTATOR_CANCEL_REQUESTED` when cancellation is requested
-7. `130-MUTATOR_TERMINAL_OBSERVED`
-8. `150-FENCE_PROVED`
-9. `200-RESTORE_1_INTENT`
-10. `210-RESTORE_1_BOUND`
-11. `220-RESTORE_1_ENTERED`
-12. `225-RESTORE_1_CANCEL_REQUESTED` when cancellation is requested
-13. `230-RESTORE_1_TERMINAL_OBSERVED`
-14. `240-RESTORE_1_FENCE_PROVED`
-15. `250-RESTORATION_VERIFIED` when attempt 1 succeeds
-16. `300-RESTORE_2_INTENT` only when attempt 1 is fenced but not verified
-17. `310-RESTORE_2_BOUND`
-18. `320-RESTORE_2_ENTERED`
-19. `325-RESTORE_2_CANCEL_REQUESTED` when cancellation is requested
-20. `330-RESTORE_2_TERMINAL_OBSERVED`
-21. `340-RESTORE_2_FENCE_PROVED`
-22. `350-RESTORATION_VERIFIED` when attempt 2 succeeds
-23. `900-RUN_SUCCEEDED`
-24. `910-RUN_BLOCKED_PRE_MUTATION` when a read-only gate blocks before mutator intent
-25. `990-OPERATOR_REQUIRED` for any unresolved post-intent safety failure
+3. `095-FAULT_PENDING` when the first nonterminal fault is detected
 
-Additional append-only diagnostic records may exist under `evidence/`, but they cannot replace the safety markers.
+Mutator:
 
-Load-bearing invariants:
+4. `100-MUTATOR_INTENT`
+5. `105-MUTATOR_START_REQUEST`
+6. `110-MUTATOR_BOUND`
+7. `120-MUTATOR_ENTERED`
+8. `125-MUTATOR_CANCEL_INTENT` when requested
+9. `126-MUTATOR_CANCEL_FENCE` when linearized
+10. `130-MUTATOR_PROCESS_TERMINAL_WITNESSED`
+11. `140-MUTATOR_FENCE_PROVED`
+12. `145-MUTATOR_OUTCOME`
 
-- `MUTATOR_ENTERED` cannot exist without `MUTATOR_INTENT` and an exact unit/InvocationID binding.
-- Once `FENCE_PROVED`, any mutator entry or production mutation is permanently forbidden for that run.
-- No restoration intent may exist without `FENCE_PROVED`.
-- Restoration attempt 2 may start only after attempt 1 has exact terminal/cgroup proof, has not produced `RESTORATION_VERIFIED`, and has not created `OPERATOR_REQUIRED`.
-- `RUN_SUCCEEDED` requires exactly one `RESTORATION_VERIFIED` marker and all final Task 5 service/public/evidence gates.
-- A second contradictory marker, an impossible order, an identity mismatch, or both terminal success and operator escalation is corruption. Automation stops without further mutation.
+Restoration attempt 1:
 
-The mutator checks for `FENCE_PROVED`, any restoration marker, `RUN_SUCCEEDED`, and `OPERATOR_REQUIRED` at entry and immediately before each maintenance, PM2, quarantine, backup, staging, and publication mutation. Presence of any post-mutator marker makes it exit without mutation. This is the one-way fence.
+13. `200-RESTORE_1_INTENT`
+14. `205-RESTORE_1_START_REQUEST`
+15. `210-RESTORE_1_BOUND`
+16. `220-RESTORE_1_ENTERED`
+17. `225-RESTORE_1_CANCEL_INTENT` when requested
+18. `226-RESTORE_1_CANCEL_FENCE` when linearized
+19. `230-RESTORE_1_PROCESS_TERMINAL_WITNESSED`
+20. `240-RESTORE_1_FENCE_PROVED`
+21. `245-RESTORE_1_OUTCOME`
+22. `250-RESTORATION_VERIFIED` when attempt 1 succeeds
 
-## 13. State machine
+Restoration attempt 2:
+
+23. `300-RESTORE_2_INTENT`
+24. `305-RESTORE_2_START_REQUEST`
+25. `310-RESTORE_2_BOUND`
+26. `320-RESTORE_2_ENTERED`
+27. `325-RESTORE_2_CANCEL_INTENT` when requested
+28. `326-RESTORE_2_CANCEL_FENCE` when linearized
+29. `330-RESTORE_2_PROCESS_TERMINAL_WITNESSED`
+30. `340-RESTORE_2_FENCE_PROVED`
+31. `345-RESTORE_2_OUTCOME`
+32. `350-RESTORATION_VERIFIED` when attempt 2 succeeds
+
+Mutually exclusive terminal run markers:
+
+33. `900-RUN_SUCCEEDED`
+34. `910-RUN_BLOCKED_PRE_MUTATION`
+35. `920-RUN_FAILED_NO_MUTATION`
+36. `930-RUN_FAILED_RESTORED`
+37. `990-OPERATOR_REQUIRED`
+
+Load-bearing invariants include:
+
+- `RUN_RESERVED` fixes the boot identity for the run.
+- `BOUND` requires intent, accepted exact unit identity, and no cancellation/fault/later/terminal prohibition.
+- `ENTERED` requires `BOUND` and a second gate-held identity/state check.
+- `CANCEL_INTENT`, `CANCEL_FENCE`, and `FAULT_PENDING` are nonterminal and prohibit productive forward progress while allowing exact containment, witness/fence construction, and an already-required restoration path.
+- `PROCESS_TERMINAL_WITNESSED` requires a valid finalizer witness for the exact phase invocation.
+- `FENCE_PROVED` requires process witness, exact terminal reconciliation, gate/cancellation invariants, and closure of all external operations.
+- No restoration intent may exist without `MUTATOR_FENCE_PROVED`.
+- Attempt 2 requires `RESTORE_1_FENCE_PROVED`, a valid immutable attempt-1 classification, and no attempt-1 verification.
+- `RUN_SUCCEEDED` requires successful mutator outcome, exactly one `RESTORATION_VERIFIED`, and all final remote gates.
+- `RUN_FAILED_RESTORED` requires a non-success mutator/fault outcome plus verified restoration.
+- Terminal run markers are mutually exclusive. Contradictory order, identity mismatch, duplicate exclusive-create collision, or impossible state is evidence corruption and blocks further automation.
+
+## 17. Immutable phase results and systemd result reconciliation
+
+Each phase may create exactly one immutable result record before normal exit. It is bound to run, manifest, boot, phase, unit, `InvocationID`, controller invocation, script hash, last completed boundary, operation-record hashes, sanitized evidence hashes, result schema, and monotonic timestamps.
+
+The exact exit map, with no `SuccessExitStatus` override, is:
+
+- `0`: success;
+- `64`: deterministic application, service, or public validation failure;
+- `70`: identity, marker, property, environment, or protocol failure;
+- `75`: cooperative cancellation at a safe boundary with an exact cancellation reason.
+
+A signal, runtime timeout, forced stop, crash, or pre-result failure may leave the result absent. Absence gains classification meaning only after a valid terminal witness and full fence.
+
+Required systemd evidence includes:
+
+- `ExecMainPID`;
+- `ExecMainCode`;
+- `ExecMainStatus`;
+- `ExecMainStartTimestampMonotonic`;
+- `ExecMainExitTimestampMonotonic`;
+- `Result`, `ActiveState`, and `SubState`;
+- `MainPID`, `ControlPID`, `ControlGroup`, and `ControlGroupId`;
+- `NRestarts`;
+- exact start/stop job ID, path, type, state, and `JobRemoved` result.
+
+For a loaded unit after finalizer completion, accepted terminal evidence is a closed set consistent with the result and job records:
+
+- result `0`: normal main exit status `0`, `Result=success`, no job, zero main/control PIDs, and inactive/dead or another documented successful terminal state compatible with `RemainAfterExit=no`;
+- result `64`, `70`, or `75`: normal main exit with that exact status, `Result=exit-code`, no job, zero main/control PIDs, and a matching failed terminal state;
+- absent result after containment or abnormal death: exact signal/core/timeout/stop evidence, matching job outcome, no job, zero main/control PIDs, and no contradictory normal result.
+
+A successful unit may already be unloaded after a valid witness. A failed unit may remain loaded. The former `active/exited` retention requirement is forbidden.
+
+Malformed, missing-mandatory, or contradictory result/systemd evidence blocks the fence or classification. Same-name recreation, invocation drift, nonzero PIDs, current jobs, `NRestarts` other than zero, or an unexplained terminal tuple blocks automatic progression.
+
+## 18. Restoration retry classification
+
+After restoration attempt 1 reaches full fence, the controller creates immutable `245-RESTORE_1_OUTCOME` while holding the global run lock. It cites hashes of the phase result, finalizer witness, systemd/job evidence, cancellation records, fault record, and every delegated-operation record.
+
+Attempt 2 is authorized only for this closed list:
+
+- absent result plus runtime timeout;
+- absent result plus signal, core dump, or abnormal process death;
+- absent result plus unexpected nonzero main exit classified as abnormal implementation exit;
+- exact safe cancellation caused by lost acknowledgement or controller handoff.
+
+Attempt 2 is forbidden for:
+
+- deterministic failure `64`;
+- protocol failure `70`;
+- explicit operator cancellation;
+- identity, property, boot, environment, or trusted-boundary drift;
+- malformed, missing-mandatory, or contradictory records;
+- start, resource, or protocol failure before a valid main execution;
+- any unresolved external operation.
+
+`300-RESTORE_2_INTENT` cites the exact attempt-1 outcome hash. Any attempt-2 outcome other than verified success ends in `OPERATOR_REQUIRED`. No third attempt is permitted.
+
+## 19. State machine and escalation ordering
 
 | State | Entry evidence | Allowed next action |
 |---|---|---|
-| staged | verified bundle and `RUN_STAGED` | reserve the run under global lock |
-| reserved | no other nonterminal run; `RUN_RESERVED` | complete read-only preflight |
-| pre-mutation blocked | `RUN_BLOCKED_PRE_MUTATION`; no `MUTATOR_INTENT` | no production mutation; independent review may close the attempt |
-| mutator intended | `MUTATOR_INTENT` | create or reconcile only the deterministic mutator unit |
-| mutator running | exact bound unit and `MUTATOR_ENTERED` | wait, or request exact-unit cancellation |
-| mutator terminal unproved | terminal-looking result or transport loss without full proof | reconcile/cancel; restoration forbidden |
-| mutator fenced | exact proof and `FENCE_PROVED` | start restoration attempt 1 |
-| restoration 1 running | exact attempt-1 binding and entry | wait, or request exact-unit cancellation |
-| restoration 1 fenced, unverified | exact attempt-1 terminal/cgroup proof | start attempt 2 only for the retryable failure classes listed in section 16 |
-| restoration 2 running | exact attempt-2 binding and entry | wait, or request exact-unit cancellation |
-| restoration verified | attempt 1 or 2 completed every remote and public gate | perform final evidence gates and mark run success |
-| operator required | exact escalation marker | no further automation or in-place retry |
-| succeeded | verified restoration plus final gates | local transfer/candidate phase may begin under the original Task 5 boundaries |
+| staged | verified bundle and `RUN_STAGED` | reserve under the global lock |
+| reserved | `RUN_RESERVED`, authoritative boot, no other nonterminal run | read-only preflight |
+| blocked pre-mutation | read-only failure before mutator intent | `RUN_BLOCKED_PRE_MUTATION`; no production mutation |
+| mutator intended | mutator intent, same boot | create or reconcile only the deterministic mutator |
+| mutator live or delayed | accepted exact unit, with or without entry | wait, cancel, or stop/reconcile only |
+| mutator process-terminal | valid finalizer witness | reconcile delegate, unit, result, gate, and marker evidence |
+| mutator fenced | full exact fence | start restoration attempt 1 |
+| restore 1 fenced | full attempt-1 fence | verify success or classify the closed retry decision |
+| restore 2 fenced | full attempt-2 fence | verify success or escalate |
+| restoration verified | exact attempt 1 or 2 verification | classify run outcome |
+| failed restored | mutator/fault failure plus verified restoration | terminal `RUN_FAILED_RESTORED` |
+| succeeded | mutator success, verified restoration, final gates | terminal `RUN_SUCCEEDED`; local phase may begin |
+| operator required | terminal escalation evidence | no further automation |
 
-Once a mutator unit has been started, restoration is run even if the mutator reports failure before its first intended production write. This keeps the post-start path uniform and produces positive verification of the old public-service state. The sole exception is a failure before `MUTATOR_INTENT`, where no phase unit and no production mutation exists.
+Exact transition semantics are:
 
-## 14. Remote terminal and cgroup proof
+- A read-only failure before mutator intent produces `RUN_BLOCKED_PRE_MUTATION`.
+- A definitive same-boot start rejection after intent, with no accepted unit, bound/entered record, or delegated operation, produces `RUN_FAILED_NO_MUTATION`.
+- Every accepted mutator unit requires a terminal witness and, when all full-fence conditions are available, restoration attempt 1.
+- A mutator deterministic/protocol/abnormal failure followed by verified restoration produces `RUN_FAILED_RESTORED`, not `OPERATOR_REQUIRED`.
+- Mutator success plus verified restoration and final gates produces `RUN_SUCCEEDED`.
+- Late invalid-partial drift, quarantine collision, or another safety collision creates `FAULT_PENDING`, then contains and fences the phase and restores the old service; verified restoration produces `RUN_FAILED_RESTORED`.
+- `OPERATOR_REQUIRED` is written only when process or delegate fencing is unavailable, restoration is nonretryably unavailable or failed, attempt 2 fails, boot changes, or the trusted evidence boundary is violated.
+- A process-terminal mutator with any unresolved external delegate cannot reach `FENCE_PROVED`; automatic restoration is forbidden and the run ends in `OPERATOR_REQUIRED`.
 
-### 14.1 Proof algorithm
+`FAULT_PENDING`, `CANCEL_INTENT`, and `CANCEL_FENCE` do not authorize production progress. They permit only safety closure and restoration already required by a valid full mutator fence.
 
-For a specific phase unit and expected `InvocationID`, the controller performs this proof within the fixed `10s` terminal-proof budget, polling no faster than every `250ms`:
+## 20. Controller lifetime, lost acknowledgements, and reconciliation
 
-1. Query the exact unit name through a fresh host-side `systemctl show` call.
-2. Require the unit to be loaded and transient with the exact staged `ExecStart` and properties.
-3. Require the exact nonempty expected `InvocationID`.
-4. Require no current start, stop, restart, reload, or other unit job; the decoded job ID must be zero and its object path empty/root.
-5. Require one allowed terminal tuple from section 14.2.
-6. Require `MainPID=0` and `ControlPID=0`.
-7. Read the exact `ControlGroup` property, reject an empty, relative, escaping, or unexpected path, and read `/sys/fs/cgroup${ControlGroup}/cgroup.events` without following a symlink.
-8. Parse the flat-keyed file and require exactly one `populated` field with value `0`. Other kernel-defined fields may be retained as evidence but do not weaken the requirement.
-9. Query the unit properties again and require the same unit, `InvocationID`, `ControlGroup`, no-job state, and terminal tuple.
-10. Under the global lock, recheck one-way marker invariants and write the phase terminal marker plus its fence marker.
+### 20.1 Lost start acknowledgement
 
-A missing cgroup directory or `cgroup.events`, `populated 1`, malformed/duplicate `populated`, changed `InvocationID`, changed cgroup, current job, live PID, or nonterminal state fails proof. Absence is not treated as equivalent to `populated 0`.
+Before a phase creation request, the controller writes intent and the exact start-request record under the global lock after a boot check. Creation uses fail-on-name-conflict behavior.
 
-### 14.2 Allowed terminal tuples
+On ambiguous response:
 
-Only these tuples are accepted:
+1. compare boot identity before any unit query;
+2. query exact name and invocation lookup plus bound/entered/cancellation records;
+3. accept an existing unit only if every identity, dependency, property, controller invocation, and record matches;
+4. if no unit and no accepted/bound/entered/delegate evidence exists after the `10s` visibility window, reissue the same exact creation once on the same boot;
+5. never use another unit name or run ID;
+6. any remaining ambiguity creates `FAULT_PENDING` and proceeds only through the applicable safe terminal classification.
 
-- successful retained phase: `ActiveState=active`, `SubState=exited`, `Result=success`, main process exited normally with status `0`;
-- failed phase: `ActiveState=failed`, `SubState=failed`, with a non-success `Result` consistent with the retained exit/signal/timeout evidence;
-- explicitly cancelled phase: `ActiveState=inactive`, `SubState=dead`, only when an immutable cancellation-request record exists and the completed stop job, unit result, and cgroup-empty evidence are retained.
+A boot change suppresses reissue.
 
-`running`, `start`, `activating`, `deactivating`, `stop-sigterm`, `stop-sigkill`, `auto-restart`, `reload`, `maintenance`, unknown states, or a successful result inconsistent with the phase's own terminal marker are not accepted.
+### 20.2 Lost completion or stop acknowledgement
 
-A return from `systemctl stop`, a missing PID, an SSH exit, a journal line, or a script-written terminal marker alone is insufficient.
+A lost client, D-Bus, `systemd-run`, or stop acknowledgement does not change state. Reconciliation queries the exact unit and durable records. A stop request is not blindly repeated while an exact stop job exists.
 
-## 15. Cancellation, reconciliation, and lost acknowledgements
+Completion requires the finalizer witness and full fence. A command return, absent PID, missing unit, or journal line is never sufficient.
 
-### 15.1 Cancellation
+### 20.3 Client death
 
-Cancellation is triggered by a phase deadline, explicit operator cancellation, controller shutdown handling, transport ambiguity, or an abnormal phase state.
+The client may die without changing server ownership. A same-run client reconnect can invoke reconciliation, but it cannot infer completion or start a duplicate phase.
 
-- Cancellation targets the exact deterministic unit name; no PID, process-name search, wildcard, slice-wide kill, or guessed cgroup is allowed.
-- The controller requests `systemctl stop` through a separate bounded control connection.
-- The phase's `KillMode=control-group`, `TimeoutStopSec=5s`, and final SIGKILL policy apply to the entire unit cgroup.
-- A cancellation request is evidence only. The controller must wait for no job, an allowed terminal tuple, exact `InvocationID`, and `cgroup.events` `populated 0`.
-- A lost stop acknowledgement is reconciled by querying the exact unit. The stop command is not blindly repeated if a stop job already exists.
-- If cancellation through terminal proof cannot complete within the fixed `15s` cancellation budget, the run creates `OPERATOR_REQUIRED`. Restoration remains forbidden when the mutator is unfenced.
+### 20.4 Controller death
 
-### 15.2 Lost start acknowledgement
+If the controller dies:
 
-Before creating a phase unit, the controller writes the phase intent marker. It then requests the exact deterministic unit with systemd's fail-on-name-conflict behavior.
+- its global lock is released;
+- PID 1 stops any bound live phase through the exact `BindsTo=`/`After=` relationship;
+- durable nonterminal markers continue to reserve the run;
+- another run remains forbidden;
+- a new same-run controller invocation may acquire the global lock only for reconciliation;
+- while any old phase is nonterminal, the new controller is stop/reconcile-only;
+- no phase is rerun;
+- a same-name phase with a new invocation is rejected;
+- if the old phase becomes process-terminal, the new controller may validate the existing witness, close only already-acknowledged delegates, create the full fence when valid, and perform required restoration;
+- if an external `BEGIN` is unmatched, the new controller cannot invent `QUIESCED` or restore automatically.
 
-If the response is lost or ambiguous:
+Controller shutdown has `TimeoutStopSec=60s`, exceeding the `45s` containment budget. If a delegated operation's own deadline prevents completion, the controller writes a durable handoff and exits without a false fence or terminal-success claim.
 
-1. query the exact unit name and both phase-owned bound/entered markers;
-2. if the unit exists, verify all properties and accept only its exact `InvocationID`;
-3. if either phase-owned marker exists, require its unit/`InvocationID` to match the loaded unit and never create a second unit;
-4. if no unit and no phase-owned marker exists after the fixed `10s` visibility window, reissue the same exact unit creation once;
-5. if the original request was processed, the deterministic name prevents a duplicate and the second request resolves as an existing-unit case;
-6. any remaining ambiguity becomes operator escalation.
+### 20.5 Host reboot
 
-There is no fallback to a new unit name or new run ID.
+A boot mismatch is detected before unit query, adoption, stop, reissue, witness acceptance, fence, restoration, or mutation. The run writes `OPERATOR_REQUIRED` with `reason=BOOT_ID_CHANGED`. No automatic recovery or restoration follows. A separately approved recovery decision is required.
 
-### 15.3 Lost completion acknowledgement
+## 21. Exact deadline algebra
 
-A lost SSH response, controller RPC response, or `systemd-run` output does not change state. The reconnecting controller queries the exact unit and markers, binds the same `InvocationID`, and runs the terminal proof. A completed operation may proceed only from that proof; a still-running operation is waited for or cancelled.
+Fixed remote values are:
 
-### 15.4 Client death
+- mutator internal maintenance budget: `60s`;
+- mutator internal snapshot budget: `600s`;
+- mutator `RuntimeMaxSec=720s`;
+- each restoration internal work budget: `180s`;
+- each restoration `RuntimeMaxSec=240s`;
+- each phase `TimeoutStopSec=10s`;
+- finalizer internal witness deadline: `5s`;
+- start visibility: `10s`;
+- post-witness terminal reconciliation: `10s`;
+- poll interval: `250ms`;
+- cancellation/containment through witness/fence: `45s` after cancellation linearization or exact containment start;
+- controller `RuntimeMaxSec=1800s`;
+- controller `TimeoutStopSec=60s`;
+- lost-start reissue: one maximum;
+- restoration attempts: two maximum.
 
-The SSH client may die immediately after controller creation without changing phase ownership. The controller and phase services continue under the production systemd manager with journal output and root-only state. A new client uses the same deterministic run ID and reconciles the exact controller and phase units. Client death never causes automatic restoration by itself.
+The mutator's `60s + 600s` internal work fits under `720s` with a `60s` protocol margin. Each restoration's `180s` work fits under `240s` with the same margin.
 
-### 15.5 Controller death
+Controller lower-bound calculation:
 
-`Restart=no` applies to the controller. If it dies:
+- mutator runtime plus stop/finalizer allowance: `720 + 10`;
+- two restoration runtimes plus stop/finalizer allowance: `2 * (240 + 10)`;
+- three visibility windows: `3 * 10`;
+- three terminal reconciliation windows: `3 * 10`;
+- fixed transition/evidence overhead allowance: `120`;
+- lower bound: `1410s`;
+- controller margin: `1800 - 1410 = 390s`.
 
-- a live mutator or restoration phase continues under systemd and retains the global lock;
-- no other run may begin because durable nonterminal markers reserve the run;
-- an explicitly invoked same-run controller reconciliation cycle verifies the exact staged controller bytes and records its new controller `InvocationID`;
-- the reconciler never starts another mutator if `MUTATOR_INTENT`, `MUTATOR_ENTERED`, or any later marker exists;
-- it waits for or cancels the exact live phase, proves it terminal, and resumes only the allowed state transition;
-- if the phase unit disappeared after an entry marker but before cgroup proof, the run cannot infer termination and enters operator escalation.
+Budget expiry never weakens proof. Before mutator intent it may produce `RUN_BLOCKED_PRE_MUTATION`; after intent it creates `FAULT_PENDING` and follows exact containment/fence/restoration ordering or ends in `OPERATOR_REQUIRED` when proof is unavailable.
 
-A loaded failed controller with exact properties may be explicitly started again. If the transient controller definition is no longer loaded but the host has not rebooted, the same exact transient definition may be recreated from the verified bundle. This is manual reconciliation, not `Restart=` behavior.
+## 22. Exact current invalid snapshot identity and handling
 
-### 15.6 Host reboot
-
-No automatic recovery runs after reboot. Transient units and their cgroups may be gone, so pre-reboot phase termination cannot be proved by the required method. Durable markers and evidence are preserved, but automation must stop at operator escalation. A separately approved procedure must verify maintenance, PM2, Nginx, production Git, snapshot paths, locks, and public service before deciding whether to restore, preserve, or begin a new reviewed run.
-
-## 16. Restoration sequencing
-
-Restoration attempt 1 starts only after `FENCE_PROVED` has been durably written for the exact mutator unit and `InvocationID`.
-
-The restoration service then, under the global lock:
-
-1. self-verifies script, manifest, unit, run, and restoration `InvocationID`;
-2. rechecks `FENCE_PROVED` and all one-way markers;
-3. refuses to run if any mutator cgroup is live, any mutator job exists, or the fence evidence is inconsistent;
-4. starts the old PM2 process if necessary and requires exactly one `blog` process, `online`, with a positive live PID;
-5. requires exactly one listener at `127.0.0.1:3000`;
-6. verifies direct Express and loopback Nginx smoke;
-7. verifies the expected production HEAD, no staged changes, no non-ecosystem tracked changes, and the exact approved opaque ecosystem status without reading its contents;
-8. runs the existing localized-content audit and requires schema/integrity/foreign-key/operation checks plus counts `4/4/4/4`;
-9. restores the exact inactive maintenance site state, runs `nginx -t`, reloads, and rereads exact site/snippet/backup identities;
-10. performs two fresh sanitized public-open probes requiring `200`, `private`, `no-store`, no `Age`, no `Expires`, and no forbidden Cloudflare stored-object state;
-11. emits success only after every field passes.
-
-Signals do not bypass the service manager's cgroup ownership. If restoration attempt 1 times out, fails, loses acknowledgement, or is cancelled, the controller first proves that exact restoration unit terminal with `populated 0`.
-
-Attempt 2 is allowed only after `RESTORE_1_FENCE_PROVED` and only when attempt 1 ended through `RuntimeMaxSec`, an external signal, controller-requested cancellation caused by lost transport/acknowledgement, or abnormal process death before the restoration script emitted a deterministic field failure. PM2, listener, Express, Nginx, Git, audit, maintenance, public-cache, identity, marker, property, secret, or opaque-state validation failures are deterministic and are not retryable. Attempt 2 uses a different deterministic unit name and `InvocationID`, but the same run ID, manifest, global lock, and restoration script bytes.
-
-After attempt 2, any failure or unavailable proof creates `OPERATOR_REQUIRED`. No third restoration attempt, mutator rerun, local transfer, candidate creation, or success marker is allowed.
-
-## 17. Exact current invalid snapshot handling
-
-The current production partial is invalid and preserved. The implementation must pin this exact identity before any maintenance mutation and recheck it immediately before quarantine:
+The current production partial is invalid and must remain preserved. Before any maintenance mutation and immediately before quarantine, the implementation must require this exact identity:
 
 - `/root/blog-english-release-20260804`: regular non-symlink directory, root:root, mode `0755`, with exactly one top-level entry named `snapshot`;
 - `snapshot`: regular non-symlink directory, root:root, mode `0700`, containing exactly four regular non-symlink root-owned files and no `SHA256SUMS`.
@@ -505,208 +836,182 @@ The mutator must:
 
 1. reject any type, mode, owner, size, hash, name, count, or absent-manifest drift;
 2. require `/root/blog-english-release-20260804.failed-${RUN_ID}` absent;
-3. after maintenance is active and PM2 is proved stopped, atomically rename the entire canonical release root to that exact quarantine path using the reviewed no-replace/no-target operation;
-4. verify the canonical path is absent, the quarantine identity is byte-for-byte and metadata-for-metadata unchanged, and no nesting or overwrite occurred;
+3. after maintenance is active and PM2 stop is `QUIESCED`, atomically rename the entire canonical release root to the exact quarantine path using the reviewed no-replace/no-target operation;
+4. verify the canonical path absent, quarantine identity unchanged, and no nesting or overwrite;
 5. never copy, merge, delete, add a manifest to, transfer, or use the quarantined partial as snapshot input;
 6. publish a fresh canonical release only from a separately verified staging tree containing exactly `blog.db`, `runtime.tar`, and `SHA256SUMS`.
 
-Any quarantine collision or identity mismatch retains both sides unchanged and proceeds only to mutator fencing and old-service restoration.
+Identity drift or quarantine collision preserves both sides, creates `FAULT_PENDING`, and proceeds only to phase safety closure and verified old-service restoration when a full mutator fence is available.
 
-## 18. Snapshot, local candidate, and opaque-state boundaries
+## 23. Remote Task 5 workflow boundaries
 
-The systemd architecture changes only remote execution ownership and fencing. The accepted Task 5 data controls remain unchanged:
+The mutator retains all approved controls, and the snapshot window includes no code or content change:
 
-- database verification occurs in a unique root-only disposable directory so SQLite sidecars cannot pollute the final artifact set;
-- tar inventory is fully materialized and validated without an early-closing producer pipeline;
-- staging and final snapshot directories contain exactly three regular non-symlink files;
-- the manifest is created atomically and verified before and after no-replace publication;
-- forensic, failed-work, staging, and final evidence is retained according to the prior no-broad-delete rules;
-- transfer and local candidate work begin only after `RESTORATION_VERIFIED` and `RUN_SUCCEEDED`;
-- local source hashes, exact-three boundary, tar types/names, detached worktree provenance, selective hydration, empty operations, `npm ci`, `4/4/4/4` audit, and empty mode-`0700` release bundle remain mandatory;
-- the snapshot's old taxonomy is not copied over the committed candidate taxonomy;
-- the snapshot's `ecosystem.config.js` is archived only by exact pathname and remains opaque; it is not displayed, parsed, printed, or copied into the candidate.
+- read-only preflight before intent;
+- exact maintenance no-store activation and Nginx quiescence;
+- exact PM2 stop quiescence;
+- whole-root no-replace quarantine of only the exact invalid partial;
+- database verification in a unique root-only disposable directory so SQLite sidecars cannot pollute the final set;
+- fully materialized tar inventory without an early-closing producer pipeline;
+- staging and final snapshot directories containing exactly three regular non-symlink files;
+- atomic manifest creation and verification before and after no-replace publication;
+- retention of forensic, failed-work, staging, final, marker, witness, operation, and job evidence without broad deletion.
 
-Production `ecosystem.config.js` remains an approved opaque sole unstaged override. Checks may verify only the exact sanitized Git-status boundary already approved by governance. The implementation must not reset, stage, overwrite, hash for output, read into evidence, or expose its contents.
+Restoration attempt 1 begins only after `MUTATOR_FENCE_PROVED`. Each restoration attempt retains:
 
-## 19. Evidence, retention, secrets, and escalation
+- identity-bound PM2 start/restart `BEGIN` and `QUIESCED`;
+- exactly one `blog` process with the approved identity, online and loopback-only;
+- direct Express and loopback Nginx smoke;
+- expected production HEAD, no staged changes, no non-ecosystem tracked changes, and the exact approved opaque ecosystem status without reading its contents;
+- localized-content audit requiring schema/integrity/foreign-key/operation checks and counts `4/4/4/4`;
+- identity-bound maintenance-open Nginx reload `BEGIN` and `QUIESCED`;
+- two sanitized public-open stable samples requiring `200`, `private`, `no-store`, no `Age`, no `Expires`, and no forbidden stored-object state.
 
-### 19.1 Required evidence
+No transfer or local candidate work begins before `RUN_SUCCEEDED`.
 
-The run retains, at minimum:
+## 24. Bounded post-restoration local work
 
-- canonical review manifest, run ID, script hashes/sizes/modes, and upload inventory;
-- every controller and phase unit name and `InvocationID`;
-- unit property read-back before start acknowledgement and at terminal proof;
-- start/stop job identities and outcomes;
-- exact before/after cgroup property snapshots and `cgroup.events` contents used for every fence;
-- immutable marker timeline;
-- global-lock acquisition/release records;
-- sanitized preflight, maintenance, PM2, listener, Nginx, audit, snapshot inventory, manifest, restoration, and public cache-field evidence;
+After `RUN_SUCCEEDED`, the original Task 5 local candidate boundaries remain and these fixed liveness limits apply:
+
+| Stage | Deadline |
+|---|---:|
+| SCP source transfer | `300s` |
+| exact-three inventory/checksum | `60s` |
+| tar inventory/extraction | `120s` |
+| detached worktree creation/provenance | `60s` |
+| selective hydration/empty operations | `120s` |
+| `npm ci` | `900s` |
+| localized-content audit | `180s` |
+| empty mode-`0700` release bundle | `30s` |
+| overall local phase | `2100s` |
+
+The stage sum is `1770s`; the overall margin is `330s`.
+
+SCP must be noninteractive with exact reviewed options equivalent to:
+
+- `BatchMode=yes`;
+- zero password prompts;
+- one connection attempt;
+- `ConnectTimeout=15`;
+- server-alive interval `15` and count `2`;
+- no TTY or forwarding;
+- no unbound connection multiplexing.
+
+On local timeout, terminate and prove empty the exact local stage process group, retain and inventory partial local evidence, perform no broad cleanup, stop before Task 6, and do not touch the already verified production service.
+
+The local candidate still requires source hashes, exact-three boundary, safe tar types/names, detached worktree provenance, selective hydration, empty operations, `npm ci`, `4/4/4/4` audit, and an empty mode-`0700` release bundle. The snapshot's old taxonomy is not copied over the committed candidate taxonomy.
+
+The snapshot's `ecosystem.config.js` remains archived only by exact pathname and opaque. Production `ecosystem.config.js` remains the approved sole unstaged override and is never reset, staged, overwritten, displayed, parsed, copied into the candidate, or emitted into evidence.
+
+## 25. Evidence, secrets, retention, and terminal classification
+
+Required root-only evidence includes:
+
+- canonical manifest, run ID, boot ID, upload inventory, and bundle byte identities;
+- controller and phase unit names, invocation IDs, dependencies, properties, command arrays, and sanitized environment-contract digests;
+- start/stop/reload job identities and outcomes;
+- phase bound records, cgroup path/ID, worker device/inode identities, terminal witnesses, and post-witness reconciliation;
+- immutable phase results and outcome classifications;
+- phase-gate and global-lock acquisition/release records;
+- every PM2/Nginx `BEGIN` and `QUIESCED` record;
+- immutable marker timeline and contradiction checks;
+- sanitized preflight, maintenance, PM2, listener, Nginx, audit, snapshot, restoration, and public cache-field evidence;
 - exact invalid-partial pre/post-quarantine identity;
 - final local transfer/candidate evidence if the run reaches that boundary;
 - journal references filtered by exact `_SYSTEMD_INVOCATION_ID`.
 
-No run automatically deletes its bundle, markers, evidence, failed unit state, quarantined partial, failed work, or retained backups. Cleanup is a separate reviewed action after required independent review and retention approval. `--collect` is forbidden.
+No run automatically deletes its bundle, markers, evidence, units, quarantine, failed work, staging, local partials, or retained backups. Cleanup is separately reviewed and authorized.
 
-### 19.2 Secret and opaque configuration rules
+Governed scripts never use `set -x` and never print command environments, PM2 environments, opaque configuration, cookies, authorization headers, tokens, passwords, private keys, response bodies, or secret-bearing values. Public probes emit only approved status/cache fields. Command outputs are reduced to exact non-secret fields before durable storage.
 
-- Never use `set -x` in governed scripts.
-- Never print command environments, PM2 environments, secret-bearing configuration, cookies, authorization headers, tokens, passwords, private keys, or response bodies.
-- Never place a secret in a unit name, run ID, manifest, environment property, command argument, journal identifier, marker, or evidence file.
-- Public probes emit only the approved status/cache fields.
-- PM2, Git, audit, backup, tar, and Nginx outputs are reduced to fixed non-secret fields; unselected output stays in memory or is discarded.
-- State and evidence remain root-only with `UMask=0077`.
+Terminal run markers mean:
 
-### 19.3 Operator escalation conditions
+- `RUN_SUCCEEDED`: mutator succeeded, restoration verified, and all final gates passed;
+- `RUN_BLOCKED_PRE_MUTATION`: a read-only gate failed before mutator intent;
+- `RUN_FAILED_NO_MUTATION`: same-boot definitive phase start rejection after intent with no accepted/bound/entered/delegate activity;
+- `RUN_FAILED_RESTORED`: mutator or safety path failed, but a full mutator fence and verified restoration were obtained;
+- `OPERATOR_REQUIRED`: process/delegate fencing unavailable, restoration nonretryably unavailable/failed, attempt 2 failed, boot changed, or trusted evidence was violated.
 
-Automation writes `OPERATOR_REQUIRED` and stops when any of these occurs after mutator intent:
+No terminal result authorizes cleanup, a new production run, publication, or a later release task.
 
-- script, manifest, path, property, unit, or `InvocationID` mismatch;
-- marker contradiction or unexpected existing run state;
-- unexplained global-lock ownership or active-run conflict;
-- systemd/cgroup version or capability drift;
-- persistent job, unknown terminal state, live PID, missing/malformed cgroup evidence, or `populated 1` after cancellation;
-- a phase unit disappears after its entry marker but before terminal proof;
-- invalid-partial identity drift or quarantine collision;
-- mutator fence proof failure;
-- restoration attempt 2 failure or any restoration fence-proof failure;
-- inability to prove old-service/public restoration;
-- host reboot during a nonterminal run;
-- suspected secret or opaque-configuration disclosure;
-- any production state outside the approved release/governance boundary.
+## 26. Tests and pre-plan architecture-validation gate
 
-When the mutator is not fenced, operator escalation deliberately forbids automated restoration. The report must state that maintenance or PM2 state may require manual recovery and must not claim the service safe. When restoration is fenced but unsuccessful, no further automated attempt is permitted.
+### 26.1 Future minimal real-systemd gate
 
-## 20. systemd 255/cgroup v2 integration tests
+Before implementation-plan writing, a minimal exercise must run on the exact distribution build with systemd 255 as PID 1 and unified cgroup v2. This is a future pre-plan architecture-validation gate, not completed evidence.
 
-Implementation may not proceed to production review until a fresh Linux integration suite runs with systemd 255 as PID 1 and a unified cgroup v2 hierarchy. Mocked `systemctl`, local process groups, containers without a real systemd manager, and retained round-5 tests are insufficient for this gate.
+It must demonstrate:
 
-The suite must cover:
+- the old `RemainAfterExit=yes` post-terminal pathname assumption fails through systemd cgroup pruning;
+- the new topology places main/descendant processes in `worker` and the finalizer in `.control`;
+- the finalizer durably witnesses recursive worker emptiness for success, nonzero exit, signal, runtime timeout, explicit stop, and SIGTERM-ignoring descendants;
+- unit-root pruning or unloading after the witness does not invalidate reconciliation;
+- missing/malformed witness or worker identity drift blocks the fence.
 
-### 20.1 Unit identity and properties
+Artifacts must include exact unit definitions, property/job read-back, cgroup identities, witness bytes/hashes, result tuples, pruning observations, and negative cases. Independent architecture and security reviewers must approve the artifacts and exact results before implementation planning.
 
-- exact transient controller, mutator, restore-1, and restore-2 names;
-- exact property table, fixed runtimes/timeouts, `Restart=no`, and no unexpected restart;
-- `Type=exec` failure for an absent/non-executable script;
-- nonempty 32-hex `InvocationID` available both in the unit and service environment;
-- exact `ExecStart`, transient state, journal routing, and null stdin;
-- static and behavioral proof that `--wait`, `--pipe`, and `--collect` are absent.
+If the topology does not behave as specified on the exact systemd-255 build, work stops and the architecture is redesigned. It must not fall back to an undocumented pre-opened file-descriptor assumption.
 
-### 20.2 Exit and cgroup behavior
+### 26.2 Later full integration suite
 
-- a mutator parent exits while a descendant remains; `ExitType=cgroup` keeps the unit nonterminal and `populated 1`;
-- normal success reaches `active/exited`, no job, zero PIDs, and `populated 0`;
-- nonzero exit, signal, and `RuntimeMaxSec` reach the allowed failed tuple with `populated 0`;
-- a descendant ignores SIGTERM; stop escalates within `TimeoutStopSec=5s`, kills the full cgroup, and reaches `populated 0`;
-- nested descendants are covered recursively by `cgroup.events`;
-- missing, malformed, duplicate, unreadable, or nonzero `populated` evidence blocks `FENCE_PROVED`;
-- unit or `InvocationID` substitution blocks proof even when another cgroup is empty.
+The later implementation suite must additionally cover:
 
-### 20.3 Lost acknowledgement and client death
+- exact transient names, properties, dependencies, command arrays, environment, hashes, and no `--wait`/`--pipe`/`--collect`;
+- same-name/invocation substitution and worker-inode recreation races;
+- success, deterministic exits `64` and `70`, cooperative cancellation `75`, absent result, signal, core, runtime timeout, explicit stop, and forced kill;
+- controller death before, during, and after finalizer witness;
+- `BindsTo=` phase stop on exact controller loss and stop-only behavior after controller recreation;
+- delayed starts and cancellation before `execve`, `BOUND`, `ENTERED`, and every mutation/delegated-operation gate boundary;
+- a gate held by a hung operation, containment, finalizer witness, later cancel fence, and unresolved-delegate escalation;
+- PM2 death before send, after send before callback, after callback before `QUIESCED`, and after `QUIESCED`;
+- PM2 daemon/socket/version/entry drift and rejection of every auto-spawn path;
+- Nginx death before reload, during the D-Bus job, after job before new worker generation, during graceful drain, and after `QUIESCED`;
+- concurrent, substituted, failed, or ambiguous Nginx reload jobs;
+- reboot after reservation and at every intent/start/bound/entered/result/witness/fence phase;
+- boot mismatch suppressing query, reissue, adoption/stop, witness acceptance, restoration, and mutation;
+- every result/classification tuple, every forbidden attempt-2 class, and impossibility of a third attempt;
+- environment poisoning, manager expansion attempts, shell startup/function injection, loader variables, Node/npm variables, and ambient PM2 variables;
+- late invalid-partial drift and quarantine collision safety closure;
+- local SCP, checksum, extraction, worktree, hydration, `npm ci`, audit, and bundle hangs with retained evidence;
+- output scans proving no secrets, opaque ecosystem content, broad deletion, PID-only kill, wildcard action, or unreviewed executable path.
 
-- controller start acknowledgement lost before and after manager acceptance;
-- mutator and restoration start acknowledgement lost before and after phase entry;
-- completion acknowledgement lost after successful and failed completion;
-- stop acknowledgement lost while a stop job is queued and after it completes;
-- SSH client killed immediately after controller start, after mutator intent, after maintenance activation, after PM2 stop, and after snapshot publication;
-- reconnect with the same run ID binds the existing exact unit and never creates a duplicate.
+Any failed case blocks implementation review. The implementation and test bytes require fresh independent security and architecture review before any production authorization.
 
-### 20.4 Controller death
+## 27. Migration, review, rollout, and completion boundaries
 
-- controller killed while mutator runs;
-- controller killed after mutator terminal but before `FENCE_PROVED`;
-- controller killed during each restoration attempt;
-- explicit same-run reconciliation records a new controller `InvocationID`, does not rerun the mutator, and resumes only from proved durable state;
-- disappeared phase after entry but before proof enters operator escalation.
+The blocked round-5 scripts and their prior local suite remain historical evidence only. They are not production inputs and are not wrapped by this architecture.
 
-### 20.5 One-way fencing and global lock
+The allowed sequence is:
 
-- a second run cannot reserve or mutate while the first phase holds the lock or has nonterminal markers;
-- a forked descendant retains phase ownership while alive;
-- restoration cannot start before `FENCE_PROVED` under race injection;
-- mutator entry and every mutation boundary fail after `FENCE_PROVED` or any restoration marker;
-- restoration attempt 2 cannot start before restore-1 cgroup proof and cannot overlap attempt 1;
-- duplicate or out-of-order marker creation fails closed;
-- no third restoration attempt is possible.
+1. corrected tracked design revision;
+2. fresh independent security and architecture design approval plus user re-review;
+3. successful future real-systemd-255 architecture-validation gate and independent review of its artifacts;
+4. local implementation-plan writing;
+5. local implementation and static tests without production access;
+6. full isolated systemd-255/cgroup-v2 integration suite;
+7. exact manifest/run identity generation and independent review;
+8. separate explicit production authorization;
+9. governed root-only upload and transient execution;
+10. independent post-run security and Task 5 review before continuing the release.
 
-### 20.6 Production-shaped Task 5 behavior
+No implementation planning or production work may begin from this specification alone. No permanent daemon, static/enabled unit, timer, socket, path unit, package, Nginx config change, PM2 config change, or boot recovery mechanism is introduced.
 
-- exact current four-file invalid partial passes identity and is atomically quarantined whole-root with no replacement;
-- every partial identity drift and late quarantine collision preserves evidence and blocks fresh publication;
-- hangs occur before maintenance mutation, after maintenance reload, after PM2 stop, during DB backup, during tar creation, and during final publication;
-- every case requires mutator terminal/cgroup proof before restoration;
-- exact-three fresh snapshot, sidecar confinement, tar inventory, manifest, and no-replace publication controls remain green;
-- restoration failure injection covers every PM2/listener/Express/Nginx/Git/audit/maintenance/public field;
-- local transfer/candidate work is impossible before `RUN_SUCCEEDED` and remains green after verified restoration;
-- output scans find no secrets, ecosystem contents, broad deletion, PID-only kill, wildcard unit action, or unreviewed executable path.
+A future Task 5 implementation is ready for production review only when all required tests pass, exact artifact identities are independently approved, current production preflight still matches, and the user separately authorizes production execution. This specification and its commit do not authorize implementation, production access, or release continuation.
 
-### 20.7 Retention and reboot boundary
+## 28. Architecture references
 
-- successful and failed units remain inspectable without `--collect` for the complete proof/evidence window;
-- evidence survives controller and client death;
-- cleanup does not run automatically;
-- a reboot-boundary test or documented systemd-255 VM exercise confirms that no Task 5 static unit is enabled and no automatic recovery occurs; durable nonterminal state requires operator escalation after reboot.
+Load-bearing review must use the systemd v255 versions of:
 
-Any failed integration case blocks implementation review. Tests and implementation identities must receive fresh independent security and govern review before production authorization.
+- `systemd-run(1)` for `--expand-environment=no` and transient creation behavior;
+- `systemd.service(5)` for `Type=exec`, `ExitType=cgroup`, `RemainAfterExit=`, `ExecStopPost=`, `DelegateSubgroup=`, and result semantics;
+- `systemd.kill(5)` for `KillMode=control-group`, stop signals, and forced-kill behavior;
+- `systemd.exec(5)` for environment, command, and execution-context properties;
+- `systemd.unit(5)` for `BindsTo=` and `After=` semantics;
+- `systemctl(1)` and `org.freedesktop.systemd1(5)` for exact property, invocation, job, and D-Bus reload reconciliation;
+- systemd v255 `service.c` and `cgroup.c` source paths governing terminal transitions and cgroup pruning.
 
-## 21. Migration from the blocked Task 5 retry
+Kernel semantics must be reviewed against the Linux cgroup v2 documentation for `cgroup.events`, recursive `populated`, cgroup identity, and removal.
 
-1. The round-5 retry script and its `34/34` local suite remain historical blocked evidence. They are not production inputs and are not wrapped by the new controller.
-2. Implementation begins from this tracked specification, preserving all previously accepted Task 5 controls while replacing local SSH/process-group containment with the systemd protocol.
-3. New controller, mutator, restoration, reconciliation, upload-verifier, and systemd-255 integration-test artifacts receive exact identities.
-4. Independent security review verifies the complete bytes, unit properties, cgroup proof, cancellation, secrets, current partial handling, restoration, and test evidence.
-5. Independent govern review verifies this specification, the original release design/plan, Task 5 governance, the current production snapshot state, and the exact reviewed identities.
-6. Any review finding that changes bytes, properties, paths, deadlines, or expected state regenerates `review.manifest`, the deterministic run ID, and both reviews.
-7. A separate explicit production authorization is required for upload, transient-unit creation, maintenance, PM2, quarantine, backup, snapshot, restoration, transfer, or candidate work.
-8. After `RUN_SUCCEEDED`, Task 5 resumes at verified transfer and detached candidate creation under the original plan. No later release task is implicitly authorized.
+PM2 behavior must be reviewed against the exact installed version's pinned daemon/client/RPC implementation and same-session callback behavior; generic high-level CLI polling is not authoritative.
 
-Independent review is required before implementation begins. The documentation owner provides self-review only; it is not an independent security or govern PASS.
-
-## 22. Rollout and rollback boundaries
-
-### 22.1 Rollout
-
-The rollout sequence is limited to:
-
-1. tracked design approval;
-2. local implementation and static tests without production access;
-3. systemd 255/cgroup v2 integration tests in isolated infrastructure;
-4. exact manifest/run identity generation;
-5. independent security and govern approval;
-6. separate explicit production authorization;
-7. root-only bundle upload and verification;
-8. transient controller creation and governed execution;
-9. independent post-run security and Task 5 review before continuing the release.
-
-No permanent service, timer, socket, path unit, daemon, package, Nginx configuration, PM2 configuration, or boot-time enablement is part of rollout.
-
-### 22.2 Rollback
-
-Before `MUTATOR_INTENT`, rollback means stop without production mutation and retain the blocked evidence.
-
-After `MUTATOR_INTENT`, the controller implementation itself is not rolled back or replaced in place. The only automated recovery path is:
-
-1. reconcile or cancel the exact mutator;
-2. prove the exact mutator unit/InvocationID terminal with no job and `populated 0`;
-3. create `FENCE_PROVED`;
-4. run and verify restoration under the fixed attempt limit;
-5. stop at success or explicit operator escalation.
-
-The quarantined invalid partial, failed work, manifests, unit state, journals, markers, and backups are not automatically deleted during rollback. A different script, altered unit property, manual PID kill, direct Nginx/PM2 continuation, new run ID, or unreviewed third restoration attempt is outside the rollback boundary.
-
-## 23. Completion criteria
-
-This design is ready for implementation review only when the tracked file:
-
-- contains no unfinished design marker or unresolved state transition;
-- remains documentation-only and does not alter the approved plan/runbook/code/tests/evidence;
-- preserves the original release and governance boundaries;
-- explicitly binds restoration to exact systemd terminal/cgroup proof;
-- explicitly states that host reboot automatic recovery is out of scope;
-- records the exact user approval date as 2026-08-06.
-
-A future Task 5 implementation is production-ready only after all systemd-255 integration tests pass, exact artifact identities are independently approved by security and govern reviewers, and the user separately authorizes the production operation. This specification and its commit do not authorize production execution.
-
-## 24. Architecture references
-
-The implementation and independent reviews must use the systemd 255 versions of the official `systemd-run(1)`, `systemd.service(5)`, `systemd.kill(5)`, `systemctl(1)`, `systemd.exec(5)`, and `org.freedesktop.systemd1(5)` documentation, together with the Linux kernel cgroup v2 documentation for `cgroup.events` and recursive `populated` semantics.
+Nginx behavior must be reviewed against the exact installed binary, `nginx.service`/`ExecReload` definition, Nginx signal/reload worker-generation semantics, and systemd v255 D-Bus job behavior.
