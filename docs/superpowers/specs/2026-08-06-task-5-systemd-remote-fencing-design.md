@@ -4,15 +4,15 @@ Date: 2026-08-06
 
 Prior architecture-direction approval date: 2026-08-06
 
-Status: corrected exact revision pending independent security and architecture approval and user re-review; implementation planning and production work remain prohibited
+Status: interim bounded nonproduction architecture-spike charter candidate pending fresh independent security and architecture review and user re-review; no spike, validation, implementation planning, or production work is authorized
 
-Review isolation: independent-required; this documentation execution provides self-review only and is not an independent approval
+Review isolation: independent-required; this documentation execution provides self-review only and cannot approve the spike charter, a future final design, validation, implementation planning, or production work
 
 ## 1. Context, current state, and authority
 
 Task 5 of the English article release must capture a consistent production source snapshot, restore the old public service, transfer the verified snapshot, and create an isolated detached candidate. The original release design and Task 5 plan remain authoritative for content, snapshot, candidate, restoration, taxonomy, opaque-configuration, secret-handling, and release boundaries. This specification changes only the remote execution ownership and fencing architecture.
 
-The prior systemd architecture direction was user-approved on 2026-08-06. Exact commit `6d654616eb696124e052f05d2ef650dbdda6686c` closed the earlier post-terminal cgroup-path, delegated-operation ownership, boot identity, and cancellation defects at the design-contract level, but fresh independent security and architecture reviews required corrections to six remaining interfaces: the durable pre-main boundary, loaded/unloaded terminal evidence, pre-first-exec environment trust, exact PM2/Nginx closure, deadline algebra, and result/retry precedence. This corrected exact revision requires fresh independent security and architecture approval and user re-review before the future empirical architecture gate or implementation-plan writing.
+The prior systemd architecture direction was user-approved on 2026-08-06. Exact commit `d7c22c39767e96e5024a886c52aac79ea4da3906` retained the corrected execution-gate, finalizer, loaded/unloaded, environment, PM2/Nginx, and retry invariants, but independent architecture review found that its single manifest/run identity was cyclic, target-created inodes were required before allocation, core interfaces remained undefined until the proposed validation stage, its `1800s` timing claim omitted post-runtime containment epochs, and section 20.1 abbreviated the closure recheck. This revision is intentionally only an interim bounded nonproduction architecture-spike charter candidate. If freshly approved and separately authorized, it may guide candidate spike work; it is not the final implementation design, a validation contract, an implementation plan, or production authority.
 
 The current Task 5 production state remains unchanged and safely blocked:
 
@@ -22,7 +22,7 @@ The current Task 5 production state remains unchanged and safely blocked:
 - No local source transfer, detached candidate, candidate worktree, or release bundle exists.
 - The round-5 retry executable remains blocked and must not be executed.
 
-This documentation correction changes no implementation plan, runbook, code, test, production file, production state, ignored historical evidence, or release artifact. It authorizes no production access or action.
+This documentation correction changes no implementation plan, runbook, code, test, production file, production state, ignored historical evidence, or release artifact. It authorizes no spike execution or artifact acquisition by itself, no validation, no implementation planning, and no production access or action.
 
 ## 2. Decision summary
 
@@ -33,7 +33,7 @@ Each governed remote attempt is owned by deterministic transient systemd service
 3. One or, only for a closed retry class, two transient restoration services restore and verify the old public service.
 4. Every phase is bound to the exact controller unit through reviewed `BindsTo=` and `After=` dependencies, and to the controller's exact `InvocationID` through immutable records and gate checks.
 5. Every phase uses `Type=exec`, `ExitType=cgroup`, `RemainAfterExit=no`, `Restart=no`, `Delegate=yes`, `DelegateSubgroup=worker`, pinned `CollectMode=inactive`, one non-optional `ExecStartPre`, and an exact common `ExecStopPost` finalizer.
-6. A manifest-pinned static first-exec guard is the first executable for controller `ExecStart`, phase `ExecStartPre`, phase `ExecStart`, and phase `ExecStopPost`. It validates hostile raw environment bytes before clean `execve`; `/usr/bin/env -i` is not the pre-first-exec boundary.
+6. A `B`-content-pinned and `I_U`-installation-bound static first-exec guard is the first executable for controller `ExecStart`, phase `ExecStartPre`, phase `ExecStart`, and phase `ExecStopPost`. It validates hostile raw environment bytes before clean `execve`; `/usr/bin/env -i` is not the pre-first-exec boundary.
 7. A D-Bus reply, returned job path, or transient-creation acknowledgement is request evidence only. PID 1 may proceed to a mutation-capable phase main only after `ExecStartPre` durably creates the exact invocation's immutable `EXECUTION_GATE_COMMITTED` record.
 8. The execution gate and a phase-gate-linearized `START_WINDOW_CLOSED` record are mutually exclusive. The controller may make one byte-identical request reissue, but a late pre-start process can neither cross a durable closure nor create a second execution gate.
 9. The phase main process and all descendants execute in `${ControlGroup}/worker`; systemd control processes, including pre-start and finalizer processes, execute in `${ControlGroup}/.control`.
@@ -43,7 +43,11 @@ Each governed remote attempt is owned by deterministic transient systemd service
 13. The controller retains the global run lock across the complete normal mutator/restoration interval and never releases it between phases.
 14. Boot identity is durable and mandatory. A run never crosses a boot.
 15. Loaded and unloaded terminal evidence are reconciled through closed path-specific matrices. A valid finalizer witness remains the process proof; there is no universal post-finalizer `JobRemoved` requirement, and unloaded inference is limited to one successful inactive family under pinned `CollectMode=inactive`.
-16. Client and transport results never prove phase completion, external-operation completion, fencing, restoration, or run success.
+16. Identity construction is a forward-only graph: reviewed base manifest `B` -> base hash `H_B` -> run identity `R` -> run layout `L`, followed only downstream by installation/tool receipts, controller reservation/start/invocation descriptors, phase context/request descriptors, request ordinals, worker receipts, and operation endpoint receipts.
+17. Target-created device/inode identities are never inputs to `B`, `H_B`, `R`, or `L`. They are captured only in immutable target-local receipts after the referenced object exists, and no receipt changes the run ID.
+18. The present unknown canonical encoder, same-open-file execution mechanism, guard bytes/toolchain, complete transient arrays, exact PM2 private interface/parser, exact Nginx generation/config-read algorithm, target tuples, and tighter deadline choices are candidate outputs of a separately authorized nonproduction architecture spike. They are not selected or approved by this charter.
+19. The mandatory lifecycle is charter -> fresh dual review and user re-review -> separately authorized spike -> revised final implementation design -> fresh dual approval and user re-review -> validation of frozen selections -> independent validation-artifact acceptance -> implementation-plan writing.
+20. Client and transport results never prove phase completion, external-operation completion, fencing, restoration, or run success.
 
 The design distinguishes two safety states:
 
@@ -67,13 +71,19 @@ The design must:
 - require restoration after every fully fenced mutator invocation that reached `ENTERED`; permit no-mutation closure only for a fully fenced pre-`ENTERED` mutator with no delegated-operation or production record;
 - fail closed when process, delegate, identity, boot, evidence, result, or restoration proof is unavailable;
 - preserve all original Task 5 transfer, detached-candidate, taxonomy, opaque-config, evidence, and release boundaries;
-- require one future exact-target architecture-validation gate covering systemd request/gate/unload behavior, the static first-exec environment guard, and exact PM2/Nginx artifacts before implementation-plan writing, followed by a later full integration suite before production review.
+- make every identity descriptor constructible in one forward pass, with canonical encoding, explicit edges, no own-digest field, no descendant back edge, and no receipt feedback into the run ID;
+- limit this revision to a bounded nonproduction architecture-spike charter whose outputs are untrusted candidate artifacts;
+- require a revised final implementation design to incorporate exact selected spike outputs, then fresh dual approval and user re-review before a separate validation gate may measure the frozen selections;
+- permit implementation-plan writing only after independent acceptance of matching validation artifacts, followed later by implementation review and production authorization.
 
 ## 4. Non-goals and prohibited effects
 
 This design does not:
 
 - authorize production execution, SSH, SCP, public probing, transient-unit creation, PM2 or Nginx mutation, backup, snapshot, transfer, publication, deployment, deletion, cleanup, or push;
+- authorize the architecture spike itself, production artifact retrieval, exact-target access, credentials, raw environment capture, opaque-data access, or shared-state writes; every future spike and artifact source requires separate explicit authority;
+- adopt spike prototypes, candidate guard/parser/helper bytes, or candidate descriptors as production-shaped implementation inputs or approved artifacts;
+- write an implementation plan or production runbook, claim that a spike passed validation, or claim that this charter is the final implementation design;
 - change the English release product scope, translation rules, taxonomy behavior, publication flow, Task 5 candidate outputs, or later release tasks;
 - edit or replace the original release design, implementation plan, runbook, scripts, tests, production configuration, or retained historical evidence;
 - install a permanent daemon or static/enabled service, timer, socket, path unit, package, boot-recovery mechanism, Nginx configuration change, or PM2 configuration change;
@@ -90,7 +100,7 @@ This one-time protocol trusts:
 
 - the production kernel, procfs, unified cgroup v2 hierarchy, and filesystem atomicity/fsync durability primitives;
 - systemd v255 PID 1, its D-Bus API, transient-unit behavior, service control-process placement, and job/result reporting;
-- the exact reviewed root-owned static first-exec guard, pre-start helper, launchers, scripts, finalizer, system tools, Nginx binary/unit, PM2 daemon/client/RPC implementation, Node.js runtime, and validation tools, but only after the future exact-artifact gate freezes and approves their identities;
+- only the exact root-owned guard/helpers/launchers/scripts/finalizer, system tools, Node/PM2/Nginx binaries/interfaces/config identities, descriptor encoders, and validation tools that a later final implementation design freezes, fresh independent reviewers and the user approve, and a separate validation gate confirms without modification;
 - the approved Git, maintenance, snapshot, candidate, taxonomy, secret, and opaque-configuration boundaries;
 - exclusive governed privileged change ownership from `RUN_RESERVED` until a terminal run marker.
 
@@ -104,6 +114,7 @@ The protocol does not trust:
 - unprivileged application processes;
 - the mutable `active-run` pointer;
 - unsanitized command output;
+- every architecture-spike prototype, candidate byte sequence, candidate interface, candidate descriptor encoding, and candidate target observation until incorporated into a later final design and then independently approved and validated;
 - polling alone as replacement for a lost external-manager acknowledgement.
 
 ### 5.3 Explicitly out of scope
@@ -116,23 +127,23 @@ The protocol does not claim safety against:
 
 From reservation to terminal run state, uncoordinated root, `systemctl`, PM2, Nginx, Task-5-path, tool, or cgroup activity is unsupported. Unexpected jobs, identity changes, file drift, cgroup movement, or unexplained lock ownership creates `FAULT_PENDING`. Productive forward progress stops; automation may perform only exact containment, witness/fence construction, and an already-authorized restoration path needed to reach a safe terminal result. A trusted-boundary violation ends in `OPERATOR_REQUIRED`.
 
-## 6. Required platform capabilities and semantic basis
+## 6. Eventual platform requirements and semantic basis
 
-Before any implementation is accepted, the architecture requires:
+This charter preserves the eventual load-bearing requirements but does not claim that their exact bytes, arrays, private interfaces, target tuples, or artifact identities are already selected. A separately authorized architecture spike may propose candidates. A later final implementation design must freeze exact selections, receive fresh independent security and architecture approval plus user re-review, and only then undergo validation without redesign.
 
-- Linux with systemd exactly version 255 for the reviewed deployment target;
-- systemd v255 running as PID 1;
-- a unified cgroup v2 hierarchy mounted at `/sys/fs/cgroup`;
+The eventual final design requires:
+
+- Linux with systemd exactly version 255 for the reviewed deployment target, running as PID 1 with unified cgroup v2;
 - transient services, `Type=exec`, `ExitType=cgroup`, `InvocationID`, `ControlGroupId`, `Delegate=`, `DelegateSubgroup=`, `BindsTo=`, `After=`, non-optional `ExecStartPre=`, `ExecStopPost=`, `TimeoutStartSec=10s`, `CollectMode=inactive`, and the required D-Bus job/property APIs;
-- a root-owned reviewed filesystem location with atomic exclusive create, atomic no-replace rename, and file/directory fsync behavior;
-- one manifest-pinned static first-exec guard satisfying section 10 for controller `ExecStart`, phase `ExecStartPre`, phase `ExecStart`, and phase `ExecStopPost`;
+- a reviewed root-owned filesystem location with atomic exclusive create, atomic no-replace rename, and file/directory fsync behavior;
+- one final-design-pinned static first-exec guard satisfying section 10 for controller `ExecStart`, phase `ExecStartPre`, phase `ExecStart`, and phase `ExecStopPost`;
 - the previously reviewed maintenance no-store prerequisite, exact inactive site, retained maintenance backups, expected production Git boundary, loopback listener, passing audit, empty operation registry, and sufficient disk;
 - the exact current invalid-partial identity in section 22;
-- an exact installed PM2 existing-daemon-only RPC interface that meets the no-auto-spawn and no-`pm2_env`-exposure rules in section 13;
-- an exact Nginx systemd reload path that binds the D-Bus job to a new worker generation and proves every old worker absent before generic `QUIESCED`;
-- successful completion and independent approval of the future combined exact-target gate in section 26 before implementation-plan writing.
+- one final-design-frozen PM2 existing-daemon-only RPC interface meeting section 13's no-auto-spawn and no-`pm2_env` rules;
+- one final-design-frozen Nginx reload/generation interface binding the exact D-Bus job to a disjoint new generation and complete old-worker absence;
+- the acyclic identity graph and receipt model in sections 7-13.
 
-The load-bearing semantics are:
+The load-bearing semantics remain:
 
 - `Type=exec` reports process setup and executable failures rather than treating a pre-`execve` fork as successful start; its acknowledgement is still only request/job evidence.
 - One exact non-optional `ExecStartPre=` must complete successfully before PID 1 may invoke phase `ExecStart=`. Its durable `EXECUTION_GATE_COMMITTED` record, not the D-Bus reply, is the conservative pre-main boundary.
@@ -141,37 +152,112 @@ The load-bearing semantics are:
 - `KillMode=control-group` with the fixed signal policy contains all phase-owned processes.
 - `Restart=no` prevents manager-driven re-entry.
 - `RemainAfterExit=no` permits successful units to become inactive and transient units/cgroups to be pruned after finalization.
-- `CollectMode=inactive` retains failed units but permits successful inactive units to unload; the design relies only on the narrow successful-unloaded inference in section 17 and not on terminal retention generally.
-- cgroup v2 `cgroup.events` reports recursive `populated 0` for an existing cgroup and all descendants.
-- systemd v255 may prune an empty service cgroup while transitioning to successful, failed, or inactive state. Later absence is never process proof and never rehabilitates a missing or invalid witness.
+- `CollectMode=inactive` retains failed units but permits successful inactive units to unload; the design relies only on section 17's narrow successful-unloaded inference.
+- cgroup v2 `cgroup.events` reports recursive `populated 0` for an existing cgroup and descendants.
+- later pathname or unit absence is never process proof and never rehabilitates a missing or invalid witness.
 
-These semantics and the exact PM2/Nginx interfaces require the future combined exercise in section 26. This document specifies its closed acceptance rules but does not claim that any empirical gate has run or that exact target artifacts are available.
+The architecture spike in section 26 may produce candidates for the unknown interfaces and bytes only. It cannot approve them. The separate later validation gate may execute and measure only the exact selections already frozen in an approved final design; any mismatch returns to final-design revision and fresh review before planning.
 
-## 7. Deterministic manifest, run identity, and symbolic notation
+## 7. Canonical acyclic identity graph
 
-Each independently reviewed implementation bundle has one canonical `review.manifest`:
+### 7.1 Canonical descriptor encoding
 
-- UTF-8, LF-only, sorted key/value records;
-- no comments, timestamps, random values, credentials, host-fetched secret data, or opaque configuration content;
-- exact hashes, sizes, modes, owners, device/inode identities, and absolute paths for the static first-exec guard, pre-start gate helper, controller launcher, phase launcher, mutator, restoration, finalizer, reconciliation, upload verifier, PM2 RPC helper, Nginx control helper, every dynamic next-stage binary, and every production tool;
-- the guard's exact ELF type and program/dynamic-header evidence, static-link and startup provenance, approved direct syscall/runtime dependency set, and fixed role modes;
-- exact feature HEAD `1ee3fbc3ebc43f552d3f592bf41d79751ca6a731`;
-- expected production HEAD `860bfe53e54dff4ab78bbfa2f7e5f644a032b9aa`;
-- exact systemd properties, dependency arrays, controller `ExecStart`, phase `ExecStartPre`, phase `ExecStart`, and phase `ExecStopPost` command arrays, with the static guard first in every array;
-- exact per-role hostile raw-environment schemas, approved clean-environment schemas, marker/result/witness schemas, operation families, and every deadline constant from sections 10, 16, 17, and 21;
-- exact request-description bytes and digest shared by request ordinals 1 and 2; request ordinal never changes unit properties or command arrays;
-- exact canonical paths and the future validation-artifact identities for the installed PM2 version, Node binary, PM2 daemon/client/RPC modules and socket protocol, `nginx.service`, every `ExecReload` command, Nginx binary/config identities, worker-generation contract, and systemd loaded/unloaded tuples;
-- the invalid-partial identity from section 22 and exact reviewed maintenance snippet/site/backup identities inherited from the blocked Task 5 controls.
+Every reviewed descriptor uses one exact candidate encoding so the graph is constructible without implementation discretion:
 
-The deterministic run ID is:
+- UTF-8, LF-only, one record per line, with no comment, CR, NUL, TAB, duplicate key, unknown key, timestamp, random value, secret, opaque configuration content, or host-fetched secret data;
+- records sorted by unsigned bytewise ASCII key order;
+- each record is `<key>=<decimal-byte-length>:<value>\n`, where the length is the UTF-8 byte length of `value`, and decimal integers have no leading zero except `0`;
+- arrays use `<name>.count` plus zero-padded ordinal keys such as `<name>.000000` and `<name>.000001`; array order is semantic and is never sorted after construction;
+- hashes are lowercase 64-hex SHA-256 of the exact referenced descriptor bytes;
+- paths are absolute UTF-8 strings with no control bytes; command arguments are nonempty NUL-free strings with no shell interpretation;
+- symbolic templates use a closed typed slot set encoded as records, not textual shell placeholders; every slot has one declared type and exactly one permitted resolving layer;
+- a descriptor never contains its own digest. Its digest exists only in a downstream parent/reference record. Unknown fields and noncanonical encodings fail closed.
 
-`run_id = "t5-20260804-" + lowercase_hex(SHA-256(review.manifest bytes))`
+This encoding is a spike candidate, not an approved implementation interface. If the spike proves it ambiguous for an exact D-Bus property or command value, the spike returns a candidate replacement encoding and test vectors. A later final design must freeze one exact encoding before validation; validation may not invent or modify it.
 
-Its syntax is `^t5-20260804-[0-9a-f]{64}$`. The manifest does not contain the derived run ID. A separate root-only `run.id` contains the derived value.
+### 7.2 Base, run, layout, controller, phase, and receipt nodes
 
-Notation such as `${RUN_ID}`, `${PHASE}`, `${PHASE_UNIT}`, `${CONTROLLER_UNIT}`, `${INVOCATION_ID}`, and `${ControlGroup}` denotes a value already validated and resolved by the controller or launcher. The literal notation is never passed to a shell or systemd for interpolation.
+| Node | Canonical artifact | May contain | Must not contain |
+|---|---|---|---|
+| `B` | `review.base.manifest` | Exact candidate artifact content hashes/sizes; logical install paths; required file type/owner/mode and `nlink=1`; build/toolchain provenance; feature HEAD `1ee3fbc3ebc43f552d3f592bf41d79751ca6a731`; expected production HEAD `860bfe53e54dff4ab78bbfa2f7e5f644a032b9aa`; schema/deadline constants; typed command/property/environment templates; approved target binary/config content identities once known; section 22 invalid-partial rows and maintenance identities | `H_B`, `RUN_ID`, run-resolved absolute paths, concrete controller/phase command arrays, transient request bytes, boot ID, invocation ID, target dev/inode, receipt hash, or any digest derived from `B` |
+| `H_B` | base-manifest SHA-256 | `SHA-256(B bytes)` | Any additional input |
+| `R` | `run.id` | `run_id = "t5-20260804-" + lowercase_hex(H_B)` and `base_manifest_sha256=H_B` | Any target-local value or downstream digest |
+| `L` | `run-layout.descriptor` | `B`, `H_B`, `R`; deterministic unit names; run-scoped absolute paths; run-only-resolved templates; descriptor/receipt locations | `H_L`, boot/invocation values, target dev/inode, concrete controller/phase arrays, receipt hashes |
+| `I_U` | uploaded-bundle installation receipt set | `H_B`, `R`, `H_L`; final published path; opened-file dev/inode/type/nlink/owner/mode/size/content hash; pre/post-open stat tuple | Any input to `H_B`, `R`, or `H_L` |
+| `I_T` | existing target binary/config receipt set | Approved content identities from `B`; target path and opened-object dev/inode/type/nlink/owner/mode/size/content hash for Node/PM2/Nginx/system tools/config objects after they exist | PM2 live socket identity, worker cgroup identity, or any feedback into `R` |
+| `C0` | controller reservation descriptor | `H_B`, `R`, `H_L`, `H_IU`, `H_IT`, authoritative boot ID, controller unit/path names, lock/reservation paths, controller template role | Concrete controller array, `H_C0`, controller invocation ID |
+| `C1` | controller start descriptor | `C0`/`H_C0`; exact concrete controller `ExecStart`; exact complete controller property, environment, and dependency arrays; exact canonical controller request definition | `H_C1`, any controller invocation ID not yet allocated, or any digest computed from `C1` inside its own array |
+| `C2` | controller invocation record | `H_C1`, actual systemd controller `InvocationID`, exact read-back, boot identity, manager timestamps, controller `ControlGroup`/`ControlGroupId` | Modification of `C1` or feedback to an ancestor |
+| `P0[p]` | phase context descriptor for phase/attempt `p` | `H_B`, `R`, `H_L`, `H_IU`, `H_IT`, `H_C1`, `H_C2`, boot ID, phase/attempt, phase/controller names and actual controller invocation, all exact marker/gate/result/witness paths, role/script identities | Concrete phase command/property arrays, `H_P0[p]`, phase invocation ID, PM2 socket inode, worker inode |
+| `P1[p]` | phase request descriptor for `p` | `P0[p]`/`H_P0[p]`; exact concrete `ExecStartPre`, `ExecStart`, `ExecStopPost`; exact complete phase property/environment/dependency arrays; one ordinal-independent canonical transient request definition | `H_P1[p]`, request ordinal, phase `InvocationID`, worker inode, or a request-set digest derived from `P1[p]` inside its own arrays |
+| `Q[p,n]` | request ordinal record, `n` in `{1,2}` | `H_P1[p]`, exact request bytes/hash, ordinal, dispatch/job evidence | Any changed property/array between ordinals or any authorization claim from the reply |
+| `W[p]` | worker runtime receipt | `H_P1[p]`, actual phase invocation, `ControlGroup`/`ControlGroupId`, opened `worker` dev/inode, no-symlink traversal evidence, pre/post identity checks | Any upstream identity input |
+| `M[o]` | PM2 operation endpoint/runtime receipt | `H_IT`, phase/request identity, exact live socket dev/inode/mode/owner, daemon PID/start/executable/version/UID, operation ID, and before/after samples | Base/run identity input, `pm2_env`, or opaque response content |
 
-Any implementation byte, dependency, environment field, property, path, deadline, expected state, PM2 identity, Nginx identity, or manifest change produces a new run ID and requires fresh independent review. A terminal production outcome is never rerun in place under the same ID.
+`H_L`, `H_IU`, `H_IT`, `H_C0`, `H_C1`, `H_C2`, `H_P0[p]`, and `H_P1[p]` are SHA-256 of the corresponding exact canonical bytes. A digest is stored only in a later node or immutable citation record, never inside the bytes it hashes.
+
+### 7.3 Explicit dependency edges and topological order
+
+An arrow means “is an input to construction of”:
+
+```text
+B -> H_B -> R
+(B, H_B, R) -> L -> H_L
+(B, R, H_L, uploaded final objects) -> I_U -> H_IU
+(B, approved target objects) -> I_T -> H_IT
+(H_B, R, H_L, H_IU, H_IT, boot) -> C0 -> H_C0
+(C0, H_C0, controller template) -> C1 -> H_C1
+(C1, H_C1, systemd-created controller runtime) -> C2 -> H_C2
+(H_B, R, H_L, H_IU, H_IT, H_C1, H_C2, phase constants) -> P0[p] -> H_P0[p]
+(P0[p], H_P0[p], phase templates) -> P1[p] -> H_P1[p]
+(P1[p], H_P1[p], ordinal n) -> Q[p,n]
+(P1[p], systemd-created phase runtime) -> W[p]
+(I_T, P1[p], live PM2 endpoint/daemon) -> M[o]
+```
+
+No receipt, controller/phase descriptor, invocation, request, or runtime record has an edge back to `B`, `H_B`, `R`, or `L`. There is no edge from `H_C1` to `C1`, from `H_P1[p]` to `P1[p]`, or from a runtime receipt to its ancestor descriptor.
+
+### 7.4 Templates, concrete arrays, and permitted hash citations
+
+| Layer | Command representation | Hashes commands may carry |
+|---|---|---|
+| Base manifest `B` | Typed symbolic templates only; fixes literals, slot names/types, array order, role, and expected executable content identities | No `H_B`, run ID, target receipt, or downstream digest |
+| Run layout `L` | Run-only-resolved templates; resolves `RUN_ID`, base hash, deterministic unit names, and run-scoped paths while boot/invocation/receipt/runtime slots remain typed | `H_B` and `RUN_ID`; never `H_L` |
+| Controller reservation `C0` | Context only; no concrete systemd command array | `H_B`, `H_L`, `H_IU`, `H_IT`; never `H_C0` |
+| Controller start `C1` | Exact concrete controller `ExecStart` and every complete property/environment/dependency array; command identifies `C0` by `H_C0` | Ancestor hashes including `H_C0`; never `H_C1`. Request and controller invocation records cite `H_C1` externally |
+| Phase context `P0[p]` | Context only; no concrete phase command array | Ancestor hashes only; never `H_P0[p]` |
+| Phase request `P1[p]` | Exact concrete `ExecStartPre`, `ExecStart`, `ExecStopPost` and every complete phase property/environment/dependency array; commands carry `H_P0[p]` and exact context paths | Ancestor hashes including `H_P0[p]`; never `H_P1[p]`. Request/gate/bound/result/witness/reconciliation records cite `H_P1[p]` externally |
+
+Concrete commands use explicit `--base-manifest-hash`, `--run-layout-hash`, and applicable ancestor-context/receipt references. No concrete array contains a hash computed over the descriptor containing that array. A downstream request-set hash may equal `H_P1[p]`; it is cited by `Q[p,n]` and later records, never carried inside `P1[p]` arrays.
+
+### 7.5 Forward-only construction sequence
+
+1. A future revised final design freezes candidate artifact bytes/interfaces, schemas, templates, encoding, receipts, and target choices produced by the spike; fresh dual approval and user re-review precede validation.
+2. For a later reviewed implementation bundle, generate canonical `B`; compute `H_B`; derive `R`; generate `L` and `H_L`. This completes the pre-upload identity root.
+3. Upload only regular files to unique staging basenames through the fixed bootstrap, compare content/type/path/mode/owner/size against `B`, and publish the absent run bundle without replacement.
+4. After final objects exist at final paths, open and revalidate them and create `I_U`; inventory approved pre-existing tools/config objects and create `I_T`. Neither receipt changes `B`, `H_B`, `R`, or `L`.
+5. Read and validate authoritative boot identity; construct `C0`, `H_C0`, then exact `C1`, `H_C1`; fsync the controller start request before dispatch.
+6. After systemd allocates the controller invocation, verify exact read-back and create `C2`, `H_C2`.
+7. For each phase/attempt, construct `P0[p]`, `H_P0[p]`, then exact ordinal-independent `P1[p]`, `H_P1[p]`.
+8. Request ordinals 1 and 2 cite the same `P1[p]` bytes and `H_P1[p]`; only ordinal/job evidence differs.
+9. `ExecStartPre` creates `W[p]` only after the exact worker object exists. Execution-gate, bound, result, finalizer-witness, and reconciliation records cite `H_P1[p]` and `W[p]` without changing an ancestor.
+10. Each PM2 operation creates/revalidates `M[o]` after the socket and daemon exist. Nginx operation records analogously bind live master/config/generation observations downstream of `P1[p]`.
+
+### 7.6 No-self-containment obligations
+
+The spike graph checker and later validation must reject every violation:
+
+- `B` contains no `H_B`, `RUN_ID`, resolved run path/unit, target receipt, concrete command array, request bytes, boot ID, invocation ID, or target dev/inode.
+- `L` contains no `H_L`, target receipt, boot/invocation value, or concrete controller/phase array.
+- `C0`, `C1`, `C2`, `P0[p]`, and `P1[p]` contain no digest of their own bytes.
+- No command/property/environment/dependency array contains a digest computed over a descriptor containing that array.
+- `C1` arrays may cite `H_C0`; controller request/invocation records cite `H_C1` externally.
+- `P1[p]` arrays may cite `H_P0[p]`; request/gate/bound/result/witness records cite `H_P1[p]` externally.
+- Installation/tool/socket/worker receipts are downstream evidence only and never ancestors of `H_B` or `R`.
+- Request ordinal is not part of `P1[p]`; ordinals 1 and 2 use byte-identical transient requests.
+- A graph-generation check rejects every back edge and proves the topological order in section 7.5.
+
+Any later implementation byte, dependency, environment field, property, path, deadline, target content identity, or selected interface change requires a new `B`, new `H_B`, new run ID, and fresh review. Target-local receipt changes fail the affected run but never recompute its identity. A terminal production outcome is never rerun in place under the same run ID.
 
 ## 8. Exact names, boot identity, and immutable identity records
 
@@ -207,25 +293,28 @@ Any boot-ID change after reservation creates terminal `OPERATOR_REQUIRED` with `
 
 ### 8.3 Invocation and controller coupling identity
 
-Every controller and phase start receives a systemd-generated 32-lowercase-hex `InvocationID`. A phase binding names:
+Every controller and phase start receives a systemd-generated 32-lowercase-hex `InvocationID`. Controller and phase records cite exact graph layers rather than an ambiguous single hash.
 
-- run ID and manifest hash;
-- boot ID;
-- exact phase and attempt;
-- phase unit and `InvocationID`;
-- controller unit and controller `InvocationID`;
-- exact dependency/property digest;
-- exact static guard, pre-start gate helper, launcher, phase script, and finalizer hashes;
-- exact request-set digest and request ordinal evidence;
-- exact execution-gate or start-window-closure identity when either exists.
+A phase binding names:
 
-A same-name unit with a different invocation is a conflict. A new same-run controller invocation is a reconciliation actor, not a continuation of the prior invocation and never authorizes a second execution gate or reruns a gate-committed phase.
+- run ID, `base_manifest_sha256=H_B`, and `run_layout_descriptor_sha256=H_L`;
+- uploaded installation receipt-set hash `H_IU` and existing target-tool receipt-set hash `H_IT`;
+- authoritative boot ID;
+- controller start descriptor hash `H_C1`, controller invocation-record hash `H_C2`, controller unit, and actual controller `InvocationID`;
+- exact phase and attempt, phase-context descriptor hash `H_P0[p]`, phase-request descriptor hash `H_P1[p]`, phase unit, and actual phase `InvocationID` when allocated;
+- exact canonical transient-definition/property block identity from `P1[p]`;
+- exact uploaded artifact, target tool/config, and worker receipt hashes applicable to the phase;
+- exact request ordinal evidence and execution-gate or start-window-closure identity when either exists.
+
+A same-name unit with a different invocation is a conflict. A new same-run controller invocation is a downstream reconciliation actor with a new invocation record, not a continuation of the prior invocation, and never changes `B`, `R`, `L`, `C1`, or a phase request descriptor.
 
 ### 8.4 Request and execution identity
 
-Each phase has request ordinal 1 and at most one ordinal 2. The controller fsyncs the canonical exact request description before each dispatch. Returned D-Bus reply status and job ID/path are persisted only as request/job evidence; they do not prove historical manager acceptance, main execution, completion, or no mutation.
+Each phase has request ordinal 1 and at most one ordinal 2. Before dispatch, the controller fsyncs `Q[p,n]`, which cites the same ordinal-independent `P1[p]` bytes and `H_P1[p]`; only ordinal and job evidence differ. Returned D-Bus reply status and job ID/path remain request evidence only and do not prove historical manager acceptance, main execution, completion, or no mutation.
 
-`EXECUTION_GATE_COMMITTED` binds the actual systemd-generated phase `InvocationID` to the run, manifest, boot, deterministic unit, controller unit/invocation, property digest, `ControlGroup`/`ControlGroupId`, bound `worker` identity, static guard and helper hashes, request-set digest, phase-gate identity, and marker-state digest. Only this record permits conservative inference that PID 1 may execute the phase main. `START_WINDOW_CLOSED` binds the same run/phase/request set and proves instead that every late pre-start process must fail before main. The two records are mutually exclusive under the phase gate.
+`EXECUTION_GATE_COMMITTED` binds the actual systemd-generated phase `InvocationID` to `H_B`, `R`, `H_L`, `H_IU`, `H_IT`, `H_C1`, `H_C2`, `H_P0[p]`, `H_P1[p]`, the canonical phase transient-definition block, authoritative boot, deterministic unit, controller unit/invocation, `ControlGroup`/`ControlGroupId`, worker runtime receipt `W[p]`, applicable artifact/tool receipts, phase-gate identity, and marker-state digest. Only this record permits conservative inference that PID 1 may execute the phase main.
+
+`START_WINDOW_CLOSED` cites the same ancestor graph and both request records, plus the fresh deterministic-name, every-known-invocation, and no-current-job lookup evidence required by sections 16 and 20.1. It proves that every late pre-start must fail before main. Gate and closure remain mutually exclusive under the phase gate.
 
 ## 9. Root-only paths and permissions
 
@@ -238,14 +327,24 @@ Required layout:
 - `global.lock` — controller-owned advisory lock file, root:root `0600`;
 - `active-run` — atomically updated convenience pointer, never authoritative;
 - `incoming/${RUN_ID}/` — upload staging, root:root `0700`;
-- `runs/${RUN_ID}/bundle/` — verified immutable implementation bundle, root:root `0700`;
+- `runs/${RUN_ID}/bundle/` — verified immutable later implementation bundle, root:root `0700`;
+- `runs/${RUN_ID}/identity/review.base.manifest` — exact canonical `B` bytes;
+- `runs/${RUN_ID}/identity/run.id` — exact canonical `R` bytes;
+- `runs/${RUN_ID}/identity/run-layout.descriptor` — exact canonical `L` bytes;
+- `runs/${RUN_ID}/receipts/uploaded-bundle.receipt-set` — exact canonical `I_U` bytes;
+- `runs/${RUN_ID}/receipts/target-tools.receipt-set` — exact canonical `I_T` bytes;
+- `runs/${RUN_ID}/controller/controller-reservation.descriptor` — exact canonical `C0` bytes;
+- `runs/${RUN_ID}/controller/controller-start.descriptor` — exact canonical `C1` bytes;
+- `runs/${RUN_ID}/controller-invocations/` — one immutable `C2` record per controller runtime cycle;
+- `runs/${RUN_ID}/phases/${PHASE}/phase-context.descriptor` — exact canonical `P0[p]` bytes for each phase/attempt;
+- `runs/${RUN_ID}/phases/${PHASE}/phase-request.descriptor` — exact canonical `P1[p]` bytes for each phase/attempt;
+- `runs/${RUN_ID}/phase-invocations/` — actual phase invocation bindings and `W[p]` worker receipts;
+- `runs/${RUN_ID}/operation-receipts/` — operation-scoped PM2 endpoint/runtime receipts and Nginx live-observation records;
 - `runs/${RUN_ID}/markers/` — immutable transition records, root:root `0700`;
 - `runs/${RUN_ID}/gates/` — one lock file per phase, root:root `0700` directory and `0600` files;
-- `runs/${RUN_ID}/evidence/` — sanitized property, job, operation, witness, result, and validation evidence, root:root `0700`;
-- `runs/${RUN_ID}/controller-invocations/` — one immutable record per controller runtime cycle;
-- `runs/${RUN_ID}/phase-invocations/` — exact phase/controller/unit bindings.
+- `runs/${RUN_ID}/evidence/` — sanitized property, job, operation, witness, result, receipt, and later validation evidence, root:root `0700`.
 
-Regular manifests, records, and evidence files are root:root `0600`. Executable bundle files are root:root `0500`. No symlink, hardlink, device, FIFO, socket, group/other-writable directory, or unexpected entry is accepted in the governed tree.
+Base/run/layout artifacts, descriptors, receipts, records, and evidence files are root:root `0600` and become immutable after exclusive creation and file/parent fsync. Executable bundle files are root:root `0500`. No symlink, hardlink, device, FIFO, socket, group/other-writable directory, unknown descriptor field, or unexpected entry is accepted in the governed tree.
 
 All transient units run with `User=root`, `Group=root`, and `UMask=0077`. No durable state is stored under `/tmp`, `/private/tmp`, a home directory, the Git checkout, the journal alone, or the production release tree.
 
@@ -256,21 +355,22 @@ The production release and quarantine paths remain:
 
 The quarantine destination must be absent and is created only by the reviewed atomic no-replace whole-root rename.
 
-### 9.1 Upload and bundle provenance
+### 9.1 Forward upload, installation, and controller-start provenance
 
-The future governed upload path retains these boundaries:
+This charter authorizes none of these later actions. After the spike, final-design approval, frozen validation, validation-artifact acceptance, implementation planning, implementation, the required static/integration suites, and implementation review, a later implementation-bundle identity may be generated locally and independently reviewed in step 1 below. Steps 2-10 require subsequent separate production authorization. The governed construction order is:
 
-1. the client computes the canonical manifest hash and deterministic run ID from the independently approved local bundle;
-2. a fixed bootstrap using only reviewed absolute tools creates the absent `incoming/${RUN_ID}` directory with root:root `0700`;
-3. files transfer as regular files to unique temporary basenames, never as a script from standard input, a here-document, a pipe, `/tmp`, or an unverified execution path;
-4. before uploaded code executes, exact remote `stat` and `sha256sum` identities are compared with independently approved local values;
-5. the verified upload verifier inventories every entry without following symlinks, rejects extras and unsafe types, and checks exact name, size, mode, owner, and SHA-256 against `review.manifest`;
-6. the verifier recomputes the run ID and requires it to equal the requested path and unit-name identity;
-7. the verified incoming directory is atomically published without replacement as `runs/${RUN_ID}/bundle`;
-8. before every service creation, the controller rechecks the complete bundle, manifest, target script, finalizer, helpers, run ID, and exact unit contract;
-9. no production mutation occurs before controller-side and phase-side identity checks pass.
+1. review canonical base bytes `B` locally; compute `H_B`; derive `R`; construct `L` and `H_L`; verify the graph's topological order before upload;
+2. a fixed bootstrap using only already-reviewed absolute tools creates absent `incoming/${RUN_ID}` as root:root `0700`;
+3. transfer regular files to unique staging basenames, never as standard-input code, a here-document, a pipe, `/tmp`, or an unverified execution path;
+4. before uploaded code executes, the fixed bootstrap compares content hash, final logical path, type, `nlink=1`, mode, owner, and size against `B`; no target dev/inode is expected or consumed at this stage;
+5. inventory every entry without following symlinks, reject extras and unsafe types, recompute `H_B` and `R`, and require the requested run path/unit-name identity;
+6. atomically publish the absent verified bundle without replacement as `runs/${RUN_ID}/bundle`;
+7. only after final objects exist at final paths, traverse from an open trusted root without following symlinks, open each final object, hash from that same open object, capture and recheck its dev/inode/type/nlink/owner/mode/size/content tuple, and exclusively create/fsync `I_U`;
+8. separately open/revalidate approved pre-existing Node/PM2/Nginx/system tools/config objects against content identities already in `B`, then exclusively create/fsync `I_T`; live PM2 socket and worker cgroup identities are not part of either set;
+9. before controller request creation, re-open every required uploaded/target object and require exact receipt equality; then create `C0`, `H_C0`, exact `C1`, and `H_C1`, and fsync the controller request before dispatch;
+10. no production mutation occurs before controller-side and phase-side identity, graph, descriptor, receipt, boot, unit, and gate checks pass.
 
-No credential, token, cookie, password, opaque ecosystem content, or secret-bearing value appears in the manifest, upload path, unit name, command line, journal identifier, marker, or evidence.
+Target inode binding happens only after final publication and never changes `B`, `H_B`, `R`, or `L`. No credential, token, cookie, password, raw environment, opaque ecosystem content, or secret-bearing value appears in any base/run/layout artifact, descriptor, receipt, upload path, unit name, command line, journal identifier, marker, or evidence.
 
 ## 10. Pre-first-exec environment and command provenance
 
@@ -278,7 +378,7 @@ Every transient creation path uses either `systemd-run --expand-environment=no` 
 
 ### 10.1 Static first-exec guard
 
-All four systemd entry classes begin with the same manifest-pinned static guard binary in a fixed role mode:
+All four systemd entry classes eventually begin with the same final-design-pinned static guard binary in a fixed role mode. `B` pins its content/build/path/type/mode/owner requirements, while `I_U` binds the installed target object after publication:
 
 1. controller `ExecStart`;
 2. phase `ExecStartPre` execution gate;
@@ -291,29 +391,32 @@ The exact guard path is:
 
 Its role is limited to validating hostile raw `envp` before any environment-controlled code loading, validating fixed argv and systemd identity, verifying the exact next-stage path and bytes, constructing the exact clean `envp`, and directly `execve`-ing that next stage. It creates no marker, child, fork, background process, network activity, or production effect. The pre-start helper, controller launcher, phase launcher, and finalizer remain separate reviewed next stages.
 
-The manifest and future pre-plan artifact must prove that the guard is an owner `0:0`, mode `0500`, regular non-symlink/non-hardlink file with exact path, size, SHA-256, device/inode, and build provenance; is ELF `ET_EXEC` or static-PIE `ET_DYN`; has no `PT_INTERP`, `DT_NEEDED`, `RPATH`, or `RUNPATH`; has no dynamic-loader dependency or environment-controlled plugin/module lookup; and uses a custom/freestanding or independently proven startup that does not consult locale, NSS, shell startup, loader tunables, configuration paths, or raw environment before validation. Only the reviewed direct syscall/runtime dependency set is allowed. Before clean `execve`, the guard verifies the exact next-stage path, owner, mode, size, SHA-256, device/inode, and manifest role.
+The later final design must freeze guard content/build/path/type/mode/owner/size requirements and prove ELF `ET_EXEC` or static-PIE `ET_DYN`, no `PT_INTERP`, `DT_NEEDED`, `RPATH`, or `RUNPATH`, no dynamic-loader or environment-controlled plugin/module dependency, and custom/freestanding or independently proven startup that does not consult locale, NSS, shell startup, loader tunables, configuration paths, or raw environment before validation. `B` contains those content/build requirements but no target dev/inode. After final publication, `I_U` binds the opened installed guard and next-stage objects to target dev/inode/type/nlink/owner/mode/size/content tuples.
 
-The future gate must combine static inspection with negative execution under `LD_PRELOAD`, `LD_AUDIT`, `GLIBC_TUNABLES`, exported shell functions, `BASH_ENV`, `ENV`, `NODE_OPTIONS`, Node/npm variables, and ambient PM2 variables. None may execute or influence guard behavior. Failure of this proof blocks the architecture; it is not deferred to implementation discretion.
+For every sensitive transition, the guard traverses from an already-open trusted root without following symlinks, opens the final object without following a final symlink, requires the exact type and `st_nlink=1`, hashes from that same open object, repeats `fstat` immediately before use, and ensures the object executed is the verified open object rather than a later pathname substitution. The architecture spike must propose a candidate same-open-file execution/read mechanism and bytes; the final design must freeze them; validation may only test the frozen choice. Any path/object/content/dev-inode/link-count/owner/mode/size/receipt mismatch fails closed. Receipts are immutable and never recompute the run ID.
 
-### 10.2 Exact command arrays
+The spike may produce candidate guard source/startup ABI/toolchain/build flags/bytes and hostile-environment evidence. The later frozen-design validation must combine static inspection with negative execution under `LD_PRELOAD`, `LD_AUDIT`, `GLIBC_TUNABLES`, exported shell functions, `BASH_ENV`, `ENV`, `NODE_OPTIONS`, Node/npm variables, and ambient PM2 variables. None may execute or influence guard behavior. A mismatch returns to final-design revision and fresh review rather than changing the validation target.
 
-The reviewed next-stage paths are:
+### 10.2 Typed templates and downstream concrete arrays
+
+The logical next-stage paths are fixed in typed templates in `B` and resolved to these run-scoped absolute paths in `L`:
 
 - pre-start gate helper: `/var/lib/blog/task-5-systemd-fencing/runs/${RUN_ID}/bundle/bin/task5-phase-execution-gate`;
 - controller launcher: `/var/lib/blog/task-5-systemd-fencing/runs/${RUN_ID}/bundle/bin/task5-controller-launcher`;
 - phase launcher: `/var/lib/blog/task-5-systemd-fencing/runs/${RUN_ID}/bundle/bin/task5-phase-launcher`;
 - common finalizer: `/var/lib/blog/task-5-systemd-fencing/runs/${RUN_ID}/bundle/bin/task5-phase-finalizer`.
 
-Before unit creation, the manifest resolves exact NUL-free concrete argument vectors. Each vector begins with the static guard, its fixed role, the exact next-stage path/hash, and then the fixed next-stage arguments:
+`B` contains typed symbolic templates only. `L` resolves only `RUN_ID`, `H_B`, deterministic unit names, and run-scoped paths. Boot, invocation, receipt, controller-context, and phase-context slots remain typed. `C0` and `P0[p]` are context descriptors without concrete systemd arrays.
 
-- controller `ExecStart`: guard role `controller`, controller launcher, `--run-id`, `${RUN_ID}`, `--manifest-hash`, `${MANIFEST_HASH}`, `--boot-id`, `${BOOT_ID}`, `--unit`, `${CONTROLLER_UNIT}`, `--script`, `${CONTROLLER_SCRIPT_ABSOLUTE}`;
-- phase `ExecStartPre`: guard role `phase-prestart`, pre-start gate helper, `--run-id`, `${RUN_ID}`, `--manifest-hash`, `${MANIFEST_HASH}`, `--boot-id`, `${BOOT_ID}`, `--phase`, `${PHASE}`, `--unit`, `${PHASE_UNIT}`, `--controller-unit`, `${CONTROLLER_UNIT}`, `--controller-invocation`, `${CONTROLLER_INVOCATION_ID}`, `--request-set-digest`, `${REQUEST_SET_DIGEST}`, `--gate-record`, `${EXECUTION_GATE_RECORD_ABSOLUTE}`, `--closed-record`, `${START_WINDOW_CLOSED_RECORD_ABSOLUTE}`;
-- phase `ExecStart`: guard role `phase-main`, phase launcher, `--run-id`, `${RUN_ID}`, `--manifest-hash`, `${MANIFEST_HASH}`, `--boot-id`, `${BOOT_ID}`, `--phase`, `${PHASE}`, `--unit`, `${PHASE_UNIT}`, `--controller-unit`, `${CONTROLLER_UNIT}`, `--controller-invocation`, `${CONTROLLER_INVOCATION_ID}`, `--execution-gate-record`, `${EXECUTION_GATE_RECORD_ABSOLUTE}`, `--script`, `${PHASE_SCRIPT_ABSOLUTE}`;
-- phase `ExecStopPost`: guard role `phase-finalizer`, common finalizer, `--run-id`, `${RUN_ID}`, `--manifest-hash`, `${MANIFEST_HASH}`, `--boot-id`, `${BOOT_ID}`, `--phase`, `${PHASE}`, `--unit`, `${PHASE_UNIT}`, `--controller-unit`, `${CONTROLLER_UNIT}`, `--controller-invocation`, `${CONTROLLER_INVOCATION_ID}`, `--execution-gate-record`, `${EXECUTION_GATE_RECORD_ABSOLUTE}`, `--bound-record`, `${BOUND_RECORD_ABSOLUTE}`, `--result-record`, `${RESULT_RECORD_ABSOLUTE}`, `--witness-record`, `${WITNESS_RECORD_ABSOLUTE}`.
+The architecture spike must produce candidate byte-complete controller and phase arrays. A later final design must freeze exact bytes:
 
-The arrays contain no shell metacharacter processing, empty argument, relative path, or runtime interpolation. Their concrete byte sequences and digests are read back and compared with the manifest. Controller and phase services are created asynchronously; every creation return is request evidence only and never execution or completion evidence.
+- `C1` contains the exact guarded controller `ExecStart` and complete controller property/environment/dependency arrays. The controller command may carry `--run-id`, `--base-manifest-hash`, `--run-layout-hash`, `--installation-receipts-hash`, `--target-tools-receipts-hash`, `--controller-context-hash`, authoritative boot, exact controller unit/path, and exact script path. It may cite `H_C0` but never `H_C1`.
+- Each `P1[p]` contains the exact guarded phase `ExecStartPre`, `ExecStart`, and `ExecStopPost` plus complete phase property/environment/dependency arrays. Every phase command may carry `--run-id`, `--base-manifest-hash`, `--run-layout-hash`, applicable receipt-set hashes, `--controller-start-hash`, `--controller-invocation-hash`, `--phase-context-hash`, authoritative boot, exact phase/controller identities and paths, and role-specific gate/result/witness/script paths. It may cite `H_P0[p]` but never `H_P1[p]`.
+- `ExecStartPre` contains no request ordinal and no self-derived request-set digest. `Q[p,1]`, optional `Q[p,2]`, execution gate, bound, result, witness, and reconciliation records cite `H_P1[p]` externally.
 
-After the guard has established the boundary, the controller and phase launchers may invoke `/bin/bash -p --noprofile --norc` with the exact absolute script path and fixed argument array. `/usr/bin/env -i` may remain as defense in depth after the guard, but it is not described as protecting the already-started guard or any prior code. Every next stage and production tool is absolute, root-owned, and hash-pinned.
+The final arrays contain no shell metacharacter processing, empty argument, relative path, textual runtime interpolation, own digest, or descendant digest. Their exact canonical bytes are read back and compared with `C1` or `P1[p]`, not with `B`. Controller and phase creation returns remain request evidence only.
+
+After the guard establishes the boundary, launchers may invoke a final-design-frozen `/bin/bash -p --noprofile --norc` next stage with exact absolute script and fixed arguments. `/usr/bin/env -i` remains defense in depth after the guard, never protection for already-started code. Every opened next stage and production tool must match the applicable immutable installation/tool receipt under section 10.1's same-object rule.
 
 ### 10.3 Hostile raw environment contract
 
@@ -333,11 +436,11 @@ For all four roles, the exact allowed base names and values are:
 - optional `SYSTEMD_EXEC_PID`, only when its canonical decimal value equals `getpid()`;
 - optional `JOURNAL_STREAM`, only when its documented decimal device/inode pair matches the journal file-descriptor identity.
 
-Only the `phase-finalizer` role may additionally receive `SERVICE_RESULT`, `EXIT_CODE`, and `EXIT_STATUS`, and each may be absent only when the exact v255 target path documents that no main-process value exists. When present, `SERVICE_RESULT` must be one exact v255 documented token from `success`, `protocol`, `timeout`, `exit-code`, `signal`, `core-dump`, `watchdog`, `start-limit-hit`, `resources`, `oom-kill`, or `exec-condition`; `EXIT_CODE` must be `exited`, `killed`, or `dumped`. For `EXIT_CODE=exited`, `EXIT_STATUS` is canonical decimal `0` through `255`; for `killed` or `dumped`, it is the exact canonical signal name emitted by the validated v255 target artifact. The future target artifact freezes that finite signal-name set byte-for-byte before planning. The guard passes only these validated values to the clean finalizer.
+Only the `phase-finalizer` role may additionally receive `SERVICE_RESULT`, `EXIT_CODE`, and `EXIT_STATUS`, and each may be absent only when the exact v255 target path documents that no main-process value exists. When present, `SERVICE_RESULT` must be one exact v255 documented token from `success`, `protocol`, `timeout`, `exit-code`, `signal`, `core-dump`, `watchdog`, `start-limit-hit`, `resources`, `oom-kill`, or `exec-condition`; `EXIT_CODE` must be `exited`, `killed`, or `dumped`. For `EXIT_CODE=exited`, `EXIT_STATUS` is canonical decimal `0` through `255`; for `killed` or `dumped`, it is the exact canonical signal name emitted by the exact v255 target artifact. The spike may observe a candidate finite signal-name set; the later final design must freeze that set byte-for-byte, and validation may only compare the frozen set before validation-artifact acceptance and planning. The guard passes only these validated values to the clean finalizer.
 
 `PM2_HOME` is rejected at every systemd first-exec boundary. The exact reviewed value is added only inside the already-sanitized PM2 helper path. No other manager, PAM, login, loader, shell, Node, npm, or PM2 variable is permitted.
 
-The contract continues to prohibit `EnvironmentFile` and nonempty `EnvironmentFiles`, `PassEnvironment`, PAM/login environment synthesis, client environment pass-through, nonempty `ExecSearchPath`, command expansion, secret-bearing values, and every unlisted raw variable. Required read-back includes `SetLoginEnvironment=no`, empty `EnvironmentFiles`, empty `PassEnvironment`, empty `ExecSearchPath`, exact `Environment` and `UnsetEnvironment` arrays, all four exact command arrays, and all guard/next-stage hashes. Runtime evidence never prints raw environment or secret-bearing data.
+The contract continues to prohibit `EnvironmentFile` and nonempty `EnvironmentFiles`, `PassEnvironment`, PAM/login environment synthesis, client environment pass-through, nonempty `ExecSearchPath`, command expansion, secret-bearing values, and every unlisted raw variable. The spike must produce candidate complete `Environment`, `UnsetEnvironment`, property, command, and dependency arrays plus sanitized manager-added read-back treatment. The later final design must freeze their exact canonical bytes in `C1` and each `P1[p]`; validation may only compare exact read-back to those descriptors. Runtime and spike evidence never prints raw environment or secret-bearing data.
 
 ## 11. Transient-unit topology and properties
 
@@ -355,7 +458,7 @@ The controller unit uses:
 | `FinalKillSignal` | `SIGKILL` |
 | `Restart` | `no` |
 | `RemainAfterExit` | `no` |
-| `RuntimeMaxSec` | `1800s` |
+| `RuntimeMaxSec` | `1800s` controller active/useful-work budget; not a hard wall-clock envelope |
 | `TimeoutStopSec` | `60s` |
 | `User` / `Group` | `root` / `root` |
 | `UMask` | `0077` |
@@ -363,7 +466,7 @@ The controller unit uses:
 | `StandardInput` | `null` |
 | `StandardOutput` / `StandardError` | `journal` / `journal` |
 | `SetLoginEnvironment` | `no` |
-| `ExecStart` | exact controller array beginning with the static first-exec guard |
+| `ExecStart` | exact final-design-frozen `C1` controller array beginning with the static first-exec guard |
 
 The controller has no manager-driven restart. A later same-run invocation is explicit reconciliation and receives a new `InvocationID`.
 
@@ -394,9 +497,9 @@ Every mutator and restoration unit uses:
 | `SetLoginEnvironment` | `no` |
 | `BindsTo` | exact deterministic controller unit |
 | `After` | contains the exact controller unit; complete read-back equals the reviewed dependency array |
-| `ExecStartPre` | exactly one non-optional execution-gate array beginning with the static guard |
-| `ExecStart` | exact phase-main array beginning with the static guard |
-| `ExecStopPost` | exact common-finalizer array beginning with the static guard |
+| `ExecStartPre` | exactly one non-optional final-design-frozen `P1[p]` execution-gate array beginning with the static guard |
+| `ExecStart` | exact final-design-frozen `P1[p]` phase-main array beginning with the static guard |
+| `ExecStopPost` | exact final-design-frozen `P1[p]` common-finalizer array beginning with the static guard |
 
 Phase runtimes are:
 
@@ -406,23 +509,25 @@ Phase runtimes are:
 | restoration attempt 1 | `180s` | `240s` | `60s` |
 | restoration attempt 2 | `180s` | `240s` | `60s` |
 
-The phase main process and every descendant execute in `${ControlGroup}/worker`. Systemd control processes, including `ExecStartPre` and `ExecStopPost`, execute in `${ControlGroup}/.control`. The future exact-build gate must prove that the `worker` device/inode opened and bound by `ExecStartPre` is the subgroup into which the later phase `ExecStart` is placed. Failure blocks the architecture. No phase process may migrate out of `worker`, create an alternate delegated subgroup, or move an unrelated process into the unit.
+The phase main process and every descendant execute in `${ControlGroup}/worker`. Systemd control processes, including `ExecStartPre` and `ExecStopPost`, execute in `${ControlGroup}/.control`. The spike must produce candidate exact-build observations for worker creation and placement. The later final design freezes the selected receipt/placement mechanism, and validation must prove that `W[p]`'s opened worker object is the subgroup into which the final `P1[p]` `ExecStart` is placed. Failure blocks the architecture. No phase process may migrate out of `worker`, create an alternate delegated subgroup, or move an unrelated process into the unit.
 
-### 11.3 Exact dependency and property read-back
+### 11.3 Exact descriptor-bound dependency and property read-back
+
+The spike must produce candidate complete canonical controller and phase transient definitions and sanitized exact read-back diffs. A later final design freezes the controller block in `C1` and each phase block in `P1[p]`. Validation and eventual runtime comparison use those descriptor bytes without modification.
 
 Before treating an observed phase unit as matching request evidence or allowing gate/reconciliation handling, the controller reads through systemd D-Bus and requires:
 
 - exact unit ID, canonical name, `Transient=yes`, and exact transient fragment identity;
-- exact nonempty phase `InvocationID` and current authoritative boot ID;
-- exact `BindsTo=` containing only the deterministic controller unit and the complete reviewed `After=` array containing that unit plus only the pinned manager-added dependencies;
-- the controller unit loaded with the expected controller `InvocationID` and no terminal/cancellation state that forbids continuation;
-- every property in sections 10 and 11, including `CollectMode=inactive`, exact `ExecStartPre`, `ExecStart`, and `ExecStopPost` arrays, `TimeoutStartSec=10s`, exact runtime/stop deadlines, and `NRestarts=0`;
+- exact nonempty phase `InvocationID` and authoritative boot ID;
+- exact `BindsTo=` and complete `After=` arrays equal to the canonical dependency arrays in `P1[p]`, including only frozen manager-added dependencies;
+- the controller unit loaded with the expected `C2` controller `InvocationID` and no terminal/cancellation state forbidding continuation;
+- every property in sections 10-11 equal to the exact canonical `P1[p]` property/environment/command blocks, including `CollectMode=inactive`, one `ExecStartPre`, exact `ExecStart`, exact `ExecStopPost`, `TimeoutStartSec=10s`, runtime/stop deadlines, and `NRestarts=0`;
 - exact `ControlGroup`, nonzero `ControlGroupId`, and no unexpected job or dependency;
-- exact unit-property digest equal to the manifest, execution gate, and phase binding.
+- a read-back record citing `H_P1[p]`, `H_C1`, and `H_C2` externally. `P1[p]` never contains `H_P1[p]`.
 
-The pre-start gate helper performs the first complete identity/property/cgroup/environment check before committing the execution gate. The phase launcher repeats these checks before `BOUND`, before `ENTERED`, and under its gate before every mutation boundary. A controller invocation mismatch stops productive work and creates `FAULT_PENDING`; the phase may then participate only in safe cancellation and reconciliation.
+Controller read-back similarly equals `C1`; its request and `C2` invocation record cite `H_C1` externally. The pre-start gate helper performs the first phase identity/property/cgroup/environment check before committing the execution gate. The phase launcher repeats these checks before `BOUND`, before `ENTERED`, and under its gate before every mutation boundary. Any descriptor, receipt, boot, controller, invocation, property, dependency, command, environment, cgroup, or job mismatch stops productive work, creates `FAULT_PENDING`, and permits only exact containment/reconciliation and any already-required restoration path.
 
-`BindsTo=` plus `After=` must cause PID 1 to stop a live phase when the bound controller unit becomes inactive. A new controller invocation never cancels that stop or treats the old phase as normally continuable. Tests must verify controller death before phase entry, during every phase stage, and during finalization, including same-name controller recreation.
+`BindsTo=` plus `After=` must stop a live phase when the bound controller becomes inactive. A new controller invocation never cancels that stop or treats old productive work as continuable. The spike may measure candidate target tuples; the final design freezes accepted tuples; validation and later integration must verify controller death before phase entry, during each phase stage, and during finalization, including same-name controller recreation.
 
 ## 12. Durable execution gate, phase binding, and finalizer witness
 
@@ -430,25 +535,26 @@ The pre-start gate helper performs the first complete identity/property/cgroup/e
 
 Every phase has exactly one non-optional `ExecStartPre=` command. PID 1 may invoke `ExecStart=` only after it exits successfully. The command begins with the static first-exec guard and then executes the reviewed pre-start gate helper in the exact clean environment.
 
-The helper is non-production-mutating. Its allowed effects are limited to exact identity/property/cgroup/environment verification; taking the phase gate; creating or opening the exact `worker` subgroup through no-symlink traversal; binding its device/inode identity; proving the exact target-build placement contract; exclusively creating and file/parent-fsyncing `EXECUTION_GATE_COMMITTED`; and writing sanitized evidence inside the governed run tree. It must not touch Nginx, PM2, release paths, Git, snapshot data, listeners, production content, quarantine, external network state, or any later-phase marker.
+The helper is non-production-mutating. Its allowed effects are limited to exact graph/descriptor/receipt/identity/property/cgroup/environment verification; taking the phase gate; creating or opening the exact `worker` subgroup through no-symlink traversal; exclusively creating/fsyncing runtime worker receipt `W[p]`; proving the final-design-frozen placement contract; exclusively creating/fsyncing `EXECUTION_GATE_COMMITTED`; and writing sanitized evidence inside the governed run tree. It must not touch Nginx, PM2, release paths, Git, snapshot data, listeners, production content, quarantine, external network state, or any later-phase marker.
 
-While holding the phase gate, the helper rechecks boot ID, controller and phase identity, exact properties and command arrays, request records, terminal/fault/cancellation state, and absence of `START_WINDOW_CLOSED` and any competing execution gate. It then commits `EXECUTION_GATE_COMMITTED` bound to the actual phase `InvocationID`, exact `ControlGroup`/`ControlGroupId`, the pre-created or validated `worker` device/inode, static guard and helper hashes, request-set digest, gate identity, and marker-state digest. If it cannot establish and fsync that record, it exits nonzero and PID 1 must not execute the phase main.
+`W[p]` is created only after systemd exposes the exact phase `ControlGroup` and the exact `worker` object exists. It binds `H_P1[p]`, actual phase invocation, `ControlGroup`/`ControlGroupId`, opened worker dev/inode, no-symlink traversal, and pre/post-open identity. It is runtime evidence, not installation identity, and never feeds `B`, `H_B`, `R`, or `L`.
 
-`EXECUTION_GATE_COMMITTED` and `START_WINDOW_CLOSED` are mutually exclusive. A losing duplicate or late pre-start process exits nonzero before main and cannot create `BOUND`, `ENTERED`, or a delegated-operation record. The future systemd-255 gate must prove that the `worker` inode bound here is the subgroup into which the later `ExecStart` is placed; failure blocks the architecture.
+While holding the phase gate, the helper rechecks boot, `H_C1`, `H_C2`, `H_P0[p]`, `H_P1[p]`, applicable receipt hashes, actual controller/phase identities, exact `P1[p]` properties/arrays, request records, terminal/fault/cancellation state, and absence of `START_WINDOW_CLOSED` and any competing execution gate. It then commits `EXECUTION_GATE_COMMITTED` bound to the actual phase `InvocationID`, exact `ControlGroup`/`ControlGroupId`, `W[p]`, applicable installation/tool receipts, gate identity, and marker-state digest. If it cannot establish and fsync both `W[p]` and the gate record, it exits nonzero and PID 1 must not execute the phase main.
+
+`EXECUTION_GATE_COMMITTED` and `START_WINDOW_CLOSED` are mutually exclusive. A losing duplicate or late pre-start process exits nonzero before main and cannot create `BOUND`, `ENTERED`, or a delegated-operation record. The spike proposes the candidate worker mechanism; the later final design freezes it; validation must prove `W[p]` continuity into `ExecStart` placement or block the architecture.
 
 ### 12.2 Phase bound and entered records
 
 The immutable phase bound record binds at least:
 
-- run ID and manifest hash;
+- run ID, `H_B`, `H_L`, `H_IU`, and `H_IT`;
 - authoritative boot ID;
-- exact phase/attempt and unit name;
-- exact phase `InvocationID` and `EXECUTION_GATE_COMMITTED` hash;
-- exact controller unit and controller `InvocationID`;
+- `H_C1`, `H_C2`, exact controller unit, and actual controller `InvocationID`;
+- exact phase/attempt, `H_P0[p]`, `H_P1[p]`, unit name, actual phase `InvocationID`, and `EXECUTION_GATE_COMMITTED` hash;
 - exact `ControlGroup` and nonzero `ControlGroupId`;
-- the gate-bound `worker` subgroup device and inode identity obtained without symlink traversal;
-- exact unit-property digest;
-- static guard, pre-start helper, launcher, phase script, and finalizer hashes;
+- worker runtime receipt `W[p]` hash and revalidated opened-worker identity;
+- exact canonical transient-definition/read-back hash derived from `P1[p]`;
+- applicable uploaded installation and target-tool receipt entries for guard, pre-start helper, launcher, phase script, finalizer, and tools;
 - exact expected phase-result path and schema digest;
 - exact terminal-witness path and schema digest;
 - gate identity and current marker-state digest.
@@ -461,10 +567,10 @@ A gate-committed invocation that fails before `BOUND` remains conservatively exe
 
 The exact common `ExecStopPost` finalizer has a `5s` internal deadline inside its fresh outer `TimeoutStopSec=10s` stop-post slot. The static guard validates its raw environment before invoking finalizer code. For every invocation with `EXECUTION_GATE_COMMITTED`, the finalizer must within that deadline:
 
-1. verify fixed run, manifest, phase, unit, controller, gate/result/witness paths and schemas, compare the current boot ID, and validate the execution gate;
-2. query the exact unit and require the gate-bound `InvocationID`, `ControlGroup`, nonzero `ControlGroupId`, `Delegate=yes`, `DelegateSubgroup=worker`, `CollectMode=inactive`, exact unit-property digest, and exact guarded finalizer command;
+1. verify fixed `H_B`, `R`, `H_L`, `H_IU`, `H_IT`, `H_C1`, `H_C2`, `H_P0[p]`, `H_P1[p]`, run/phase/unit/controller identities, gate/result/witness paths and schemas, compare authoritative boot, and validate the execution gate and `W[p]`;
+2. query the exact unit and require the gate-bound `InvocationID`, `ControlGroup`, nonzero `ControlGroupId`, `Delegate=yes`, `DelegateSubgroup=worker`, `CollectMode=inactive`, exact `P1[p]` canonical transient-definition/read-back equality, and exact guarded finalizer array;
 3. require `SubState=stop-post`, `ControlPID` equal to its own PID, and the normalized unified entry in `/proc/self/cgroup` equal to `${ControlGroup}/.control`;
-4. open the exact gate-bound `worker` subgroup through the reviewed no-symlink-traversal operation and require its device/inode identity;
+4. open the exact `W[p]` worker object through the final-design-frozen no-symlink operation and require the same dev/inode/type identity;
 5. read `worker/cgroup.events`, require exactly one `populated` field with value `0`, and require `worker/cgroup.procs` empty;
 6. revalidate the worker subgroup device/inode identity after both reads;
 7. capture the validated `SERVICE_RESULT`/`EXIT_CODE`/`EXIT_STATUS`, `Result`, `ExecMainPID`, `ExecMainCode`, `ExecMainStatus`, `ExecMainStartTimestampMonotonic`, `ExecMainExitTimestampMonotonic`, `ActiveState`, `SubState`, `MainPID`, `ControlPID`, `ControlGroup`, `ControlGroupId`, `NRestarts`, and the immutable result record's presence/hash;
@@ -487,11 +593,11 @@ Loaded and unloaded units use the separate closed matrices in section 17. A load
 
 ## 13. External PM2 and Nginx operation ownership
 
-The phase cgroup does not contain the pre-existing PM2 daemon or Nginx master. The global advisory lock does not identify, contain, or make those actors descendants. Every delegated operation therefore uses immutable operation records, and the exact target interfaces must pass the future pre-plan gate in section 26.
+The phase cgroup does not contain the pre-existing PM2 daemon or Nginx master. The global advisory lock does not identify, contain, or make those actors descendants. Every delegated operation therefore uses immutable operation records and downstream live receipts. The spike may propose candidate exact interfaces; a later final design must freeze them; validation may only exercise the frozen selections.
 
 ### 13.1 Common operation record contract
 
-Each operation has one deterministic operation ID bound to run, manifest, boot, phase, unit, `InvocationID`, family, sequence, target identity, exact request digest, gate identity, stage deadlines, and prior marker digest.
+Each operation has one deterministic operation ID bound to `H_B`, `R`, `H_L`, `H_IT`, `H_C1`, `H_C2`, `H_P1[p]`, authoritative boot, phase unit/`InvocationID`, family, sequence, exact target content identity, applicable live receipt, exact request digest, gate identity, stage deadlines, and prior marker digest.
 
 While holding the phase gate, the phase:
 
@@ -517,17 +623,20 @@ A `BEGIN` without its exact matching valid `QUIESCED` permanently blocks that ph
 
 ### 13.2 Exact PM2 existing-daemon-only interface
 
-The future validation artifact must select one exact installed-version RPC interface before implementation-plan writing. It must bind the exact PM2 version, Node binary, daemon/client/RPC module bytes, socket protocol, method, request bytes, `pm_id`, callback boundary, callback timing, and death behavior.
+The architecture spike may inspect separately authorized exact artifacts and produce a candidate installed-version existing-daemon-only method, framing, request bytes, `pm_id`, callback boundary/timing, bounded streaming selector, and death/no-late-effect proof strategy. Candidate source/parser/helper bytes remain untrusted spike outputs.
 
-The selected connection path must be a direct open/connect to the already-validated socket. Source, byte identity, process/syscall trace, and negative cases must prove that it cannot call daemon-launch code, `pm2.connect`, fork, spawn, reconnect fallback, or any other auto-start path. Daemon absence, socket mismatch, version mismatch, permission error, malformed frame, timeout, and reconnect must all fail without auto-spawn. If this proof is unavailable, the architecture is blocked and must redesign the manager interface before planning.
+A later final design must incorporate the exact selected Node/PM2 content identities into `B`, the exact target-open binary/module objects into `I_T`, and the exact method/framing/request/parser/helper bytes and interface into frozen descriptors. Fresh dual approval and user re-review precede validation. Validation proves the frozen direct open/connect path cannot call daemon-launch code, `pm2.connect`, fork, spawn, reconnect fallback, or any auto-start path; daemon absence, socket mismatch, version mismatch, permission error, malformed frame, timeout, and reconnect all fail without auto-spawn. Mismatch returns to final-design revision rather than interface selection during validation.
 
-The operation binds:
+Each PM2 operation creates or cites fresh `M[o]` after the socket and daemon exist. It binds:
 
+- `H_IT` and the approved opened Node/PM2 binary/module receipt entries;
 - exact reviewed `PM2_HOME`, added only inside the sanitized helper path;
-- exact RPC socket path, device, inode, mode, and owner;
+- exact live RPC socket path, dev/inode/type/mode/owner;
 - daemon PID plus `/proc/PID/stat` start time, executable identity, UID, and version;
-- the sole preflight application's exact approved identity and `pm_id` from the independently authorized validation artifact;
-- the exact request bytes and same-session callback boundary.
+- the sole preflight application's exact approved identity and `pm_id` from the frozen final design;
+- exact request bytes, operation ID, same-session callback boundary, and before/after identity samples.
+
+No socket inode appears in `B`, `R`, `L`, `C0`, or a command array. The phase revalidates `M[o]` before `BEGIN`, immediately before send, after callback, and before durable `QUIESCED`. Socket/daemon drift leaves `BEGIN` unmatched.
 
 After the callback, the exact request must be unable to remain queued for later effect. No high-level response object containing `pm2_env` may be materialized, printed, logged, persisted, hashed, or included in evidence. A framed response may be consumed only by the reviewed bounded streaming selector that extracts the approved non-secret acknowledgement envelope and length-skips and zeroizes disallowed fields without decoding their values. No status field inside `pm2_env` is used. If callback semantics plus exact OS/process/listener/probe evidence cannot establish target state without environment-bearing data, the architecture is blocked.
 
@@ -546,11 +655,11 @@ The daemon PID/start/executable/UID/version and socket device/inode/mode/owner r
 | two stable samples and durable `QUIESCED` fsync | `5s` |
 | **Total per PM2 operation** | **`40s`** |
 
-Before-send death, after-send/before-callback death, callback loss, callback/target mismatch, helper death before durable `QUIESCED`, or deadline expiry leaves unmatched `BEGIN`; it never becomes quiesced by polling.
+Before-send death, after-send/before-callback death, callback loss, callback/target mismatch, helper death before durable `QUIESCED`, or deadline expiry leaves unmatched `BEGIN`; it never becomes quiesced by polling. If the spike cannot produce a candidate preserving every invariant, it returns `BLOCKED`. If frozen validation fails, the work returns to final-design revision and fresh review before planning.
 
 ### 13.3 Exact Nginx D-Bus reload and worker-generation interface
 
-The future validation artifact must bind exact `nginx.service`, every `ExecReload` command, Nginx binary/config identities, master identity, and exact worker-generation behavior before planning. A generation is a set of worker records containing PID, `/proc/PID/stat` start time, executable identity, UID, parent master PID/start identity, and generation observation time.
+The architecture spike may produce a candidate exact `nginx.service`/`ExecReload`/binary/config identity model, config-read interval observation algorithm, job-to-generation causality rule, old-worker-absence algorithm, and helper interface. A later final design incorporates exact selected binary/config content identities into `B`, target-open objects into `I_T`, and freezes the exact algorithms/helper bytes before fresh dual approval and user re-review. Validation may only exercise those frozen selections. A generation remains a set of worker records containing PID, `/proc/PID/stat` start time, executable identity, UID, parent master PID/start identity, and generation observation time.
 
 The operation sequence is:
 
@@ -573,7 +682,7 @@ A still-live draining old worker is never sufficient for generic quiescence. An 
 | stable samples and durable `QUIESCED` fsync | `5s` |
 | **Total per Nginx operation** | **`60s`** |
 
-Job done without generation, generation without old-worker absence, concurrent or substituted reload, master drift, config drift, helper death, or any stage timeout leaves unmatched `BEGIN`. Old-worker drain is inside the `25s` stage; timeout never reclassifies a draining worker as quiesced. If the exact target cannot satisfy this contract, the architecture is blocked and must redesign the synchronous manager interface before planning.
+Job done without generation, generation without old-worker absence, concurrent or substituted reload, master drift, config drift, helper death, or any stage timeout leaves unmatched `BEGIN`. Old-worker drain is inside the `25s` stage; timeout never reclassifies a draining worker as quiesced. If the spike cannot produce a candidate preserving this contract, it returns `BLOCKED`. A frozen-validation mismatch returns to final-design revision and fresh review before planning.
 
 ## 14. Global run lock and per-phase gates
 
@@ -632,7 +741,7 @@ If an external `BEGIN` is open, cancellation still writes `CANCEL_INTENT` and re
 
 ## 16. Marker schema and one-way invariants
 
-Every marker is exclusively created once, then file- and parent-directory-fsynced. Markers are never rewritten, truncated, renamed over, or deleted by the run. Every record includes run ID, manifest hash, boot ID, actor unit and invocation, phase unit and invocation when applicable, schema digest, monotonic and UTC timestamps, prior/next state, and hashes of supporting evidence.
+Every marker is exclusively created once, then file- and parent-directory-fsynced. Markers and receipts are never rewritten, truncated, renamed over, or deleted by the run. Every record includes run ID, `H_B`, `H_L`, applicable `H_IU`/`H_IT`, `H_C1`/`H_C2`, phase `H_P0[p]`/`H_P1[p]` when applicable, authoritative boot, actor unit and invocation, schema digest, target-local receipt hashes, monotonic and UTC timestamps, prior/next state, and supporting-evidence hashes. No record changes an ancestor descriptor or recomputes the run ID.
 
 Required records are:
 
@@ -697,10 +806,10 @@ Mutually exclusive terminal run markers:
 Load-bearing invariants include:
 
 - `RUN_RESERVED` fixes the boot identity for the run.
-- Each `START_REQUEST_1` contains the canonical request description and precedes dispatch. `START_REQUEST_2` is optional, occurs at most once, and has byte-identical transient properties and command arrays.
+- Each `START_REQUEST_1` is `Q[p,1]`, cites exact `H_P1[p]` and canonical request bytes, and precedes dispatch. `START_REQUEST_2` is optional `Q[p,2]`, occurs at most once, and cites the same byte-identical `P1[p]` transient properties, dependencies, environment, and command arrays.
 - A D-Bus reply or job path is request evidence only and creates no authorization state.
-- `EXECUTION_GATE_COMMITTED` requires request 1, the actual unit invocation, exact property/cgroup/worker identity, and absence of `START_WINDOW_CLOSED` while holding the phase gate.
-- `START_WINDOW_CLOSED` requires the two completed `10s` visibility windows, no exact current unit/job, no execution gate, and a gate-held recheck. It prohibits every late pre-start from reaching main.
+- `EXECUTION_GATE_COMMITTED` requires request 1, the actual unit invocation, exact `P1[p]` read-back, applicable receipt hashes including `W[p]`, and absence of `START_WINDOW_CLOSED` while holding the phase gate.
+- `START_WINDOW_CLOSED` requires both completed `10s` visibility windows and, while the global lock and exact phase gate remain held, fresh deterministic-name absence, absence for every exact phase invocation learned from either request/job ledger, no current job for the deterministic name, no execution gate, and the complete boot/controller/request/cancellation/fault/later/terminal/schema recheck. Its record contains the exact lookup evidence and hashes. Any current unit/job, invocation disagreement, lookup error, gate, or prohibited marker causes reconciliation or fail-closed escalation, never closure.
 - The execution gate and start closure are mutually exclusive. Duplicate or contradictory creation is evidence corruption.
 - `BOUND` requires `EXECUTION_GATE_COMMITTED` and no cancellation/fault/later/terminal prohibition. `ENTERED` requires `BOUND` and a second gate-held identity/state check.
 - Every gate-committed invocation requires a valid finalizer witness and path-specific reconciliation, whether or not it reached `BOUND` or `ENTERED`.
@@ -718,7 +827,7 @@ Load-bearing invariants include:
 
 ### 17.1 Mandatory semantic result
 
-Each phase must exclusively create and file/parent-fsync exactly one immutable result record before every intentional semantic exit in `{0, 64, 70, 75}`. The record is bound to run, manifest, boot, phase, unit, `InvocationID`, controller invocation, script hash, last completed boundary, operation-record hashes, sanitized evidence hashes, result schema, and monotonic timestamps.
+Each phase must exclusively create and file/parent-fsync exactly one immutable result record before every intentional semantic exit in `{0, 64, 70, 75}`. The record is bound to `H_B`, `R`, `H_L`, `H_IU`, `H_IT`, `H_C1`, `H_C2`, `H_P0[p]`, `H_P1[p]`, `W[p]`, authoritative boot, phase unit/`InvocationID`, actual controller invocation, applicable script/tool receipts, last completed boundary, operation-record hashes, sanitized evidence hashes, result schema, and monotonic timestamps.
 
 The exact exit map, with no `SuccessExitStatus` override, is:
 
@@ -733,7 +842,7 @@ A present result must exactly match `ExecMainCode`, `ExecMainStatus`, the valida
 
 ### 17.2 Common loaded evidence
 
-Every loaded row requires exact unit name and invocation, exact property digest including `CollectMode=inactive`, `NRestarts=0`, no current job after finalization, and zero main/control PIDs. Exact target-build tuples for stop, timeout, dependency, start, and finalizer paths must be frozen by the future pre-plan artifact; acceptance is byte-for-byte equality to that artifact, not a broad status list selected during implementation.
+Every loaded row requires exact unit name/invocation, exact `P1[p]` transient-definition/read-back equality including `CollectMode=inactive`, applicable receipt equality, `NRestarts=0`, no current job after finalization, and zero main/control PIDs. The spike may produce candidate target tuples for stop, timeout, dependency, start, and finalizer paths. A later final design must freeze exact tuples before fresh review; validation acceptance is byte-for-byte equality to that frozen design, not a broad status list selected during validation or implementation.
 
 | Lifecycle path | Required durable pre-exit evidence | Required loaded terminal class | Job rule | Automatic disposition |
 |---|---|---|---|---|
@@ -756,7 +865,7 @@ Only one automatic unloaded inference family is allowed: a successful inactive u
 2. valid `EXECUTION_GATE_COMMITTED` and valid finalizer witness for the same invocation;
 3. witness has the bound worker identity and recursive emptiness;
 4. witness reports `SERVICE_RESULT=success`, `EXIT_CODE=exited`, `EXIT_STATUS=0`, exact zero main status, and no contradictory result record;
-5. exact property digest includes `CollectMode=inactive`, `Restart=no`, `NRestarts=0`, `RemainAfterExit=no`, and the reviewed command arrays;
+5. exact `P1[p]` descriptor/read-back equality includes `CollectMode=inactive`, `Restart=no`, `NRestarts=0`, `RemainAfterExit=no`, the frozen command arrays, and applicable receipt hashes;
 6. two stable D-Bus samples one second apart within the `10s` reconciliation window report both name lookup and invocation lookup absent, with no job for the name and no same-name recreation;
 7. no reset-failed, collect/unload request, manager drift, boot change, invocation substitution, or other prohibited privileged action is observed;
 8. delegate records and marker invariants are complete.
@@ -769,7 +878,7 @@ All other unloaded cases fail closed automatically: reserved nonzero exit, signa
 
 ### 17.4 Mandatory negative matrix
 
-The future systemd gate must include controller death with no subscriber, death after witness fsync/before finalizer exit, finalizer nonzero and signal after witness, immediate successful unload, failed-unit retention, reset-failed simulation in isolation, name recreation, lookup disagreement, pre-witness disappearance, and missing/malformed witness. Every forbidden unloaded tuple must fail closed. The document does not claim that this matrix has run.
+The spike may collect candidate exact-target tuples for controller death with no subscriber, death after witness fsync/before finalizer exit, finalizer nonzero/signal after witness, immediate successful unload, failed-unit retention, isolated reset-failed simulation, name recreation, lookup disagreement, pre-witness disappearance, and missing/malformed witness. A later final design freezes the accepted tuples; validation must test them unchanged and every forbidden unloaded tuple must fail closed. This charter does not claim that the spike or validation has run.
 
 ## 18. Closed restoration retry precedence and classes
 
@@ -845,17 +954,18 @@ Exact transition semantics are:
 
 ### 20.1 Lost reply, one reissue, and durable start closure
 
-Before request 1, the controller writes phase intent and exclusively creates and fsyncs `START_REQUEST_1` under the global lock after a boot check. The record contains the canonical exact transient request description. Creation uses fail-on-name-conflict behavior. Returned reply status and job ID/path are request evidence only.
+Before request 1, the controller writes phase intent and exclusively creates/fsyncs `Q[p,1]` under the global lock after a boot check. It cites the exact ordinal-independent `P1[p]` bytes and `H_P1[p]`. Creation uses fail-on-name-conflict behavior. Returned reply status and job ID/path are request evidence only.
 
 The exact algorithm is:
 
 1. Dispatch request 1 and wait the first `10s` visibility window. If the exact unit/job or `EXECUTION_GATE_COMMITTED` is observed, reconcile it; do not reissue.
-2. After the first window, hold the global lock and phase gate and recheck boot, deterministic name/job/invocation, request records, cancellation/fault/terminal markers, and absence of the execution gate.
-3. Only if no current exact unit/job and no execution gate exists may the controller exclusively create and fsync `START_REQUEST_2` and dispatch one reissue. The transient definition is byte-identical; request ordinal does not change any property or command array.
+2. After the first window, hold the global lock and exact phase gate and recheck authoritative boot, deterministic name lookup, every learned invocation lookup, current jobs, both descriptor identities, request records, cancellation/fault/later/terminal markers, and absence of the execution gate.
+3. Only if no current exact unit/job, no lookup disagreement/error, and no execution gate exists may the controller exclusively create/fsync `Q[p,2]` and dispatch one reissue. It cites the same `P1[p]` bytes and `H_P1[p]`; request ordinal changes no property, dependency, environment, or command array.
 4. During the second `10s` visibility window, any exact unit/job/gate is reconciled. No third request exists and no alternate unit name or run ID is permitted.
-5. After the second window, the controller takes the phase gate and creates `START_WINDOW_CLOSED` if and only if the execution gate remains absent and all identity/boot/fault/cancellation/terminal checks still pass.
-6. A racing late pre-start either commits `EXECUTION_GATE_COMMITTED` first or sees `START_WINDOW_CLOSED` and fails before main. Both records cannot exist and request 2 cannot create a second gate.
-7. If an execution gate exists but `BOUND` does not, the controller never reissues. The finalizer uses the gate's unit/cgroup/worker identity to witness emptiness, followed by path-specific reconciliation.
+5. After the second `10s` visibility window, the controller holds the global run lock and acquires the exact phase gate. While still holding both, it repeats section 16’s complete closure predicate using fresh D-Bus reads: (a) deterministic name lookup for the exact phase unit must report no current unit; (b) invocation lookup for every exact phase `InvocationID` learned from either request/job ledger must report no current unit for that invocation, with any lookup disagreement or same-name different invocation failing closed; and (c) the current-job lookup must report no job for the deterministic phase unit name. It then rechecks authoritative boot identity, both request records, controller identity, absence of `EXECUTION_GATE_COMMITTED`, absence of a competing or prior `START_WINDOW_CLOSED`, cancellation/fault/later-phase/terminal prohibitions, and marker-schema consistency. Only if every conjunct remains true may it exclusively create and file/parent-fsync `START_WINDOW_CLOSED`. Any unit, invocation, current job, lookup error/disagreement, gate, or prohibited marker causes reconciliation or fail-closed escalation, never closure.
+6. The closure record contains exact name/invocation/job lookup evidence and hashes. If no phase invocation ID was learned, the invocation-lookup set is canonically empty, but deterministic-name absence and no-current-job remain mandatory.
+7. A racing late pre-start either commits `EXECUTION_GATE_COMMITTED` first or sees `START_WINDOW_CLOSED` and fails before main. Both records cannot exist and request 2 cannot create a second gate.
+8. If an execution gate exists but `BOUND` does not, the controller never reissues. The finalizer uses `H_P1[p]`, `W[p]`, and the gate's unit/cgroup identity to witness emptiness, followed by path-specific reconciliation.
 
 A boot change suppresses query, reissue, gate acceptance, start closure, witness acceptance, and all continuation. Elapsed absence without `START_WINDOW_CLOSED` is insufficient for no-mutation classification.
 
@@ -883,15 +993,17 @@ If the controller dies:
 - if the old phase becomes process-terminal, the new controller validates the existing witness and the applicable loaded/unloaded matrix, closes only already-acknowledged delegates, creates the full fence when valid, and performs restoration required by an entered mutator;
 - if an external `BEGIN` is unmatched, the new controller cannot invent `QUIESCED` or restore automatically.
 
-Controller shutdown has `TimeoutStopSec=60s`, exceeding the exact `45s` no-open-delegate containment/handoff budget by `15s`. If an external operation is open, containment still begins immediately; the controller records the unmatched operation and durable handoff, then exits without a false fence or terminal-success claim.
+`RuntimeMaxSec=1800s` is only the original controller epoch's active/useful-work budget. On runtime expiry, controller forced deactivation may consume a subsequent `60s` through `T2`. A possibly live dependent phase may then require the separately reserved `45s` containment/finalizer/reconciliation/handoff interval through `T3 = T0 + 1905s`. Until frozen target validation proves universal overlap, the relationship is sequential. An open external operation still receives immediate process containment, but the controller records unmatched `BEGIN` and durable fail-closed handoff without false fence, restoration-completion, or terminal-success claims. Any later same-run reconciliation controller is a distinct recorded epoch.
 
 ### 20.5 Host reboot
 
 A boot mismatch is detected before unit query, adoption, stop, reissue, witness acceptance, fence, restoration, or mutation. The run writes `OPERATOR_REQUIRED` with `reason=BOOT_ID_CHANGED`. No automatic recovery or restoration follows. A separately approved recovery decision is required.
 
-## 21. Complete deadline contract and controller algebra
+## 21. Deadline epochs, success, and failure containment
 
-### 21.1 Fixed remote values
+### 21.1 Exact values and monotonic epochs
+
+All remote deadline evidence uses the exact target monotonic clock and final-design-frozen systemd manager timestamps. Client dispatch time, client wall clock, disconnect, and transport return are non-authorizing.
 
 | Interval | Exact maximum |
 |---|---:|
@@ -913,39 +1025,66 @@ A boot mismatch is detected before unit query, adoption, stop, reissue, witness 
 | finalizer outer systemd stop-post slot | `10s` |
 | post-witness terminal reconciliation | `10s` |
 | poll interval | `250ms` |
-| cancellation containment/reconcile with no open delegate | `45s` |
-| controller `RuntimeMaxSec` | `1800s` |
-| controller `TimeoutStopSec` | `60s` |
+| dependent-phase containment/reconcile/handoff with no open delegate | `45s` |
+| controller active/useful-work `RuntimeMaxSec` | `1800s` |
+| controller forced-deactivation `TimeoutStopSec` tail | `60s` |
 | fixed transition/evidence allowance | `120s` |
 
-`TimeoutStopSec=10s` is counted twice on a worst terminal path: once for worker termination and once as the fresh outer stop-post slot. The finalizer's `5s` self-deadline lies inside the second `10s`; the remaining `5s` is containment/kill margin if the finalizer does not exit as designed. PM2/Nginx maxima are included inside phase internal/runtime budgets and are not added again to the controller sum.
+Epochs are:
 
-### 21.2 Controller budget floor
+- `T0` — the validated target-systemd monotonic instant from which controller `RuntimeMaxSec=1800s` is charged; the spike proposes a candidate mapping, the later final design freezes it, and frozen-design validation proves it without modification;
+- `T1 = T0 + 1800s` — controller active/useful-work expiry;
+- `T2 = T1 + 60s = T0 + 1860s` — conservative latest end of controller forced deactivation;
+- `T3 = T2 + 45s = T0 + 1905s` — conservative latest dependent-phase process containment, finalizer, reconciliation, and durable handoff deadline when no overlap is credited;
+- `TS` — the target monotonic instant at which `RUN_SUCCEEDED` is durably fsynced after every required remote gate.
 
-The conservative reservation takes no credit for overlap between visibility and start processing:
+Pre-controller upload/staging and controller-start work before `T0` are separately bounded and are not silently included. `TimeoutStopSec=10s` is counted separately for worker termination and the fresh outer stop-post slot; the finalizer's `5s` self-deadline lies inside the latter. PM2/Nginx maxima remain inside phase budgets and are not double counted.
+
+### 21.2 Controller active/useful-work floor
+
+The conservative useful-work reservation takes no credit for overlap:
 
 ```text
-initial + reissue visibility:       3 * (10 + 10) =   60
-phase start slots:                  3 * 10        =   30
-phase runtimes:                     780 + 2*240   = 1260
-worker-stop slots:                  3 * 10        =   30
-outer finalizer slots:              3 * 10        =   30
-terminal reconciliation:            3 * 10        =   30
-fixed transition/evidence allowance:                 120
-                                                      ----
-required controller budget floor:                   1560s
-controller margin:                    1800 - 1560 =  240s
+initial + reissue visibility:       3 * (10 + 10) =   60s
+phase start slots:                  3 * 10        =   30s
+phase RuntimeMaxSec reservations:   780 + 2*240   = 1260s
+worker-stop slots:                  3 * 10        =   30s
+fresh outer finalizer slots:        3 * 10        =   30s
+post-witness reconciliation:        3 * 10        =   30s
+fixed transition/evidence allowance:                 120s
+                                                      -----
+controller useful-work floor:                       1560s
+active-runtime margin:               1800 - 1560 =   240s
 ```
 
-### 21.3 Cancellation and outer envelopes
+`1800s` is the controller active/useful-work budget with `240s` margin over the `1560s` floor. It is not a hard unit-lifetime or remote wall-clock envelope.
 
-For no open external operation, the exact `45s` containment/fence maximum is `10s` worker termination + `10s` outer finalizer slot + `10s` post-witness reconciliation + `15s` gate/marker/fsync/poll/scheduling allowance.
+### 21.3 Success and failure envelopes
 
-If an external `BEGIN` is open, cancellation does not wait it into quiescence after the observer is killed. Unmatched `BEGIN` remains unmatched, `FENCE_PROVED` is unavailable, and the controller records escalation/handoff. Section 13's operation deadline governs normal operation only; it never extends proof or creates closure.
+| Envelope | Exact arithmetic | Meaning |
+|---|---:|---|
+| useful active runtime | `1560s` floor inside `1800s` | All normal remote mutator/restoration work, phase terminal handling, and `RUN_SUCCEEDED` must fit before `T1`. |
+| successful remote completion | `TS <= T0 + 1800s` | Success requires durable `RUN_SUCCEEDED`, no live phase, complete delegate closure, verified restoration, and final gates before active-runtime expiry. A later marker cannot retroactively make the original epoch bounded success. |
+| controller forced-stop tail | `60s` | On runtime expiry/failure, controller deactivation may continue from `T1` through `T2`. |
+| dependent-phase containment/handoff | `45s = 10 + 10 + 10 + 15` | Conservatively measured after controller deactivation: worker termination, fresh finalizer slot, post-witness reconciliation, and gate/marker/fsync/poll/scheduling/handoff. Open external `BEGIN` permits process containment/handoff but never synthesized full fence. |
+| conservative failure containment outer bound | `1800 + 60 + 45 = 1905s` | By `T3`, the original controller epoch must have either succeeded by `T1`, or completed forced deactivation plus dependent containment and durable fail-closed handoff/escalation when evidence is available. It does not promise restoration completion or a terminal run marker after runtime failure. |
+| target-proven tighter failure bound | `1800 + max(60,45) = 1860s` | Non-normative unless the spike proposes and frozen validation proves universal overlap on every exact-target path. Until then `1905s` governs. |
+| local stage sum | `300 + 60 + 120 + 60 + 120 + 900 + 180 + 30 = 1770s` | Unchanged bounded local work after read-back of `RUN_SUCCEEDED`. |
+| local envelope/margin | `2100s`; `2100 - 1770 = 330s` | Starts at `TS`, never on a failure/handoff path. |
+| successful remote-plus-local bound | `1800 + 2100 = 3900s` from `T0` | Success-only upper bound excluding separately bounded pre-controller upload/staging; it is not a generic failure-plus-local envelope. |
 
-The controller's `60s` stop budget exceeds the `45s` no-open-delegate containment/handoff budget by `15s`. The bounded local phase remains `1770s` stage sum, `2100s` overall, and `330s` margin. Remote plus local outer envelopes remain `1800 + 2100 = 3900s`, excluding separately bounded pre-controller upload/staging.
+If no phase is current at `T1`, the conservative forced-deactivation bound is `T2`; the extra `45s` is reserved only for a possibly live or gate-committed dependent phase and handoff. Until frozen-design validation proves a tighter universal ordering on every required exact-target path, the design uses the slower sequential relation.
 
-Budget expiry never weakens proof. Before mutator intent it may produce `RUN_BLOCKED_PRE_MUTATION`; after intent it creates `FAULT_PENDING` and follows exact containment/fence/restoration ordering or ends in `OPERATOR_REQUIRED` when proof is unavailable.
+### 21.4 Observer deadline and later restoration
+
+The observer has two non-authorizing deadlines:
+
+1. At `T1`, absence of `RUN_SUCCEEDED` means the successful remote envelope expired. The observer does not start local work and does not infer process termination.
+2. At `T3`, the observer performs exact read-only reconciliation of durable graph records, descriptors, receipts, markers, deterministic name lookup, every-known-invocation lookup, current jobs, controller/phase state, witness, delegate records, and handoff/escalation evidence. Missing or contradictory containment/handoff evidence reports fail-closed `OPERATOR_REQUIRED`/`BLOCKED`; the observer does not kill, retry, restore, or infer safety from absence.
+
+A same-run reconciliation controller needed after handoff is a distinct recorded controller epoch and is not silently added to the original `1905s` claim. Required restoration after controller-runtime failure remains mandatory when a full entered-mutator fence authorizes it, but later completion requires its own explicit bounded authority/evidence in the final design. The original observer never starts local work while that obligation is unresolved.
+
+Budget expiry never weakens proof. Before mutator intent it may produce `RUN_BLOCKED_PRE_MUTATION`; after intent it creates `FAULT_PENDING` and follows exact containment/fence/restoration/handoff ordering or ends in `OPERATOR_REQUIRED` when proof is unavailable.
 
 ## 22. Exact current invalid snapshot identity and handling
 
@@ -1002,7 +1141,7 @@ No transfer or local candidate work begins before `RUN_SUCCEEDED`.
 
 ## 24. Bounded post-restoration local work
 
-After `RUN_SUCCEEDED`, the original Task 5 local candidate boundaries remain and these fixed liveness limits apply:
+Only after durable creation and read-back of `RUN_SUCCEEDED` at `TS`, the original Task 5 local candidate boundaries remain and these fixed liveness limits apply. Neither `T1` expiry nor `T3` containment/handoff observation authorizes local work:
 
 | Stage | Deadline |
 |---|---:|
@@ -1036,22 +1175,26 @@ The snapshot's `ecosystem.config.js` remains archived only by exact pathname and
 
 ## 25. Evidence, secrets, retention, and terminal classification
 
-Required root-only evidence includes:
+Required root-only evidence is separated by graph layer and runtime receipt class:
 
-- canonical manifest, run ID, boot ID, upload inventory, and bundle byte identities;
-- static guard path/hash/ELF/static-startup evidence, next-stage hashes, and generic per-role environment-contract pass/fail/count/digest only;
-- controller and phase unit names, invocation IDs, dependencies, properties, all four guarded command arrays, and sanitized environment-contract digests;
-- request ordinals, canonical request-set digest, returned D-Bus/job request evidence, `EXECUTION_GATE_COMMITTED` or mutually exclusive `START_WINDOW_CLOSED`, and any losing late invocation evidence;
+- exact `B`/`H_B`, `R`, and `L`/`H_L` bytes, hashes, schema version, topological-order result, upload inventory, and bundle content identities, with no target-local inode fact in those ancestors;
+- uploaded-object installation receipts `I_U`/`H_IU`, separately identifying every final published path and same-open-object dev/inode/type/nlink/owner/mode/size/content tuple;
+- existing-target tool/config receipts `I_T`/`H_IT`, separately identifying approved Node/PM2/Nginx/system binary, module, and config objects without any PM2 live socket or worker-cgroup identity;
+- controller reservation `C0`/`H_C0`, controller start `C1`/`H_C1`, and controller invocation `C2`/`H_C2`, including exact unit name, actual invocation, boot, dependencies, complete properties, guarded controller array, sanitized environment-contract digest, manager timestamps, and exact read-back;
+- each phase context `P0[p]`/`H_P0[p]` and phase request `P1[p]`/`H_P1[p]`, including exact unit/controller identity, complete dependencies/properties/environment arrays, guarded pre-start/main/finalizer arrays, and exact read-back;
+- request ordinals `Q[p,1]` and optional `Q[p,2]`, both citing one byte-identical `P1[p]` and `H_P1[p]`, plus returned D-Bus/job request evidence without treating a reply as authorization;
+- `EXECUTION_GATE_COMMITTED` or mutually exclusive `START_WINDOW_CLOSED`, any losing late invocation evidence, and for closure the fresh deterministic-name lookup, every-known-invocation lookup, no-current-job lookup, lookup hashes, and complete gate-held recheck evidence;
+- worker runtime receipt `W[p]`, phase-bound record, exact cgroup path/ID, opened worker dev/inode identity, terminal witness, and exact loaded/unloaded reconciliation class;
+- each PM2 operation endpoint/runtime receipt `M[o]`, binding the live socket and daemon session separately from `I_T`, plus every PM2/Nginx `BEGIN` and `QUIESCED` record and exact stage timing class without raw RPC payloads;
 - start/stop/reload job identities and outcomes observed by a live subscriber, without treating an unobserved post-finalizer signal as mandatory;
-- phase bound records, cgroup path/ID, worker device/inode identities, terminal witnesses, and the exact loaded/unloaded reconciliation class;
-- immutable phase results, mandatory-result status, and outcome classifications;
-- phase-gate and global-lock acquisition/release records;
-- every PM2/Nginx `BEGIN` and `QUIESCED` record, exact stage timing class, and future validation-artifact identities without raw RPC payloads;
-- immutable marker timeline and contradiction checks;
+- static guard path/hash/ELF/static-startup evidence, same-open-file next-stage evidence, next-stage hashes, and generic per-role environment-contract pass/fail/count/digest only;
+- immutable phase results, mandatory-result status, outcome classifications, phase-gate/global-lock acquisition/release records, marker timeline, and contradiction checks;
 - sanitized preflight, maintenance, PM2, listener, Nginx, audit, snapshot, restoration, and public cache-field evidence;
 - exact invalid-partial pre/post-quarantine identity;
-- final local transfer/candidate evidence if the run reaches that boundary;
+- final local transfer/candidate evidence only if durable `RUN_SUCCEEDED` has been read back at `TS` and the run reaches that boundary;
 - journal references filtered by exact `_SYSTEMD_INVOCATION_ID`.
+
+Spike artifacts remain an untrusted candidate evidence class. Later final-design and frozen-validation artifact identities are recorded separately and never relabel a spike candidate as approved implementation bytes.
 
 No run automatically deletes its bundle, markers, evidence, units, quarantine, failed work, staging, local partials, or retained backups. Cleanup is separately reviewed and authorized.
 
@@ -1067,30 +1210,68 @@ Terminal run markers mean:
 
 No terminal result authorizes cleanup, a new production run, publication, or a later release task.
 
-## 26. Tests and future pre-plan architecture-validation gate
+## 26. Bounded architecture spike, frozen-design validation, and later tests
 
-### 26.1 One combined exact-target gate before planning
+### 26.1 Spike authority and environment
 
-Before implementation-plan writing, one combined architecture-validation gate must run with separately authorized access to exact target artifacts or exact approved copies in a nonproduction/exact-target-safe environment. This specification does not authorize acquiring artifacts from production, production access, or production mutation. The gate is future work and has not run.
+This exact revision is only a bounded nonproduction architecture-spike charter candidate. After fresh independent architecture and security approval of this exact charter revision and user re-review, a spike may run only after separate explicit authorization. It may use an approved local, isolated nonproduction, or exact-target-safe environment, public sources, locally built candidates, and exact target artifacts or approved copies obtained under separate authority.
 
-No implementation plan may be written until the gate freezes and fresh independent security and architecture reviewers approve all of these artifact families:
+This charter does not authorize artifact acquisition, production access, production service mutation, SSH/SCP, public probing, credentials, raw environment or opaque configuration access, deployment, shared-state writes, or adoption of candidate bytes. A charter approval can authorize only consideration of a separately approved spike; it cannot authorize validation, implementation planning, implementation, or production work.
 
-- exact distribution systemd-255/PID-1/cgroup-v2 behavior;
-- exact static first-exec guard bytes/build evidence and per-role raw-environment behavior;
-- exact installed PM2 version, Node binary, daemon/client/RPC modules, socket protocol, selected existing-daemon-only method, and relevant byte hashes;
-- exact `nginx.service`, every `ExecReload` command, Nginx binary/config identities, and worker-generation/drain behavior.
+### 26.2 Questions and required candidate outputs
 
-The systemd request/gate matrix must demonstrate:
+The spike may design and create untrusted **candidate** prototypes/artifacts only for:
+
+1. a canonical descriptor encoder/decoder, schemas, topological dependency checker, and fixed positive/negative test vectors;
+2. the static first-exec guard source/startup ABI/toolchain/build flags, candidate bytes, ELF/static provenance, raw-`envp` parser, and same-open-file next-stage execution/read mechanism;
+3. byte-complete candidate controller and phase transient definitions, including every exact property, `Environment`, `UnsetEnvironment`, command, dependency array, and manager-added read-back treatment;
+4. the exact installed-version PM2 existing-daemon-only private socket method, framing, request bytes, `pm_id`, callback boundary, bounded streaming selector, death/no-late-effect behavior, and proof strategy for no spawn/reconnect/fallback and no `pm2_env` materialization;
+5. the exact Nginx unit/`ExecReload`/binary/config identity model, config-read interval observation algorithm, job-to-generation causality rule, complete old-worker-absence algorithm, concurrency/substitution rejection, and candidate helper interface;
+6. uploaded-file, existing-tool, PM2 endpoint, and cgroup-worker receipt mechanisms, including no-symlink/no-hardlink/same-open-object/content revalidation; and
+7. exact systemd-255 candidate property tuples, worker-inode continuity experiments, finalizer/unload paths, and evidence for or against universal overlap of controller deactivation and dependent containment sufficient to tighten `1905s`.
+
+The spike report/artifact set must contain:
+
+- candidate canonical schema/encoder/decoder bytes and hashes, fixed test vectors, graph-back-edge negatives, and a proof that accepted graphs have the section 7.5 topological order;
+- candidate guard source and binary hashes, reproducible toolchain/startup provenance, ELF inspection, hostile-environment negatives, and same-open-file transition evidence;
+- byte-complete candidate controller/phase transient definitions and sanitized exact read-back diffs for every role and path;
+- exact PM2 source/module/version bindings, candidate method/framing/request/parser bytes, no-spawn process/syscall/source evidence, no-`pm2_env` evidence, and all specified death/timeout negatives;
+- exact Nginx unit/binary/config/`ExecReload` bindings, candidate generation/config-read algorithm and bytes, job/generation/drain evidence, and concurrency/timeout negatives;
+- candidate receipt schemas, open-object race negatives, and clear separation of `I_U`, `I_T`, `M[o]`, and `W[p]`;
+- target-tuple/deadline observations, including explicit evidence for or against complete overlap of controller deactivation and dependent-phase containment; and
+- a sanitized feasibility report that lists every unresolved mismatch as a blocker and contains no raw environment names/values outside the approved generic contract, `pm2_env`, opaque ecosystem content, credentials, cookies, tokens, response bodies, or secret-bearing data.
+
+### 26.3 Spike non-goals and stop conditions
+
+The spike must not write an implementation plan or production runbook; claim production readiness, final architecture approval, or validation success; install or execute candidate bytes in production; mutate real systemd/PM2/Nginx state; use production credentials; or treat a candidate artifact as approved implementation input. It must not relax no-auto-spawn, no-`pm2_env`, same-session completion, complete old-worker absence, gate retention, receipt integrity, deadlines, or fail-closed behavior. It must not fill a mismatch with “implementation decides,” a broad parser/status range, an unbounded wait, or a different target interface.
+
+If exact approved artifacts are unavailable under separate authority, a candidate cannot meet a load-bearing invariant, or secret/opaque boundaries cannot be maintained, the spike returns `BLOCKED`. It does not reinterpret this charter as a final implementation design.
+
+### 26.4 Later validation of a separately frozen final design
+
+After the spike, a new tracked final implementation design must incorporate the exact selected encoding and test vectors, guard/toolchain bytes and interface, complete transient arrays, PM2 method/framing/parser, Nginx generation/config-read algorithm, receipt mechanisms, target tuples, and deadline choices. Fresh independent architecture and security approval of that exact final-design revision plus user re-review must occur before a separately authorized validation gate.
+
+That later gate may execute and measure only the exact bytes and interfaces already frozen in the approved final design. It may not choose, redesign, patch, regenerate, broaden, or substitute any load-bearing interface. Any byte, identity, behavior, tuple, deadline, or evidence mismatch returns to final-design revision and fresh dual review/user re-review. Only after independent review and explicit acceptance of the validation artifacts may implementation-plan writing begin. The gate is future work and has not run.
+
+The frozen artifact families are:
+
+- exact distribution systemd-255/PID-1/cgroup-v2 behavior and exact frozen controller/phase definitions;
+- exact frozen static first-exec guard bytes/build evidence, same-open-file mechanism, and per-role raw-environment behavior;
+- exact frozen installed PM2/Node/module identities, existing-daemon-only socket method, framing/parser/request/callback interface, and byte hashes; and
+- exact frozen `nginx.service`, every `ExecReload` command, Nginx binary/config identity, config-read/generation algorithm, and complete old-worker-drain behavior.
+
+The later frozen-design validation systemd request/gate matrix must demonstrate, without modifying the frozen definitions:
 
 - request 1, one byte-identical request 2, lost replies, both delivery orders, same-name conflicts, controller death before pre-start, and no third request;
 - `ExecStartPre` in `.control`, creation/binding of the exact `worker` inode, continuity into phase `ExecStart` placement in `worker`, and `ExecStopPost` in `.control`;
 - the race between `EXECUTION_GATE_COMMITTED` and `START_WINDOW_CLOSED`, proving mutual exclusivity and that a losing late pre-start never reaches main;
+- immediately before closure while the global run lock and exact phase gate remain held, fresh deterministic-name absence, absence for every exact invocation learned from either request/job ledger, no current job for the deterministic name, complete boot/controller/request/marker rechecks, exact lookup evidence in the closure record, and fail-closed behavior for every unit, job, lookup error, disagreement, or same-name different invocation;
 - a gate-committed pre-`BOUND` main failure obtaining a valid worker witness and reconciliation;
 - finalizer witness behavior for success, `64`, `70`, `75`, signal, core, runtime timeout, explicit stop, controller-dependency stop, start/resource failure, finalizer failure, and SIGTERM-ignoring descendants;
 - pinned/read-back `CollectMode=inactive`, exact loaded tuples, successful immediate unload with no subscriber, and every forbidden unloaded case from section 17.4;
 - controller death after witness fsync/before finalizer exit, after finalizer exit/before read-back, same-name recreation, lookup disagreement, failed-unit retention, reset-failed simulation in isolation, and pre-witness disappearance.
 
-The environment/provenance matrix must demonstrate:
+The later frozen-design validation environment/provenance matrix must demonstrate:
 
 - the guard's exact ELF/static/startup contract and next-stage hash verification;
 - exact raw manager-generated environment for controller, pre-start, phase main, and finalizer roles;
@@ -1098,15 +1279,17 @@ The environment/provenance matrix must demonstrate:
 - rejection or harmlessness before next-stage execution under `LD_PRELOAD`, `LD_AUDIT`, `GLIBC_TUNABLES`, shell-function exports, `BASH_ENV`, `ENV`, `NODE_OPTIONS`, Node/npm variables, and ambient PM2 variables;
 - exact finalizer handling of validated `SERVICE_RESULT`, `EXIT_CODE`, and `EXIT_STATUS`.
 
-The PM2 matrix must name and freeze the exact method, request bytes, `pm_id`, callback envelope/timing, socket/daemon identities, and no-late-effect meaning. Source, byte identity, syscall/process traces, and negative cases must prove direct existing-daemon-only connection, no daemon launch/fork/spawn/fallback on every error, no materialized or decoded `pm2_env`, bounded streaming selection of approved non-secret acknowledgement fields, and the exact `5s + 15s + 15s + 5s = 40s` stage behavior. It must cover before-send death, after-send/before-callback death, callback loss, malformed response, permission/version/socket drift, target mismatch, helper death before durable `QUIESCED`, and deadline expiry.
+The later frozen-design validation PM2 matrix must compare the exact approved method, request bytes, `pm_id`, callback envelope/timing, socket/daemon receipt semantics, and no-late-effect meaning without changing them. Source, byte identity, syscall/process traces, and negative cases must prove direct existing-daemon-only connection, no daemon launch/fork/spawn/reconnect/fallback on every error, no materialized or decoded `pm2_env`, bounded streaming selection of approved non-secret acknowledgement fields, and the exact `5s + 15s + 15s + 5s = 40s` stage behavior. It must cover before-send death, after-send/before-callback death, callback loss, malformed response, permission/version/socket drift, target mismatch, helper death before durable `QUIESCED`, and deadline expiry.
 
-The Nginx matrix must freeze exact unit/binary/config/job identities and generation record bytes. It must prove exact job-to-generation binding, a nonempty disjoint new generation after the validated config-read interval, every old worker absent before generic `QUIESCED`, concurrency/substitution rejection, and the exact `5s + 15s + 10s + 25s + 5s = 60s` stage behavior. It must cover job done without generation, generation without old-worker absence, master/config drift, helper death, timeout, and maintenance/open directions.
+The later frozen-design validation Nginx matrix must compare the exact approved unit/binary/config/job identities, config-read algorithm, generation algorithm, and generation record bytes without changing them. It must prove exact job-to-generation binding, a nonempty disjoint new generation after the approved config-read interval, every old worker absent before generic `QUIESCED`, concurrency/substitution rejection, and the exact `5s + 15s + 10s + 25s + 5s = 60s` stage behavior. It must cover job done without generation, generation without old-worker absence, master/config drift, helper death, timeout, and maintenance/open directions.
 
-Artifacts must include exact transient definitions, canonical property/command/dependency read-back, request and gate records, cgroup/inode identities, guard inspection/build evidence, sanitized environment outcomes, witness bytes/hashes, loaded/unloaded tuples, PM2 source/trace/protocol evidence, Nginx generation/job evidence, stage timing, and negative-case results. Raw environment, `pm2_env`, opaque ecosystem content, credentials, and secret-bearing values remain prohibited.
+Validation artifacts must include exact frozen transient definitions, canonical property/command/dependency read-back, request and gate records, cgroup/inode identities, guard inspection/build evidence, sanitized environment outcomes, witness bytes/hashes, loaded/unloaded tuples, PM2 source/trace/protocol evidence, Nginx config-read/generation/job evidence, stage timing, deadline-overlap evidence, and negative-case results. Raw environment, `pm2_env`, opaque ecosystem content, credentials, and secret-bearing values remain prohibited.
 
-If exact artifacts cannot be obtained under separate authority, a target tuple falls outside the closed matrices, the worker-inode continuity cannot be proved, the guard contract fails, PM2 cannot avoid auto-spawn or `pm2_env`, or Nginx cannot prove old-worker absence, the gate fails. Architecture redesign and fresh review precede planning; the rule is never weakened to fit the target.
+If exact artifacts cannot be obtained under separate authority, any observed byte/interface differs from the frozen final design, a target tuple falls outside the closed matrices, worker-inode continuity cannot be proved, the guard contract fails, PM2 cannot avoid auto-spawn/reconnect/fallback or `pm2_env`, Nginx cannot prove complete old-worker absence, or universal deadline overlap is not proved, validation fails. Any design mismatch returns to a new final-design revision, fresh independent architecture/security approval, and user re-review before validation can be retried; the rule is never weakened to fit the target.
 
-### 26.2 Later full integration suite
+Independent reviewers must examine the complete validation artifact set and explicitly accept the frozen-design/observed-result match. Until that acceptance, implementation planning remains prohibited.
+
+### 26.5 Later full integration suite
 
 After a separately approved implementation exists, the later suite must additionally cover:
 
@@ -1117,7 +1300,7 @@ After a separately approved implementation exists, the later suite must addition
 - `BindsTo=` phase stop on exact controller loss and stop/reconcile-only behavior after controller recreation;
 - cancellation before gate, `BOUND`, `ENTERED`, and every mutation/delegated-operation boundary;
 - a gate held by a hung operation, immediate containment, finalizer witness, later cancel fence, and unresolved-delegate escalation without synthesized closure;
-- all PM2/Nginx death, drift, timeout, concurrency, old-worker, no-auto-spawn, and opacity cases frozen by the pre-plan gate;
+- all PM2/Nginx death, drift, timeout, concurrency, old-worker, no-auto-spawn, and opacity cases frozen by the approved final design and confirmed unchanged by its accepted validation artifacts;
 - reboot after reservation and at every request/gate/bound/entered/result/witness/fence phase;
 - boot mismatch suppressing query, reissue, adoption/stop, witness acceptance, restoration, and mutation;
 - late invalid-partial drift and quarantine collision safety closure;
@@ -1130,22 +1313,24 @@ Any failed case blocks implementation review. The implementation and test bytes 
 
 The blocked round-5 scripts and their prior local suite remain historical evidence only. They are not production inputs and are not wrapped by this architecture.
 
-The allowed sequence is:
+The mandatory sequence is:
 
-1. corrected tracked design revision;
-2. fresh independent security and architecture design approval plus user re-review;
-3. successful future combined exact-target systemd request/gate/unload, static-guard/environment, PM2, and Nginx architecture-validation gate plus independent review of its artifacts;
-4. local implementation-plan writing;
-5. local implementation and static tests without production access;
-6. full isolated systemd-255/cgroup-v2 integration suite;
-7. exact manifest/run identity generation and independent review;
-8. separate explicit production authorization;
-9. governed root-only upload and transient execution;
-10. independent post-run security and Task 5 review before continuing the release.
+1. this tracked **architecture-spike charter** correction;
+2. fresh independent architecture and security review of this exact charter revision plus user re-review, with any approval limited to spike-charter authority;
+3. separate explicit authorization for the bounded nonproduction spike and for any exact artifact access;
+4. spike execution producing only candidate prototypes/artifacts and a sanitized feasibility report;
+5. a new tracked **final implementation design** revision incorporating the exact selected canonical encoding, guard/toolchain bytes and interface, complete transient arrays, exact PM2 method/framing/parser, exact Nginx generation/config-read algorithm, exact receipt mechanisms, target tuples, and deadline choices;
+6. fresh independent architecture and security approval of that exact final-design revision plus user re-review;
+7. a separate validation gate of the frozen final design, executing/measuring only the already-selected bytes and interfaces without choosing, redesigning, patching, regenerating, or broadening them; any mismatch returns to step 5 and fresh review;
+8. independent review of the complete validation artifacts and explicit acceptance of the frozen-design/observed-result match;
+9. only then may implementation-plan writing begin; and
+10. later local implementation/static tests, the full isolated systemd-255/cgroup-v2 integration suite, exact implementation-bundle base-manifest/run generation and review, separate production authorization, governed root-only upload/execution, and independent post-run security and Task 5 review remain subsequent stages.
 
-No implementation planning or production work may begin from this specification alone. No permanent daemon, static/enabled unit, timer, socket, path unit, package, Nginx config change, PM2 config change, or boot recovery mechanism is introduced.
+Implementation-bundle `B`, `H_B`, `R`, `L`, and `H_L` generation occurs only at step 10 after the final design is frozen, approved, validated, and its validation artifacts accepted. Target-local `I_U`, `I_T`, `M[o]`, and `W[p]` receipts still occur only at their defined downstream points after upload/publication or after the referenced target/runtime object exists; none feeds the run ID.
 
-A future Task 5 implementation is ready for production review only when all required tests pass, exact artifact identities are independently approved, current production preflight still matches, and the user separately authorizes production execution. This specification and its commit do not authorize implementation, production access, or release continuation.
+No implementation planning, validation, implementation, or production work may begin from this charter alone. No permanent daemon, static/enabled unit, timer, socket, path unit, package, Nginx config change, PM2 config change, or boot recovery mechanism is introduced.
+
+A future Task 5 implementation becomes eligible for production review only within step 10 after the required local/static and isolated integration suites pass, exact implementation-bundle identities are independently approved, and current production preflight still matches. Production execution still requires separate explicit user authorization. This specification and its commit authorize none of those later stages, production access, or release continuation.
 
 ## 28. Architecture references
 
@@ -1162,6 +1347,8 @@ Load-bearing review must use the systemd v255 versions of:
 
 Kernel semantics must be reviewed against the Linux cgroup v2 documentation for `cgroup.events`, recursive `populated`, cgroup identity, and removal. Static first-exec evidence must be reviewed against the target ELF ABI and exact inspection/build artifacts proving ELF type, absence of `PT_INTERP`/`DT_NEEDED`/`RPATH`/`RUNPATH`, direct startup behavior, and fixed next-stage `execve`.
 
-PM2 behavior must be reviewed against the exact installed-version Node binary and pinned daemon/client/RPC source and bytes, selected socket method/request/callback protocol, process/syscall traces, no-auto-spawn negatives, and opaque-response evidence. Generic high-level APIs, CLI polling, or any surface that materializes `pm2_env` are not authoritative.
+The later final design's selected canonical descriptor encoding, schema files, fixed test vectors, and graph checker become the authoritative identity basis only after exact incorporation, fresh dual approval/user re-review, frozen validation, and independent validation-artifact acceptance. The same rule applies to the selected same-open-file execution/read mechanism and exact guard/helper bytes: spike prototypes and generic pathname-check patterns are not authoritative.
 
-Nginx behavior must be reviewed against the exact installed binary/config identities, `nginx.service` and every `ExecReload` definition, Nginx reload/generation/drain semantics, process identities, and exact systemd v255 D-Bus job behavior. A completed reload job or a new generation without complete old-worker absence is not generic `QUIESCED`.
+PM2 behavior must be reviewed against the exact installed-version Node binary and pinned daemon/client/RPC source and bytes. The authoritative PM2 basis must include the final-design-selected private socket open/connect method, exact framing/request bytes, callback envelope, bounded streaming parser bytes, endpoint/runtime receipt rules, process/syscall traces, no-auto-spawn/reconnect/fallback negatives, and opaque-response/no-`pm2_env` evidence. Generic high-level APIs, CLI polling, a broad parser, or any surface that materializes `pm2_env` are not authoritative.
+
+Nginx behavior must be reviewed against the exact installed binary/config identities, `nginx.service` and every `ExecReload` definition, Nginx reload/generation/drain semantics, process identities, and exact systemd v255 D-Bus job behavior. The authoritative Nginx basis must include the final-design-selected config-read interval observation algorithm, job-to-generation causality rule, complete old-worker-absence algorithm, generation record schema, and concurrency/substitution negatives. A completed reload job or a new generation without complete old-worker absence is not generic `QUIESCED`.
