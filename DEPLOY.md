@@ -230,6 +230,32 @@ assert_port_3000_loopback_only() {
   done
 }
 
+wait_for_blog_root() {
+  local expected_pid="$1"
+  local deadline_ms now_ms remaining_ms request_ms request_timeout status=''
+  deadline_ms=$(( $(date +%s%3N) + 30000 ))
+  while :; do
+    now_ms="$(date +%s%3N)"
+    remaining_ms=$(( deadline_ms - now_ms ))
+    (( remaining_ms > 0 )) || break
+    test "$(pm2 pid blog)" = "$expected_pid" || return 1
+    now_ms="$(date +%s%3N)"
+    remaining_ms=$(( deadline_ms - now_ms ))
+    (( remaining_ms > 0 )) || break
+    request_ms="$remaining_ms"
+    (( request_ms > 1000 )) && request_ms=1000
+    printf -v request_timeout '%d.%03d' $(( request_ms / 1000 )) $(( request_ms % 1000 ))
+    status="$(curl -q --proto '=http' --globoff -sS --connect-timeout "$request_timeout" --max-time "$request_timeout" -o /dev/null -w '%{http_code}' -- http://127.0.0.1:3000/ 2>/dev/null || true)"
+    test "$(pm2 pid blog)" = "$expected_pid" || return 1
+    now_ms="$(date +%s%3N)"
+    if [[ "$status" = 302 ]] && (( now_ms <= deadline_ms )); then return 0; fi
+    remaining_ms=$(( deadline_ms - now_ms ))
+    (( remaining_ms > 200 )) && sleep 0.2
+  done
+  printf 'blog root readiness timed out for PID %s (last status: %s)\n' "$expected_pid" "$status" >&2
+  return 1
+}
+
 enable_maintenance() {
   sudo sed -i 's@^[[:space:]]*#[[:space:]]*include[[:space:]]\+/etc/nginx/snippets/blog-maintenance[.]conf;@    include /etc/nginx/snippets/blog-maintenance.conf;@' "$NGINX_SITE" || return 1
   test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1 || return 1
@@ -467,8 +493,8 @@ test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
 pm2 start ecosystem.config.js --only blog --update-env
 CANDIDATE_PID="$(pm2 pid blog)"
 [[ "$CANDIDATE_PID" =~ ^[1-9][0-9]*$ ]]
+wait_for_blog_root "$CANDIDATE_PID"
 assert_port_3000_loopback_only
-test "$(curl -q --proto '=http' --globoff -sS -o /dev/null -w '%{http_code}' -- http://127.0.0.1:3000/)" = 302
 
 #### 生产步骤 8：通过 anonymous pipe 发布
 test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
@@ -522,6 +548,7 @@ pm2 restart blog --update-env
 FINAL_PID="$(pm2 pid blog)"
 [[ "$FINAL_PID" =~ ^[1-9][0-9]*$ ]]
 test "$FINAL_PID" != "$CANDIDATE_PID"
+wait_for_blog_root "$FINAL_PID"
 assert_port_3000_loopback_only
 
 #### 生产步骤 11：执行 localhost smoke
@@ -581,6 +608,46 @@ BACKUP_DIR=/root/blog-english-release-20260804/coordinated-backup
 INCOMING_DIR=/root/blog-english-release-20260804/incoming
 NGINX_SITE=/etc/nginx/sites-available/blog.conf
 ACTIVE_MAINTENANCE='^[[:space:]]*include[[:space:]]+/etc/nginx/snippets/blog-maintenance[.]conf;$'
+
+assert_port_3000_loopback_only() {
+  local listener
+  local -a listeners=()
+  mapfile -t listeners < <(ss -H -ltn 'sport = :3000' | awk '{print $4}')
+  test "${#listeners[@]}" -ge 1
+  for listener in "${listeners[@]}"; do
+    case "$listener" in
+      '127.0.0.1:3000'|'[::1]:3000') ;;
+      *) printf 'non-loopback port 3000 listener: %s\n' "$listener" >&2; return 1 ;;
+    esac
+  done
+}
+
+wait_for_blog_root() {
+  local expected_pid="$1"
+  local deadline_ms now_ms remaining_ms request_ms request_timeout status=''
+  deadline_ms=$(( $(date +%s%3N) + 30000 ))
+  while :; do
+    now_ms="$(date +%s%3N)"
+    remaining_ms=$(( deadline_ms - now_ms ))
+    (( remaining_ms > 0 )) || break
+    test "$(pm2 pid blog)" = "$expected_pid" || return 1
+    now_ms="$(date +%s%3N)"
+    remaining_ms=$(( deadline_ms - now_ms ))
+    (( remaining_ms > 0 )) || break
+    request_ms="$remaining_ms"
+    (( request_ms > 1000 )) && request_ms=1000
+    printf -v request_timeout '%d.%03d' $(( request_ms / 1000 )) $(( request_ms % 1000 ))
+    status="$(curl -q --proto '=http' --globoff -sS --connect-timeout "$request_timeout" --max-time "$request_timeout" -o /dev/null -w '%{http_code}' -- http://127.0.0.1:3000/ 2>/dev/null || true)"
+    test "$(pm2 pid blog)" = "$expected_pid" || return 1
+    now_ms="$(date +%s%3N)"
+    if [[ "$status" = 302 ]] && (( now_ms <= deadline_ms )); then return 0; fi
+    remaining_ms=$(( deadline_ms - now_ms ))
+    (( remaining_ms > 200 )) && sleep 0.2
+  done
+  printf 'blog root readiness timed out for PID %s (last status: %s)\n' "$expected_pid" "$status" >&2
+  return 1
+}
+
 test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
 pm2 stop blog
 (
@@ -609,8 +676,10 @@ test "$(stat -c '%a:%u:%g:%s:%Y' ecosystem.config.js)" = "$(cat "$BACKUP_DIR/eco
 if [[ "$(cat "$BACKUP_DIR/operations-state")" = absent ]]; then test ! -e var/operations; fi
 npm run audit-localized-content
 pm2 start ecosystem.config.js --only blog --update-env
-[[ "$(pm2 pid blog)" =~ ^[1-9][0-9]*$ ]]
-test "$(curl -q --proto '=http' --globoff -sS -o /dev/null -w '%{http_code}' -- http://127.0.0.1:3000/)" = 302
+RESTORED_PID="$(pm2 pid blog)"
+[[ "$RESTORED_PID" =~ ^[1-9][0-9]*$ ]]
+wait_for_blog_root "$RESTORED_PID"
+assert_port_3000_loopback_only
 rm -rf -- "$INCOMING_DIR"
 # 旧版本 localhost smoke 全部通过后，才按生产步骤 13 关闭 maintenance，并重新执行旧版本 public smoke。
 ```

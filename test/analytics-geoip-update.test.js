@@ -1100,6 +1100,33 @@ test('English translation release runbook pins candidate publication, fd-3 crede
     '  done',
     '}'
   ].join('\n');
+  const exactReadinessFunction = [
+    'wait_for_blog_root() {',
+    '  local expected_pid="$1"',
+    "  local deadline_ms now_ms remaining_ms request_ms request_timeout status=''",
+    '  deadline_ms=$(( $(date +%s%3N) + 30000 ))',
+    '  while :; do',
+    '    now_ms="$(date +%s%3N)"',
+    '    remaining_ms=$(( deadline_ms - now_ms ))',
+    '    (( remaining_ms > 0 )) || break',
+    '    test "$(pm2 pid blog)" = "$expected_pid" || return 1',
+    '    now_ms="$(date +%s%3N)"',
+    '    remaining_ms=$(( deadline_ms - now_ms ))',
+    '    (( remaining_ms > 0 )) || break',
+    '    request_ms="$remaining_ms"',
+    '    (( request_ms > 1000 )) && request_ms=1000',
+    "    printf -v request_timeout '%d.%03d' $(( request_ms / 1000 )) $(( request_ms % 1000 ))",
+    '    status="$(curl -q --proto \'=http\' --globoff -sS --connect-timeout "$request_timeout" --max-time "$request_timeout" -o /dev/null -w \'%{http_code}\' -- http://127.0.0.1:3000/ 2>/dev/null || true)"',
+    '    test "$(pm2 pid blog)" = "$expected_pid" || return 1',
+    '    now_ms="$(date +%s%3N)"',
+    '    if [[ "$status" = 302 ]] && (( now_ms <= deadline_ms )); then return 0; fi',
+    '    remaining_ms=$(( deadline_ms - now_ms ))',
+    '    (( remaining_ms > 200 )) && sleep 0.2',
+    '  done',
+    '  printf \'blog root readiness timed out for PID %s (last status: %s)\\n\' "$expected_pid" "$status" >&2',
+    '  return 1',
+    '}'
+  ].join('\n');
   const exactPostOpenArtifactArray = [
     '  local -a expected_artifacts=(',
     '    blog.db',
@@ -1212,10 +1239,26 @@ test('English translation release runbook pins candidate publication, fd-3 crede
     );
 
     assert.ok(productionBlock.includes(exactListenerFunction), 'exhaustive exact-port listener function missing');
+    assert.ok(productionBlock.includes(exactReadinessFunction), 'bounded PID-stable readiness function missing');
+    assert.equal(
+      productionBlock.split('test "$(pm2 pid blog)" = "$expected_pid" || return 1').length - 1,
+      2,
+      'readiness must verify the expected PID before and after every probe'
+    );
+    assert.doesNotMatch(
+      productionBlock,
+      /return 1\n}\n\n(?:curl|test "\$\(curl)/,
+      'readiness must not run an unchecked probe after the wall-clock deadline'
+    );
+    assert.deepEqual(
+      productionBlock.split('\n').filter(line => line.startsWith('wait_for_blog_root ')),
+      ['wait_for_blog_root "$CANDIDATE_PID"', 'wait_for_blog_root "$FINAL_PID"'],
+      'bounded readiness must run for candidate and final PIDs'
+    );
     assert.equal(
       productionBlock.split('\n').filter(line => line === 'assert_port_3000_loopback_only').length,
       2,
-      'exhaustive listener proof must run after candidate start and final restart'
+      'exhaustive listener proof must run after candidate and final readiness'
     );
     assert.doesNotMatch(productionBlock, /ss -ltn \| grep/, 'substring listener matching must not be used');
     for (const route of [
@@ -1385,6 +1428,8 @@ test('English translation release runbook pins candidate publication, fd-3 crede
       'whole coordinated backup restoration after partial publication missing'
     );
     assert.match(preOpenRollback, /禁止逐篇删除或只恢复其中一个组件/);
+    assert.ok(preOpenRollback.includes(exactListenerFunction), 'rollback exact-port listener function missing');
+    assert.ok(preOpenRollback.includes(exactReadinessFunction), 'rollback bounded PID-stable readiness function missing');
     assertOrdered(preOpenRollback, [
       'pm2 stop blog',
       'sha256sum -c SHA256SUMS',
@@ -1394,7 +1439,10 @@ test('English translation release runbook pins candidate publication, fd-3 crede
       'cp --archive -- "$BACKUP_DIR/blog.db" blog.db',
       'tar --extract --preserve-permissions --file "$BACKUP_DIR/content-state.tar"',
       'cp --archive --remove-destination -- "$BACKUP_DIR/ecosystem.config.js" ecosystem.config.js',
-      'pm2 start ecosystem.config.js --only blog --update-env'
+      'pm2 start ecosystem.config.js --only blog --update-env',
+      'RESTORED_PID="$(pm2 pid blog)"',
+      'wait_for_blog_root "$RESTORED_PID"',
+      'assert_port_3000_loopback_only'
     ], 'whole coordinated pre-open restore');
     assert.match(
       postOpenRecovery,
@@ -1445,6 +1493,44 @@ test('English translation release runbook pins candidate publication, fd-3 crede
     () => validateEnglishReleaseContract(deploy, planStagesBeforeMaintenance),
     /Task 11 maintenance-only staging order/
   );
+
+  const readinessRemoved = deploy
+    .replace('wait_for_blog_root "$CANDIDATE_PID"', ': # candidate readiness bypassed')
+    .replace('wait_for_blog_root "$FINAL_PID"', ': # final readiness bypassed')
+    .replace('wait_for_blog_root "$RESTORED_PID"', ': # restored readiness bypassed');
+  assert.notEqual(readinessRemoved, deploy, 'readiness mutation must change the document');
+  assert.throws(() => validateEnglishReleaseContract(readinessRemoved), /bounded readiness/);
+
+  const readinessPidChecksRemoved = deploy.replaceAll(
+    '    test "$(pm2 pid blog)" = "$expected_pid" || return 1',
+    '    : # PID drift ignored'
+  );
+  assert.notEqual(readinessPidChecksRemoved, deploy, 'readiness PID mutation must change the document');
+  assert.throws(() => validateEnglishReleaseContract(readinessPidChecksRemoved), /PID-stable readiness/);
+
+  const readinessPostProbePidCheckRemoved = deploy.replace(
+    '    status="$(curl -q --proto \'=http\' --globoff -sS --connect-timeout "$request_timeout" --max-time "$request_timeout" -o /dev/null -w \'%{http_code}\' -- http://127.0.0.1:3000/ 2>/dev/null || true)"\n    test "$(pm2 pid blog)" = "$expected_pid" || return 1',
+    '    status="$(curl -q --proto \'=http\' --globoff -sS --connect-timeout "$request_timeout" --max-time "$request_timeout" -o /dev/null -w \'%{http_code}\' -- http://127.0.0.1:3000/ 2>/dev/null || true)"\n    : # post-probe PID drift ignored'
+  );
+  assert.notEqual(readinessPostProbePidCheckRemoved, deploy, 'post-probe PID mutation must change the document');
+  assert.throws(() => validateEnglishReleaseContract(readinessPostProbePidCheckRemoved), /PID-stable readiness/);
+
+  for (const [label, from, to] of [
+    ['wall-clock deadline', 'deadline_ms=$(( $(date +%s%3N) + 30000 ))', 'deadline_ms=$(( $(date +%s%3N) + 300000 ))'],
+    ['connection timeout', '--connect-timeout "$request_timeout"', ''],
+    ['request timeout', '--max-time "$request_timeout"', '']
+  ]) {
+    const mutated = deploy.replace(from, to);
+    assert.notEqual(mutated, deploy, `${label} readiness mutation must change the document`);
+    assert.throws(() => validateEnglishReleaseContract(mutated), /bounded PID-stable readiness/);
+  }
+
+  const uncheckedPostDeadlineProbe = deploy.replace(
+    "  printf 'blog root readiness timed out for PID %s (last status: %s)\\n' \"$expected_pid\" \"$status\" >&2",
+    "  curl -q --proto '=http' --globoff -sS --max-time 1 http://127.0.0.1:3000/ >/dev/null\n  printf 'blog root readiness timed out for PID %s (last status: %s)\\n' \"$expected_pid\" \"$status\" >&2"
+  );
+  assert.notEqual(uncheckedPostDeadlineProbe, deploy, 'post-deadline probe mutation must change the document');
+  assert.throws(() => validateEnglishReleaseContract(uncheckedPostDeadlineProbe), /bounded PID-stable readiness/);
 
   const nonLoopbackListenerAccepted = deploy.replace(
     "'127.0.0.1:3000'|'[::1]:3000') ;;",
@@ -1532,7 +1618,7 @@ test('English translation release runbook pins candidate publication, fd-3 crede
   assert.notEqual(postOpenRestoreAllowed, deploy, 'post-open rollback mutation must change the document');
   assert.throws(() => validateEnglishReleaseContract(postOpenRestoreAllowed), /post-open recovery/);
 
-  t.diagnostic('killed critical-order, pre-maintenance staging, independent digest, plan-order, explicit non-loopback listener, strict capture isolation, snapshot count-before-index, exact capture artifacts/manifest, explicit capture status, post-open re-entry/arming, HS256, five-minute, fd-3, whole-backup, ecosystem, and post-open rollback mutations');
+  t.diagnostic('killed critical-order, pre-maintenance staging, independent digest, plan-order, bounded PID-stable readiness, explicit non-loopback listener, strict capture isolation, snapshot count-before-index, exact capture artifacts/manifest, explicit capture status, post-open re-entry/arming, HS256, five-minute, fd-3, whole-backup, ecosystem, and post-open rollback mutations');
 });
 
 test('Nginx caches static assets only by explicit prefixes and gates public traffic during maintenance', async () => {
