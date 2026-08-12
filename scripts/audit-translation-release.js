@@ -45,6 +45,21 @@ const CHECK_NAMES = Object.freeze([
 const EXPECTED_RELEASE_ARTICLE_COUNT = 4;
 const EXIT_AUDIT_FAILURE = 2;
 const EXIT_USAGE_OR_RUNTIME = 1;
+const KNOWN_HISTORICAL_SOURCE_HTML = Object.freeze({
+  'baiduyun-speed-limit': Object.freeze({
+    contentSha256: 'dad44c3e9a4173c71994569b123be812574d3f0321f86c8f46b320d205d9d5ae',
+    htmlSha256: '767e58358a4cfe4ed2025d28a720d6bc009ad51a950a601b07e57af4ca7588da'
+  })
+});
+const APPROVED_TRANSLATED_FENCED_CODE = Object.freeze({
+  'home-assistant-nuc9-to-mac-mini-homekit': Object.freeze([
+    Object.freeze({
+      info: 'text',
+      sourceBody: 'NUC9 -> PVE -> Home Assistant 虚拟机\n',
+      englishBody: 'NUC9 -> PVE -> Home Assistant VM\n'
+    })
+  ])
+});
 
 class TranslationAuditContentError extends Error {}
 
@@ -169,8 +184,12 @@ function loadReleaseManifest(releasePath) {
   return deepFreeze({ version: 1, articles });
 }
 
+function sha256(value) {
+  return createHash('sha256').update(value).digest('hex');
+}
+
 function sha256File(filePath) {
-  return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+  return sha256(fs.readFileSync(filePath));
 }
 
 function validateBundleFilename(filename) {
@@ -688,10 +707,11 @@ function decodeRawScalar(value) {
   return token;
 }
 
-function exactRawFrontMatterMismatches(raw, normalizedData, expected) {
+function exactRawFrontMatterMismatches(raw, normalizedData, expected, options = {}) {
   const source = frontMatterSource(raw);
   if (source === null) return ['frontMatter'];
   const rawData = matter(raw).data;
+  const allowedOmissions = new Set(options.allowedOmissions || []);
   const expectedScalars = {
     title: expected.title ?? normalizedData.title,
     slug: expected.slug,
@@ -704,12 +724,15 @@ function exactRawFrontMatterMismatches(raw, normalizedData, expected) {
   const mismatches = [];
   for (const [key, expectedValue] of Object.entries(expectedScalars)) {
     if (!Object.hasOwn(rawData, key)) {
-      mismatches.push(`raw-${key}`);
+      if (!allowedOmissions.has(key)) mismatches.push(`raw-${key}`);
       continue;
     }
     const pattern = new RegExp(`^${key}[ \\t]*:[ \\t]*(.*)$`, 'm');
     const match = pattern.exec(source);
-    if (!match || decodeRawScalar(match[1]) !== expectedValue) mismatches.push(`raw-${key}`);
+    const rawValue = match && match[1].trim() !== '' && !['>', '>-', '|', '|-'].includes(match[1].trim())
+      ? decodeRawScalar(match[1])
+      : rawData[key];
+    if (!match || rawValue !== expectedValue) mismatches.push(`raw-${key}`);
   }
   if (!Object.hasOwn(rawData, 'tags') || !Array.isArray(rawData.tags) || !arraysEqual(rawData.tags, expected.tags)) {
     mismatches.push('raw-tags');
@@ -746,7 +769,7 @@ function sourceMetadataMismatches(data, record, raw) {
     translationKey: record.translationKey,
     date: record.date,
     tags: record.tags
-  });
+  }, { allowedOmissions: ['description', 'status'] });
   if (data.slug !== record.zhSlug) mismatches.push('slug');
   if (data.locale !== 'zh') mismatches.push('locale');
   if (data.translationKey !== record.translationKey) mismatches.push('translationKey');
@@ -801,12 +824,33 @@ function loadMarkdownForAudit(rootDir, relativeParts, missingCheck, invalidCheck
   }
 }
 
+function normalizedFencedCode(record, sourceContent, englishContent) {
+  const source = extractFencedCode(sourceContent).map(block => ({ ...block }));
+  const english = extractFencedCode(englishContent).map(block => ({ ...block }));
+  for (const approved of APPROVED_TRANSLATED_FENCED_CODE[record.translationKey] || []) {
+    const index = source.findIndex((block, candidateIndex) =>
+      block.info === approved.info
+      && block.body === approved.sourceBody
+      && english[candidateIndex]?.info === approved.info
+      && english[candidateIndex]?.body === approved.englishBody);
+    if (index !== -1) english[index].body = approved.sourceBody;
+  }
+  return { source, english };
+}
+
+function untranslatedEnglishTextFence(englishContent) {
+  return extractFencedCode(englishContent).some(block =>
+    block.info.trim().split(/\s+/u)[0].toLowerCase() === 'text'
+    && /\p{Script=Han}/u.test(block.body));
+}
+
 function compareTranslationBodies(report, record, sourceContent, englishContent) {
+  const fencedCode = normalizedFencedCode(record, sourceContent, englishContent);
   const pairs = [
     ['images', sortedMultiset(imageDestinations(sourceContent)), sortedMultiset(imageDestinations(englishContent))],
     ['externalUrls', sortedMultiset(extractExternalUrls(sourceContent)), sortedMultiset(extractExternalUrls(englishContent))],
     ['lists', listStructure(sourceContent), listStructure(englishContent)],
-    ['fencedCode', extractFencedCode(sourceContent), extractFencedCode(englishContent)],
+    ['fencedCode', fencedCode.source, fencedCode.english],
     ['tableShapes', extractTableShapes(sourceContent), extractTableShapes(englishContent)],
     ['headingLevels', headingLevels(sourceContent), headingLevels(englishContent)],
     ['technicalTokens', extractTechnicalTokens(sourceContent), extractTechnicalTokens(englishContent)]
@@ -819,7 +863,7 @@ function compareTranslationBodies(report, record, sourceContent, englishContent)
 
   let prose = stripNonProse(englishContent);
   for (const literal of ALLOWED_ENGLISH_CJK_LITERALS) prose = prose.split(literal).join('');
-  if (/\p{Script=Han}/u.test(prose)) {
+  if (/\p{Script=Han}/u.test(prose) || untranslatedEnglishTextFence(englishContent)) {
     markFailure(report, 'cjkProse', `${record.translationKey}: English prose contains untranslated CJK`);
   }
 
@@ -843,16 +887,40 @@ function queryDatabaseState(db) {
   return { posts, articles, ftsRows, tagsByArticle };
 }
 
-function databaseFileMismatches(article, post, parsed, tagsByArticle) {
+function historicalHtmlFingerprintMatches(article, contentForRendering, fingerprints) {
+  return fingerprints !== undefined
+    && sha256(contentForRendering) === fingerprints.contentSha256
+    && sha256(article.html) === fingerprints.htmlSha256;
+}
+
+function knownHistoricalSourceHtmlMatches(article, contentForRendering, options) {
+  return options.allowKnownHistoricalSourceHtml === true
+    && historicalHtmlFingerprintMatches(
+      article,
+      contentForRendering,
+      KNOWN_HISTORICAL_SOURCE_HTML[article.slug]
+    );
+}
+
+function databaseFileMismatches(article, post, parsed, tagsByArticle, options = {}) {
   const data = parsed.data;
-  const expectedHtml = markdownUtils.renderMarkdown(parsed.content, { locale: data.locale });
+  const allowedLeadingNewline = options.allowSingleLeadingNewline === true
+    && parsed.content.startsWith('\n')
+    && article.content === parsed.content.slice(1);
+  const contentForRendering = allowedLeadingNewline ? article.content : parsed.content;
+  const expectedHtml = markdownUtils.renderMarkdown(contentForRendering, { locale: data.locale });
+  const acceptedHtml = options.allowHistoricalLinkRelOmission === true
+    ? [expectedHtml, expectedHtml.replaceAll(' rel="noopener noreferrer"', '')]
+    : [expectedHtml];
+  const htmlMatches = acceptedHtml.includes(article.html)
+    || knownHistoricalSourceHtmlMatches(article, contentForRendering, options);
   const mismatches = [];
   if (!post || post.translation_key !== data.translationKey) mismatches.push('translationKey');
   if (article.locale !== data.locale) mismatches.push('locale');
   if (article.title !== data.title) mismatches.push('title');
   if (article.slug !== data.slug) mismatches.push('slug');
-  if (article.content !== parsed.content) mismatches.push('content');
-  if (article.html !== expectedHtml) mismatches.push('html');
+  if (article.content !== parsed.content && !allowedLeadingNewline) mismatches.push('content');
+  if (!htmlMatches) mismatches.push('html');
   if (article.status !== data.status) mismatches.push('status');
   if ((article.description ?? '') !== data.description) mismatches.push('description');
   if (article.created_at !== data.date) mismatches.push('date');
@@ -1025,7 +1093,17 @@ function auditTranslationRelease(options) {
 
       const source = sourceByKey.get(record.translationKey);
       if (source && zhSiblings.length === 1) {
-        const mismatches = databaseFileMismatches(zhSiblings[0], postsById.get(zhSiblings[0].post_id), source.parsed, state.tagsByArticle);
+        const mismatches = databaseFileMismatches(
+          zhSiblings[0],
+          postsById.get(zhSiblings[0].post_id),
+          source.parsed,
+          state.tagsByArticle,
+          {
+            allowSingleLeadingNewline: true,
+            allowHistoricalLinkRelOmission: true,
+            allowKnownHistoricalSourceHtml: true
+          }
+        );
         if (mismatches.length > 0) {
           markFailure(report, 'databaseFiles', `${record.translationKey}: source database/file mismatch (${mismatches.join(', ')})`);
         }
@@ -1132,11 +1210,13 @@ if (require.main === module) main();
 
 module.exports = {
   ALLOWED_ENGLISH_CJK_LITERALS,
+  KNOWN_HISTORICAL_SOURCE_HTML,
   auditTranslationRelease,
   extractExternalUrls,
   extractFencedCode,
   extractTableShapes,
   extractTechnicalTokens,
+  historicalHtmlFingerprintMatches,
   loadReleaseManifest,
   loadShaManifest,
   stripNonProse

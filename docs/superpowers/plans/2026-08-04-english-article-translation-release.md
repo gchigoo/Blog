@@ -946,7 +946,7 @@ date: 2026-05-10T16:00:00.000Z
 
 - [ ] **Step 2: Translate every visible text block naturally**
 
-Preserve both text code blocks, all product/platform names, port `8123`, every troubleshooting step, the exact quoted HomeKit error meaning, and the final emphasis. Do not add advice beyond the source.
+Preserve the structure of both text code blocks while translating reader-facing labels, including `虚拟机` as `VM`; preserve all product/platform names, port `8123`, every troubleshooting step, the exact quoted HomeKit error meaning, and the final emphasis. Do not add advice beyond the source.
 
 - [ ] **Step 3: Run focused structural comparison**
 

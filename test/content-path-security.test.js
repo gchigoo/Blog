@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
+const fsSync = require('node:fs');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
@@ -103,6 +104,14 @@ test('serializes YAML-sensitive article metadata without corrupting Front Matter
   assert.equal(parsed.data.slug, 'question-why-now');
   assert.deepEqual(parsed.data.tags, ['notes']);
   assert.equal(parsed.content, 'body\n');
+});
+
+test('article CSS keeps wide tables and long navigation links inside mobile layouts', () => {
+  const css = fsSync.readFileSync(path.resolve(__dirname, '..', 'public/css/custom.css'), 'utf8');
+
+  assert.match(css, /\.article-content table\s*\{[^}]*display:\s*block[^}]*max-width:\s*100%[^}]*overflow-x:\s*auto/s);
+  assert.match(css, /\.article-navigation\s*\{[^}]*display:\s*flex[^}]*flex-wrap:\s*wrap/s);
+  assert.match(css, /\.article-navigation a\s*\{[^}]*overflow-wrap:\s*anywhere[^}]*white-space:\s*normal/s);
 });
 
 test('replaces URI-encoded Windows image paths in rendered HTML', () => {

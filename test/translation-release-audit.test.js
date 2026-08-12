@@ -17,6 +17,7 @@ const {
   extractFencedCode,
   extractTableShapes,
   extractTechnicalTokens,
+  historicalHtmlFingerprintMatches,
   loadReleaseManifest,
   loadShaManifest,
   stripNonProse
@@ -98,16 +99,17 @@ function sortStrings(values) {
   return [...values].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
 }
 
-function documentFor(metadata, body) {
+function documentFor(metadata, body, { omit = [] } = {}) {
+  const omitted = new Set(omit);
   return [
     '---',
     `title: ${JSON.stringify(metadata.title)}`,
     `slug: ${JSON.stringify(metadata.slug)}`,
     `locale: ${JSON.stringify(metadata.locale)}`,
     `translationKey: ${JSON.stringify(metadata.translationKey)}`,
-    `description: ${JSON.stringify(metadata.description)}`,
+    ...(!omitted.has('description') ? [`description: ${JSON.stringify(metadata.description)}`] : []),
     `date: ${JSON.stringify(metadata.date)}`,
-    `status: ${JSON.stringify(metadata.status)}`,
+    ...(!omitted.has('status') ? [`status: ${JSON.stringify(metadata.status)}`] : []),
     `tags: ${JSON.stringify(metadata.tags)}`,
     '---',
     body
@@ -120,7 +122,7 @@ function sourceMetadata(record, index) {
     slug: record.zhSlug,
     locale: 'zh',
     translationKey: record.translationKey,
-    description: `第 ${index + 1} 篇源文章说明`,
+    description: '',
     date: record.date,
     status: 'published',
     tags: [...record.tags]
@@ -298,14 +300,19 @@ function createFixture(t, { mode = 'source' } = {}) {
   createSchema(db);
   const articleIds = [];
   for (const [index, record] of RELEASE.articles.entries()) {
-    const source = documentFor(sourceMetadata(record, index), bodyFor(record, index, 'zh'));
+    const sourceMetadataRecord = sourceMetadata(record, index);
+    const source = documentFor(
+      sourceMetadataRecord,
+      bodyFor(record, index, 'zh'),
+      { omit: ['description', 'status'] }
+    );
     const english = documentFor(englishMetadata(record), bodyFor(record, index, 'en'));
     fs.writeFileSync(path.join(articlesDir, 'zh', `${record.zhSlug}.md`), source);
     fs.writeFileSync(path.join(bundleDir, `${record.enSlug}.md`), english);
     const postId = Number(db.prepare(
       'INSERT INTO posts (translation_key, created_at, updated_at) VALUES (?, ?, ?)'
     ).run(record.translationKey, record.date, record.date).lastInsertRowid);
-    const zhId = insertArticle(db, postId, sourceMetadata(record, index), source);
+    const zhId = insertArticle(db, postId, sourceMetadataRecord, source);
     const ids = { postId, zhId, enId: null };
     if (mode === 'published') {
       fs.writeFileSync(path.join(articlesDir, 'en', `${record.enSlug}.md`), english);
@@ -699,6 +706,32 @@ test('audit rejects legacy-* English tags', t => {
   assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.metadata);
 });
 
+test('English audit accepts publisher-generated folded YAML with exact values', t => {
+  const fixture = createFixture(t);
+  const record = RELEASE.articles[3];
+  const filePath = path.join(fixture.bundleDir, `${record.enSlug}.md`);
+  const parsed = markdownUtils.parseMarkdownDocument(fs.readFileSync(filePath, 'utf8'));
+  fs.writeFileSync(filePath, markdownUtils.serializeMarkdownDocument(parsed.content, englishMetadata(record)));
+  writeShaManifest(fixture.bundleDir);
+  const report = auditTranslationRelease(fixture.options);
+  assert.equal(report.passed, true, JSON.stringify(report.errors));
+});
+
+test('source audit accepts omitted raw description and status with normalized defaults', t => {
+  const fixture = createFixture(t);
+  const report = auditTranslationRelease(fixture.options);
+  assert.equal(report.passed, true, JSON.stringify(report.errors));
+});
+
+test('source audit rejects explicit non-default description or status', t => {
+  const fixture = createFixture(t);
+  rewriteRawSource(fixture, 0, raw => raw.replace(
+    /^date: .*$/m,
+    'description: "unexpected"\nstatus: draft\n$&'
+  ));
+  assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.sourceArchives);
+});
+
 test('source audit rejects omitted raw locale and translationKey instead of accepting parser defaults', t => {
   const fixture = createFixture(t);
   rewriteRawSource(fixture, 0, raw => raw
@@ -790,6 +823,55 @@ test('audit rejects fenced code info-string mismatches', t => {
 test('audit rejects fenced code body-byte mismatches with unchanged info and technical tokens', t => {
   const fixture = createFixture(t);
   rewriteEnglish(fixture, 0, null, body => body.replace('const retries = 3;', 'let retries = 3;'));
+  assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.fencedCode);
+});
+
+test('audit accepts the exact approved visible text-fence translation', t => {
+  const fixture = createFixture(t);
+  const record = RELEASE.articles[3];
+  const sourceMutation = body => body
+    .replace('```js release-sample', '```text')
+    .replace(
+      'const port = 443;\nconst retries = 3;\n// 中文只存在于代码围栏中',
+      'NUC9 -> PVE -> Home Assistant 虚拟机'
+    );
+  rewriteSource(fixture, 3, null, sourceMutation);
+  const db = openFixtureDb(fixture);
+  const sourceRaw = fs.readFileSync(
+    path.join(fixture.articlesDir, 'zh', `${record.zhSlug}.md`),
+    'utf8'
+  );
+  const sourceParsed = markdownUtils.parseMarkdownDocument(sourceRaw);
+  db.prepare('UPDATE articles SET content = ?, html = ? WHERE id = ?').run(
+    sourceParsed.content,
+    markdownUtils.renderMarkdown(sourceParsed.content, { locale: 'zh' }),
+    fixture.articleIds[3].zhId
+  );
+  db.close();
+  rewriteEnglish(fixture, 3, null, body => body
+    .replace('```js release-sample', '```text')
+    .replace(
+      'const port = 443;\nconst retries = 3;\n// 中文只存在于代码围栏中',
+      'NUC9 -> PVE -> Home Assistant VM'
+    ));
+  const report = auditTranslationRelease(fixture.options);
+  assert.equal(report.passed, true, JSON.stringify(report.errors));
+  assert.equal(record.translationKey, 'home-assistant-nuc9-to-mac-mini-homekit');
+});
+
+test('audit rejects untranslated CJK in visible text fences', t => {
+  const fixture = createFixture(t);
+  rewriteEnglish(fixture, 0, null, body => body
+    .replace('```js release-sample', '```text')
+    .replace('const retries = 3;', 'const retries = 3; // 未翻译'));
+  assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.cjk);
+});
+
+test('audit rejects any unapproved visible text-fence translation', t => {
+  const fixture = createFixture(t);
+  rewriteEnglish(fixture, 0, null, body => body
+    .replace('```js release-sample', '```text')
+    .replace('const retries = 3;', 'let retries = 3;'));
   assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.fencedCode);
 });
 
@@ -920,6 +1002,42 @@ test('source mode rejects source database/file metadata mismatches', t => {
   db.prepare('UPDATE articles SET title = ? WHERE id = ?').run('Database drift', fixture.articleIds[0].zhId);
   db.close();
   assertAuditFailure(auditTranslationRelease(fixture.options), CHECKS.databaseFiles);
+});
+
+test('source mode accepts the publisher serializer single leading newline and historical external-link rel omission', t => {
+  const fixture = createFixture(t);
+  const record = RELEASE.articles[0];
+  const filePath = path.join(fixture.articlesDir, 'zh', `${record.zhSlug}.md`);
+  const raw = fs.readFileSync(filePath, 'utf8');
+  const parsed = markdownUtils.parseMarkdownDocument(raw);
+  const rewritten = documentFor(sourceMetadata(record, 0), `\n${parsed.content}`, {
+    omit: ['description', 'status']
+  });
+  fs.writeFileSync(filePath, rewritten);
+  const db = openFixtureDb(fixture);
+  db.prepare('UPDATE articles SET html = replace(html, ?, ?) WHERE id = ?')
+    .run(' rel="noopener noreferrer"', '', fixture.articleIds[0].zhId);
+  db.close();
+  const report = auditTranslationRelease(fixture.options);
+  assert.equal(report.passed, true, JSON.stringify(report.errors));
+});
+
+test('known historical source HTML matching requires both exact fingerprints', () => {
+  const content = 'known historical source body';
+  const historicalHtml = '<p><font color="gray">known historical HTML</font></p>';
+  const fingerprints = {
+    contentSha256: sha256(content),
+    htmlSha256: sha256(historicalHtml)
+  };
+  const article = { html: historicalHtml };
+
+  assert.equal(historicalHtmlFingerprintMatches(article, content, fingerprints), true);
+  assert.equal(historicalHtmlFingerprintMatches(article, `${content}\n`, fingerprints), false);
+  assert.equal(
+    historicalHtmlFingerprintMatches({ html: `${historicalHtml}<!-- drift -->` }, content, fingerprints),
+    false
+  );
+  assert.equal(historicalHtmlFingerprintMatches(article, content, undefined), false);
 });
 
 test('source mode rejects exact database content drift independently', t => {

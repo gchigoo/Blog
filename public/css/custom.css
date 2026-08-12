@@ -303,6 +303,12 @@ main {
   margin: 1.2em 0;
 }
 
+.article-content table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 .article-content code {
   background: #f6f8fa;
   padding: 0.2em 0.4em;
@@ -328,6 +334,20 @@ main {
   margin-top: 3em;
   padding-top: 2em;
   border-top: 1px solid #e0e0e0;
+}
+
+.article-navigation {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75em 1em;
+  justify-content: space-between;
+}
+
+.article-navigation a {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .back-link {

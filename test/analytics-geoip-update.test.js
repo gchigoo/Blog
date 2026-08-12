@@ -1218,6 +1218,19 @@ test('English translation release runbook pins candidate publication, fd-3 crede
       'exhaustive listener proof must run after candidate start and final restart'
     );
     assert.doesNotMatch(productionBlock, /ss -ltn \| grep/, 'substring listener matching must not be used');
+    for (const route of [
+      '/en/article/understanding-fast-charging',
+      '/en/article/baidu-netdisk-speed-limit-guide',
+      '/en/article/my-essential-iphone-apps',
+      '/en/article/migrating-home-assistant-from-nuc9-to-mac-mini'
+    ]) {
+      assert.ok(productionBlock.includes(route), `localized article smoke route missing: ${route}`);
+    }
+    assert.doesNotMatch(
+      productionBlock,
+      /\/en\/(?:understanding-fast-charging|baidu-netdisk-speed-limit-guide|my-essential-iphone-apps|migrating-home-assistant-from-nuc9-to-mac-mini)(?:\s|$)/m,
+      'English article smoke routes must include /article/'
+    );
 
     const postOpenCapture = extractRequiredSection(
       productionBlock,

@@ -528,10 +528,10 @@ assert_port_3000_loopback_only
 test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
 LOCAL_ROUTES=(
   /en/
-  /en/understanding-fast-charging
-  /en/baidu-netdisk-speed-limit-guide
-  /en/my-essential-iphone-apps
-  /en/migrating-home-assistant-from-nuc9-to-mac-mini
+  /en/article/understanding-fast-charging
+  /en/article/baidu-netdisk-speed-limit-guide
+  /en/article/my-essential-iphone-apps
+  /en/article/migrating-home-assistant-from-nuc9-to-mac-mini
 )
 for route in "${LOCAL_ROUTES[@]}"; do
   test "$(curl -q --proto '=http' --globoff -sS -o /dev/null -w '%{http_code}' -- "http://127.0.0.1:3000$route")" = 200
