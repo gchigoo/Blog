@@ -1127,6 +1127,22 @@ test('English translation release runbook pins candidate publication, fd-3 crede
     '  return 1',
     '}'
   ].join('\n');
+  const exactStoppedFunction = [
+    'assert_blog_stopped() {',
+    '  local pm2_stop_state listeners',
+    '  pm2_stop_state="$(pm2 jlist | node -e \'',
+    'const fs = require("node:fs");',
+    'const processes = JSON.parse(fs.readFileSync(0, "utf8"));',
+    'const matches = processes.filter(candidate => candidate.name === "blog");',
+    'if (matches.length !== 1) process.exit(1);',
+    'const matchedProcess = matches[0];',
+    'process.stdout.write(`${matchedProcess.pm2_env.status}:${matchedProcess.pid}`);',
+    '\')" || return 1',
+    '  test "$pm2_stop_state" = \'stopped:0\' || return 1',
+    '  listeners="$(ss -H -ltn \'sport = :3000\')" || return 1',
+    '  test -z "$listeners"',
+    '}'
+  ].join('\n');
   const exactPostOpenArtifactArray = [
     '  local -a expected_artifacts=(',
     '    blog.db',
@@ -1209,9 +1225,11 @@ test('English translation release runbook pins candidate publication, fd-3 crede
     assert.equal(productionBlocks.length, 1, 'expected one canonical executable production runbook block');
     const productionBlock = productionBlocks[0];
 
+    assert.ok(productionBlock.includes(exactStoppedFunction), 'fail-closed PM2 stopped-state function missing');
     assertOrdered(productionBlock, [
       'test "$MAINTENANCE_STATUS" = 503',
       'pm2 stop blog',
+      'assert_blog_stopped',
       '#### 生产步骤 3：创建协调备份',
       '#### 生产步骤 4：更新代码并恢复 production-local ecosystem',
       '#### 生产步骤 4A：在 maintenance 下 staging、activation 并验证 bundle provenance',
@@ -1494,6 +1512,24 @@ test('English translation release runbook pins candidate publication, fd-3 crede
     /Task 11 maintenance-only staging order/
   );
 
+  for (const [label, from, to] of [
+    ['singleton PM2 process', 'if (matches.length !== 1) process.exit(1);', ': // singleton check bypassed'],
+    ['exact stopped state', '  test "$pm2_stop_state" = \'stopped:0\' || return 1', '  test -z "$(pm2 pid blog)"'],
+    ['ss exit status', '  listeners="$(ss -H -ltn \'sport = :3000\')" || return 1', '  listeners="$(ss -H -ltn \'sport = :3000\')"'],
+    ['empty listener set', '  test -z "$listeners"', '  : # listener shutdown ignored']
+  ]) {
+    const mutated = deploy.replace(from, to);
+    assert.notEqual(mutated, deploy, `${label} stop-gate mutation must change the document`);
+    assert.throws(() => validateEnglishReleaseContract(mutated), /fail-closed PM2 stopped-state function/);
+  }
+
+  const stoppedGateRemoved = deploy.replace(
+    'pm2 stop blog\nassert_blog_stopped',
+    'pm2 stop blog\n: # stopped gate bypassed'
+  );
+  assert.notEqual(stoppedGateRemoved, deploy, 'stopped gate mutation must change the document');
+  assert.throws(() => validateEnglishReleaseContract(stoppedGateRemoved), /maintenance-only production bundle staging/);
+
   const readinessRemoved = deploy
     .replace('wait_for_blog_root "$CANDIDATE_PID"', ': # candidate readiness bypassed')
     .replace('wait_for_blog_root "$FINAL_PID"', ': # final readiness bypassed')
@@ -1618,7 +1654,7 @@ test('English translation release runbook pins candidate publication, fd-3 crede
   assert.notEqual(postOpenRestoreAllowed, deploy, 'post-open rollback mutation must change the document');
   assert.throws(() => validateEnglishReleaseContract(postOpenRestoreAllowed), /post-open recovery/);
 
-  t.diagnostic('killed critical-order, pre-maintenance staging, independent digest, plan-order, bounded PID-stable readiness, explicit non-loopback listener, strict capture isolation, snapshot count-before-index, exact capture artifacts/manifest, explicit capture status, post-open re-entry/arming, HS256, five-minute, fd-3, whole-backup, ecosystem, and post-open rollback mutations');
+  t.diagnostic('killed critical-order, exact stopped-state/listener proof, pre-maintenance staging, independent digest, plan-order, bounded PID-stable readiness, explicit non-loopback listener, strict capture isolation, snapshot count-before-index, exact capture artifacts/manifest, explicit capture status, post-open re-entry/arming, HS256, five-minute, fd-3, whole-backup, ecosystem, and post-open rollback mutations');
 });
 
 test('Nginx caches static assets only by explicit prefixes and gates public traffic during maintenance', async () => {

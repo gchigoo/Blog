@@ -256,6 +256,21 @@ wait_for_blog_root() {
   return 1
 }
 
+assert_blog_stopped() {
+  local pm2_stop_state listeners
+  pm2_stop_state="$(pm2 jlist | node -e '
+const fs = require("node:fs");
+const processes = JSON.parse(fs.readFileSync(0, "utf8"));
+const matches = processes.filter(candidate => candidate.name === "blog");
+if (matches.length !== 1) process.exit(1);
+const matchedProcess = matches[0];
+process.stdout.write(`${matchedProcess.pm2_env.status}:${matchedProcess.pid}`);
+')" || return 1
+  test "$pm2_stop_state" = 'stopped:0' || return 1
+  listeners="$(ss -H -ltn 'sport = :3000')" || return 1
+  test -z "$listeners"
+}
+
 enable_maintenance() {
   sudo sed -i 's@^[[:space:]]*#[[:space:]]*include[[:space:]]\+/etc/nginx/snippets/blog-maintenance[.]conf;@    include /etc/nginx/snippets/blog-maintenance.conf;@' "$NGINX_SITE" || return 1
   test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1 || return 1
@@ -373,7 +388,7 @@ test "$MAINTENANCE_STATUS" = 503
 
 #### 生产步骤 2：停止 PM2
 pm2 stop blog
-test "$(pm2 pid blog)" = 0
+assert_blog_stopped
 
 #### 生产步骤 3：创建协调备份
 test ! -e "$BACKUP_DIR"
