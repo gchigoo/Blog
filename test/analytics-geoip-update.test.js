@@ -1086,6 +1086,18 @@ test('English translation release runbook pins candidate publication, fd-3 crede
     "token = '';",
     'child.once(\'exit\', code => process.exitCode = code ?? 1);'
   ].join('\n');
+  const exactMaintenanceCountFunction = [
+    'maintenance_include_count() {',
+    '  local count grep_status',
+    '  if count="$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")"; then',
+    '    grep_status=0',
+    '  else',
+    '    grep_status=$?',
+    '  fi',
+    '  [[ "$grep_status" = 0 || "$grep_status" = 1 ]] || return "$grep_status"',
+    '  printf \'%s\\n\' "$count"',
+    '}'
+  ].join('\n');
   const exactListenerFunction = [
     'assert_port_3000_loopback_only() {',
     '  local listener',
@@ -1225,6 +1237,17 @@ test('English translation release runbook pins candidate publication, fd-3 crede
     assert.equal(productionBlocks.length, 1, 'expected one canonical executable production runbook block');
     const productionBlock = productionBlocks[0];
 
+    assert.ok(productionBlock.includes(exactMaintenanceCountFunction), 'grep-no-match-safe maintenance count function missing');
+    assert.equal(
+      productionBlock.includes('$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")'),
+      true,
+      'maintenance count helper must own the only direct grep count'
+    );
+    assert.equal(
+      productionBlock.split('$(maintenance_include_count)').length - 1,
+      10,
+      'every production maintenance assertion must use the safe helper'
+    );
     assert.ok(productionBlock.includes(exactStoppedFunction), 'fail-closed PM2 stopped-state function missing');
     assertOrdered(productionBlock, [
       'test "$MAINTENANCE_STATUS" = 503',
@@ -1446,6 +1469,7 @@ test('English translation release runbook pins candidate publication, fd-3 crede
       'whole coordinated backup restoration after partial publication missing'
     );
     assert.match(preOpenRollback, /禁止逐篇删除或只恢复其中一个组件/);
+    assert.ok(preOpenRollback.includes(exactMaintenanceCountFunction), 'rollback safe maintenance count function missing');
     assert.ok(preOpenRollback.includes(exactListenerFunction), 'rollback exact-port listener function missing');
     assert.ok(preOpenRollback.includes(exactReadinessFunction), 'rollback bounded PID-stable readiness function missing');
     assertOrdered(preOpenRollback, [
@@ -1513,6 +1537,28 @@ test('English translation release runbook pins candidate publication, fd-3 crede
   );
 
   for (const [label, from, to] of [
+    [
+      'ERR-exempt grep conditional',
+      '  if count="$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")"; then',
+      '  count="$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")"\n  if [[ "$?" = 0 ]]; then'
+    ],
+    [
+      'grep no-match handling',
+      '  [[ "$grep_status" = 0 || "$grep_status" = 1 ]] || return "$grep_status"',
+      '  test "$grep_status" = 0 || return "$grep_status"'
+    ],
+    [
+      'safe inactive assertion',
+      'test "$(maintenance_include_count)" -eq 0',
+      'test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 0'
+    ]
+  ]) {
+    const mutated = deploy.replace(from, to);
+    assert.notEqual(mutated, deploy, `${label} maintenance mutation must change the document`);
+    assert.throws(() => validateEnglishReleaseContract(mutated), /maintenance (?:count|assertion)/);
+  }
+
+  for (const [label, from, to] of [
     ['singleton PM2 process', 'if (matches.length !== 1) process.exit(1);', ': // singleton check bypassed'],
     ['exact stopped state', '  test "$pm2_stop_state" = \'stopped:0\' || return 1', '  test -z "$(pm2 pid blog)"'],
     ['ss exit status', '  listeners="$(ss -H -ltn \'sport = :3000\')" || return 1', '  listeners="$(ss -H -ltn \'sport = :3000\')"'],
@@ -1522,6 +1568,13 @@ test('English translation release runbook pins candidate publication, fd-3 crede
     assert.notEqual(mutated, deploy, `${label} stop-gate mutation must change the document`);
     assert.throws(() => validateEnglishReleaseContract(mutated), /fail-closed PM2 stopped-state function/);
   }
+
+  const rollbackMaintenanceHelperRemoved = deploy.replace(
+    '\nmaintenance_include_count() {\n  local count grep_status\n  if count="$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")"; then\n    grep_status=0\n  else\n    grep_status=$?\n  fi\n  [[ "$grep_status" = 0 || "$grep_status" = 1 ]] || return "$grep_status"\n  printf \'%s\\n\' "$count"\n}\n\nassert_port_3000_loopback_only() {',
+    '\nassert_port_3000_loopback_only() {'
+  );
+  assert.notEqual(rollbackMaintenanceHelperRemoved, deploy, 'rollback maintenance helper mutation must change the document');
+  assert.throws(() => validateEnglishReleaseContract(rollbackMaintenanceHelperRemoved), /rollback safe maintenance count function/);
 
   const stoppedGateRemoved = deploy.replace(
     'pm2 stop blog\nassert_blog_stopped',
@@ -1654,7 +1707,7 @@ test('English translation release runbook pins candidate publication, fd-3 crede
   assert.notEqual(postOpenRestoreAllowed, deploy, 'post-open rollback mutation must change the document');
   assert.throws(() => validateEnglishReleaseContract(postOpenRestoreAllowed), /post-open recovery/);
 
-  t.diagnostic('killed critical-order, exact stopped-state/listener proof, pre-maintenance staging, independent digest, plan-order, bounded PID-stable readiness, explicit non-loopback listener, strict capture isolation, snapshot count-before-index, exact capture artifacts/manifest, explicit capture status, post-open re-entry/arming, HS256, five-minute, fd-3, whole-backup, ecosystem, and post-open rollback mutations');
+  t.diagnostic('killed critical-order, grep-no-match maintenance count, exact stopped-state/listener proof, pre-maintenance staging, independent digest, plan-order, bounded PID-stable readiness, explicit non-loopback listener, strict capture isolation, snapshot count-before-index, exact capture artifacts/manifest, explicit capture status, post-open re-entry/arming, HS256, five-minute, fd-3, whole-backup, ecosystem, and post-open rollback mutations');
 });
 
 test('Nginx caches static assets only by explicit prefixes and gates public traffic during maintenance', async () => {

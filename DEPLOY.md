@@ -214,6 +214,17 @@ BACKUP_DIR="$RELEASE_ROOT/coordinated-backup"
 NGINX_SITE=/etc/nginx/sites-available/blog.conf
 ACTIVE_MAINTENANCE='^[[:space:]]*include[[:space:]]+/etc/nginx/snippets/blog-maintenance[.]conf;$'
 POST_OPEN_ACTIVE=0
+
+maintenance_include_count() {
+  local count grep_status
+  if count="$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")"; then
+    grep_status=0
+  else
+    grep_status=$?
+  fi
+  [[ "$grep_status" = 0 || "$grep_status" = 1 ]] || return "$grep_status"
+  printf '%s\n' "$count"
+}
 test ! -e "$BUNDLE_STAGING_DIR"
 test ! -e "$INCOMING_DIR"
 
@@ -273,7 +284,7 @@ process.stdout.write(`${matchedProcess.pm2_env.status}:${matchedProcess.pid}`);
 
 enable_maintenance() {
   sudo sed -i 's@^[[:space:]]*#[[:space:]]*include[[:space:]]\+/etc/nginx/snippets/blog-maintenance[.]conf;@    include /etc/nginx/snippets/blog-maintenance.conf;@' "$NGINX_SITE" || return 1
-  test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1 || return 1
+  test "$(maintenance_include_count)" -eq 1 || return 1
   sudo nginx -t || return 1
   sudo systemctl reload nginx || return 1
 }
@@ -430,7 +441,7 @@ cmp -s -- "$BACKUP_DIR/ecosystem.config.js" ecosystem.config.js
 test "$(stat -c '%a:%u:%g:%s:%Y' ecosystem.config.js)" = "$(cat "$BACKUP_DIR/ecosystem.stat")"
 
 #### 生产步骤 4A：在 maintenance 下 staging、activation 并验证 bundle provenance
-test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
+test "$(maintenance_include_count)" -eq 1
 read -r -p 'Paste the independently approved local SHA-256 of SHA256SUMS: ' APPROVED_SHA256SUMS_DIGEST
 [[ "$APPROVED_SHA256SUMS_DIGEST" =~ ^[a-f0-9]{64}$ ]]
 test ! -e "$BUNDLE_STAGING_DIR"
@@ -491,11 +502,11 @@ test ! -L "$INCOMING_DIR"
 test "$(stat -c '%u:%g:%a:%F' "$INCOMING_DIR")" = '0:0:500:directory'
 
 #### 生产步骤 5：执行 migrate-db
-test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
+test "$(maintenance_include_count)" -eq 1
 npm run migrate-db
 
 #### 生产步骤 6：执行 taxonomy dry-run 与 apply
-test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
+test "$(maintenance_include_count)" -eq 1
 npm run sync-taxonomy -- --dry-run
 npm run sync-taxonomy
 npm run audit-translation-release -- \
@@ -504,7 +515,7 @@ npm run audit-translation-release -- \
   --mode source
 
 #### 生产步骤 7：启动 PM2 candidate
-test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
+test "$(maintenance_include_count)" -eq 1
 pm2 start ecosystem.config.js --only blog --update-env
 CANDIDATE_PID="$(pm2 pid blog)"
 [[ "$CANDIDATE_PID" =~ ^[1-9][0-9]*$ ]]
@@ -512,7 +523,7 @@ wait_for_blog_root "$CANDIDATE_PID"
 assert_port_3000_loopback_only
 
 #### 生产步骤 8：通过 anonymous pipe 发布
-test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
+test "$(maintenance_include_count)" -eq 1
 (
   cd "$INCOMING_DIR"
   sha256sum -c SHA256SUMS
@@ -558,7 +569,7 @@ npm run audit-translation-release -- \
 npm run audit-localized-content
 
 #### 生产步骤 10：重启最终 PM2 worker
-test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
+test "$(maintenance_include_count)" -eq 1
 pm2 restart blog --update-env
 FINAL_PID="$(pm2 pid blog)"
 [[ "$FINAL_PID" =~ ^[1-9][0-9]*$ ]]
@@ -567,7 +578,7 @@ wait_for_blog_root "$FINAL_PID"
 assert_port_3000_loopback_only
 
 #### 生产步骤 11：执行 localhost smoke
-test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
+test "$(maintenance_include_count)" -eq 1
 LOCAL_ROUTES=(
   /en/
   /en/article/understanding-fast-charging
@@ -581,7 +592,7 @@ for route in "${LOCAL_ROUTES[@]}"; do
 done
 
 #### 生产步骤 12：清理 temporary bundle
-test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
+test "$(maintenance_include_count)" -eq 1
 rm -rf -- "$INCOMING_DIR"
 test ! -e "$INCOMING_DIR"
 test -z "$(find "$RELEASE_ROOT" -maxdepth 1 -type f -iname '*token*' -print -quit)"
@@ -589,7 +600,7 @@ test -z "$(find "$RELEASE_ROOT" -maxdepth 1 -type f -iname '*token*' -print -qui
 POST_OPEN_ACTIVE=1
 #### 生产步骤 13：关闭 maintenance
 sudo sed -i 's@^[[:space:]]*include[[:space:]]\+/etc/nginx/snippets/blog-maintenance[.]conf;@    # include /etc/nginx/snippets/blog-maintenance.conf;@' "$NGINX_SITE"
-test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 0
+test "$(maintenance_include_count)" -eq 0
 sudo nginx -t
 sudo systemctl reload nginx
 
@@ -623,6 +634,17 @@ BACKUP_DIR=/root/blog-english-release-20260804/coordinated-backup
 INCOMING_DIR=/root/blog-english-release-20260804/incoming
 NGINX_SITE=/etc/nginx/sites-available/blog.conf
 ACTIVE_MAINTENANCE='^[[:space:]]*include[[:space:]]+/etc/nginx/snippets/blog-maintenance[.]conf;$'
+
+maintenance_include_count() {
+  local count grep_status
+  if count="$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")"; then
+    grep_status=0
+  else
+    grep_status=$?
+  fi
+  [[ "$grep_status" = 0 || "$grep_status" = 1 ]] || return "$grep_status"
+  printf '%s\n' "$count"
+}
 
 assert_port_3000_loopback_only() {
   local listener
@@ -663,7 +685,7 @@ wait_for_blog_root() {
   return 1
 }
 
-test "$(grep -Ec "$ACTIVE_MAINTENANCE" "$NGINX_SITE")" -eq 1
+test "$(maintenance_include_count)" -eq 1
 pm2 stop blog
 (
   cd "$BACKUP_DIR"
