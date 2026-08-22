@@ -1,5 +1,5 @@
 const net = require('node:net');
-const { classifyClient } = require('./client-classifier');
+const { classifyClient, classificationSignals } = require('./client-classifier');
 const { recordAccessEvent } = require('./repository');
 const { captureRequestClient, normalizeTrustedIp, sanitizePublicRequestUrl, sanitizeReferrer } = require('./request-security');
 const { hourBucket, recordMetric, visitorDayHmac } = require('./store');
@@ -15,7 +15,8 @@ function deviceKind(userAgent = '') {
 }
 
 function isTrackableRequest(req) {
-  if (!['GET', 'HEAD'].includes(req.method)) return false;
+  // HEAD is used by scanners and uptime probes; it is not a page view.
+  if (req.method !== 'GET') return false;
   if (EXCLUDED_PREFIXES.some(prefix => req.path === prefix || req.path.startsWith(`${prefix}/`))) return false;
   if (EXCLUDED_EXTENSIONS.test(req.path)) return false;
   return true;
@@ -49,7 +50,7 @@ function createAnalyticsMiddleware({
     const capturedIp = normalizeTrustedIp(req);
     if (isInternalAnalyticsIp(capturedIp, internalIpSet)) return next();
     const capturedClient = captureRequestClient(req);
-    const classification = classifyClient(capturedClient.userAgent);
+    const classification = classifyClient(capturedClient.userAgent, classificationSignals(req));
     const capturedDevice = deviceKind(capturedClient.userAgent);
     const capturedOriginalUrl = req.originalUrl || req.path;
     const capturedReferrer = req.get('referer') || req.get('referrer') || null;

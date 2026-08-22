@@ -15,8 +15,20 @@ function makeResponse(statusCode = 200) {
   };
 }
 
-function makeRequest({ path = '/', method = 'GET', ip = '203.0.113.10', userAgent = 'Mozilla/5.0' } = {}) {
-  return { path, method, ip, get: name => name === 'user-agent' ? userAgent : undefined };
+function makeRequest({
+  path = '/',
+  method = 'GET',
+  ip = '203.0.113.10',
+  userAgent = 'Mozilla/5.0',
+  headers = {}
+} = {}) {
+  const values = {
+    'user-agent': userAgent,
+    'sec-fetch-mode': 'navigate',
+    accept: 'text/html',
+    ...headers
+  };
+  return { path, method, ip, get: name => values[name.toLowerCase()] };
 }
 
 test('analytics records only successful public requests without raw request fields', () => {
@@ -66,6 +78,24 @@ test('analytics stores bots while excluding admin, API, assets, and failed respo
     [{ path: '/', traffic_kind: 'bot' }, { path: '/about', traffic_kind: 'bot' }]
   );
   assert.equal(isTrackableRequest(makeRequest({ method: 'POST' })), false);
+  assert.equal(isTrackableRequest(makeRequest({ method: 'HEAD' })), false);
+
+  const head = makeResponse();
+  middleware(makeRequest({ method: 'HEAD', path: '/zh/' }), head, () => {});
+  head.finish();
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM access_metrics WHERE path = '/zh/'").get().count, 0);
+
+  const scored = makeResponse();
+  middleware(makeRequest({
+    path: '/en/',
+    userAgent: 'Mozilla/5.0 Chrome/126 Safari/537.36',
+    headers: { 'cf-bot-score': '5' }
+  }), scored, () => {});
+  scored.finish();
+  assert.deepEqual(
+    db.prepare('SELECT path, traffic_kind FROM access_metrics WHERE path = ?').all('/en/'),
+    [{ path: '/en/', traffic_kind: 'bot' }]
+  );
 });
 
 test('analytics excludes loopback and configured server addresses', () => {

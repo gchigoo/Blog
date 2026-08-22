@@ -2189,7 +2189,11 @@ test('analytics records only completed localized 2xx HTML after negotiation and 
     markdown({ title: 'Tracked Target', slug: 'tracked-target', tags: '[other]' }));
   assert.equal(uploaded.status, 200, await uploaded.text());
 
-  const headers = { 'user-agent': 'Mozilla/5.0', 'x-forwarded-for': '203.0.113.77' };
+  const headers = {
+    'user-agent': 'Mozilla/5.0',
+    accept: 'text/html',
+    'x-forwarded-for': '203.0.113.77'
+  };
   const rootHop = await fetch(`${baseUrl}/?ref=old`, { redirect: 'manual', headers });
   assert.equal(rootHop.status, 302);
   const legacyHop = await fetch(`${baseUrl}/article/tracked-target?ref=old`, { redirect: 'manual', headers });

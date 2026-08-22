@@ -115,7 +115,13 @@ function assertAnalyticsTopLevelOrder(html) {
 
 test('tracked public HTML is no-store and client context is idempotently attached to the same event', async t => {
   const { baseUrl, db } = await createHarness(t);
-  const page = await fetch(`${baseUrl}/about`, { headers: { 'user-agent': 'Mozilla/5.0', 'x-forwarded-for': '203.0.113.10' } });
+  const page = await fetch(`${baseUrl}/about`, {
+    headers: {
+      'user-agent': 'Mozilla/5.0',
+      accept: 'text/html',
+      'x-forwarded-for': '203.0.113.10'
+    }
+  });
   const html = await page.text();
   const token = tokenFrom(html);
   assert.match(page.headers.get('cache-control') || '', /private/);
@@ -155,7 +161,11 @@ test('tracked public HTML is no-store and client context is idempotently attache
 
 test('collector never records redirects even when mounted before the redirect route', async t => {
   const { baseUrl, db } = await createHarness(t);
-  const headers = { 'user-agent': 'Mozilla/5.0', 'x-forwarded-for': '203.0.113.66' };
+  const headers = {
+    'user-agent': 'Mozilla/5.0',
+    accept: 'text/html',
+    'x-forwarded-for': '203.0.113.66'
+  };
   const hop = await fetch(`${baseUrl}/redirect-fixture?utm=hop`, { redirect: 'manual', headers });
   assert.equal(hop.status, 302);
   await fetch(`${baseUrl}/about`, { headers });
@@ -208,7 +218,13 @@ test('context endpoint enforces media type, origin, token, JSON size, and event 
 
 test('admin analytics API/page require authentication, are no-store, and expose list/detail', async t => {
   const { baseUrl, adminCookie } = await createHarness(t);
-  await fetch(`${baseUrl}/about`, { headers: { 'user-agent': 'Mozilla/5.0', 'x-forwarded-for': '203.0.113.10' } });
+  await fetch(`${baseUrl}/about`, {
+    headers: {
+      'user-agent': 'Mozilla/5.0',
+      accept: 'text/html',
+      'x-forwarded-for': '203.0.113.10'
+    }
+  });
   const unauthorizedApi = await fetch(`${baseUrl}/api/admin/analytics/events`);
   assert.equal(unauthorizedApi.status, 401);
   assert.match(unauthorizedApi.headers.get('cache-control') || '', /no-store/);

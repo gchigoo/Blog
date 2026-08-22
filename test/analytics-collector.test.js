@@ -132,6 +132,7 @@ test('detailed collector records exact event data after a successful HTML respon
   const headers = {
     'user-agent': 'Mozilla/5.0',
     'accept-language': 'zh-CN',
+    'sec-fetch-mode': 'navigate',
     referer: 'https://example.com/from?token=SECRET'
   };
   let now = Date.parse('2026-07-17T00:00:00.123Z');
@@ -202,7 +203,10 @@ test('detailed collector keeps a parser-error human in human metrics and detail 
       sign: () => 'v1.human-parser-error.signature'
     }
   });
-  const headers = { 'user-agent': 'Mozilla/5.0 RoboticsLabBrowser/1.0' };
+  const headers = {
+    'user-agent': 'Mozilla/5.0 RoboticsLabBrowser/1.0',
+    'sec-fetch-mode': 'navigate'
+  };
 
   middleware({
     method: 'GET', path: '/about', originalUrl: '/about', ip: '203.0.113.29',
@@ -303,6 +307,7 @@ test('detailed collector treats configured server-IP referrers as internal', () 
   });
   const headers = {
     'user-agent': 'Mozilla/5.0',
+    'sec-fetch-mode': 'navigate',
     referer: 'http://23.254.158.109/'
   };
   middleware({
@@ -313,4 +318,66 @@ test('detailed collector treats configured server-IP referrers as internal', () 
   const row = db.prepare('SELECT referrer, referrer_host, referrer_parse_status FROM access_event_details').get();
   assert.deepEqual(row, { referrer: null, referrer_host: null, referrer_parse_status: 'internal' });
   db.close();
+});
+
+function htmlCollectorHarness(t) {
+  const db = new Database(':memory:');
+  db.pragma('foreign_keys = ON');
+  initializeAnalytics(db);
+  t.after(() => db.close());
+  let finish;
+  const response = {
+    statusCode: 200,
+    locals: {},
+    on(event, listener) { if (event === 'finish') finish = listener; },
+    getHeader: () => 'text/html; charset=utf-8'
+  };
+  const middleware = createAnalyticsMiddleware({
+    db,
+    secret: VALID_SECRET,
+    detailsEnabled: true,
+    publicOrigin: 'https://blog.example.com',
+    geoResolver: {
+      resolve: () => ({ status: 'not_found', data: null }),
+      getStatus: () => ({ reader: null })
+    },
+    clientParser: { parse: () => ({ status: 'unknown', data: null }) },
+    tokenSigner: {
+      createEventId: () => 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      sign: () => 'v1.must-not-leak'
+    }
+  });
+  return { db, response, middleware, finish() { finish(); } };
+}
+
+test('detailed collector treats Chrome-impersonating locale-home hits as bots', t => {
+  const { db, response, middleware, finish } = htmlCollectorHarness(t);
+  const chromeUa = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+  middleware({
+    method: 'GET', path: '/zh/', originalUrl: '/zh/', ip: '203.0.113.40',
+    get: name => ({ 'user-agent': chromeUa }[name.toLowerCase()])
+  }, response, () => {});
+  assert.equal(response.locals.analyticsEventToken, undefined);
+  finish();
+  assert.deepEqual(db.prepare(`
+    SELECT m.traffic_kind AS metric_kind, d.traffic_kind AS detail_kind, d.bot_name
+    FROM access_metrics m JOIN access_event_details d ON d.metric_id = m.id
+  `).get(), { metric_kind: 'bot', detail_kind: 'bot', bot_name: 'Other bot' });
+});
+
+test('detailed collector uses Cloudflare bot score even when browser hints are present', t => {
+  const { db, response, middleware, finish } = htmlCollectorHarness(t);
+  const headers = {
+    'user-agent': 'Mozilla/5.0 Chrome/126 Safari/537.36',
+    'sec-fetch-mode': 'navigate',
+    'sec-ch-ua': '"Chromium";v="126"',
+    'cf-bot-score': '8'
+  };
+  middleware({
+    method: 'GET', path: '/en/', originalUrl: '/en/', ip: '203.0.113.41',
+    get: name => headers[name.toLowerCase()]
+  }, response, () => {});
+  assert.equal(response.locals.analyticsEventToken, undefined);
+  finish();
+  assert.equal(db.prepare('SELECT traffic_kind FROM access_metrics').get().traffic_kind, 'bot');
 });
