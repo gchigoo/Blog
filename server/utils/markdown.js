@@ -503,7 +503,6 @@ module.exports = {
   parseMarkdownDocument,
   renderMarkdown,
   serializeMarkdownDocument,
-  generateSlug,
   rewriteMarkdownTags,
   extractImages,
   replaceImagePaths,

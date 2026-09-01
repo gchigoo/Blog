@@ -165,7 +165,7 @@ npm run sync-taxonomy                # 在维护窗口内事务性应用
 - 📅 归档：按月份归档
 - 🔎 搜索：SQLite FTS5 全文检索
 - 📡 RSS / sitemap / robots：订阅与搜索引擎发现
-- ℹ️ 关于：内容来自 `content/about.md`，无需修改模板
+- ℹ️ 关于：内容来自 `content/zh/about.md` 与 `content/en/about.md`，无需修改模板
 - 💬 评论：Google 登录后提交，后台批准、拒绝或删除
 - 📊 访问统计：管理员查看聚合趋势；启用明细后可筛选每次访问并查看原始 IP、地区、浏览器版本和设备上下文
 
@@ -200,18 +200,23 @@ blog/
 ├── server/           # 后端代码
 │   ├── routes/       # API、SSR 页面与后台路由
 │   ├── services/     # 文章查询与发现服务
-│   ├── migrations.js # 版本化、可重复执行的数据库迁移
 │   ├── comments/     # Google 身份、评论会话、存储与审核
 │   ├── analytics/    # 聚合/明细采集、查询、GeoIP 与设备上下文
-│   ├── utils/        # 工具 (Markdown/图片处理)
-│   └── middleware/   # 中间件 (JWT 认证)
+│   ├── article-audio/# 文章音频解析、校验与发布
+│   ├── articles/     # 文章 schema 与搜索索引
+│   ├── taxonomy/     # 分类目录加载与同步
+│   ├── i18n/         # 语言、文案与请求 locale
+│   ├── operations/   # 分类同步/内容迁移操作日志
+│   ├── utils/        # Markdown/图片/路径工具
+│   ├── middleware/   # JWT 认证
+│   └── migrations.js # 版本化、可重复执行的数据库迁移
 ├── deploy/           # Nginx 与 systemd 生产配置
 ├── scripts/          # 运维、备份与 GeoIP 校验/更新脚本
 ├── views/            # EJS 模板
 ├── public/           # 自托管 CSS、字体、脚本与图片
-├── content/          # 可配置页面内容
-├── articles/         # Markdown 原文
-└── blog.db           # SQLite 数据库
+├── content/          # 关于页、taxonomy 与发布清单
+├── articles/         # 按 zh/en 归档的 Markdown
+└── blog.db           # SQLite 数据库（本地生成，不入库）
 ```
 
 ## 🛠️ 开发

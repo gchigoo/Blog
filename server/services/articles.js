@@ -11,32 +11,6 @@ function parseTags(value) {
   }
 }
 
-/**
- * Batch-load Chinese display labels for a set of articles. This keeps the
- * legacy zh-only surfaces free of per-article N+1 tag queries.
- *
- * @returns {Map<number, string[]>}
- */
-function loadChineseTagLabels(db, articleIds) {
-  const tagsByArticle = new Map();
-  if (!articleIds || articleIds.length === 0) return tagsByArticle;
-  const ids = [...new Set(articleIds.map(Number))].filter(Number.isFinite);
-  if (ids.length === 0) return tagsByArticle;
-  const placeholders = ids.map(() => '?').join(', ');
-  const rows = db.prepare(`
-    SELECT article_tags.article_id AS article_id, tag_labels.name AS name
-    FROM article_tags
-    JOIN tag_labels ON tag_labels.tag_id = article_tags.tag_id AND tag_labels.locale = ?
-    WHERE article_tags.article_id IN (${placeholders})
-    ORDER BY tag_labels.tag_id ASC
-  `).all(ZH_LOCALE, ...ids);
-  for (const row of rows) {
-    if (!tagsByArticle.has(row.article_id)) tagsByArticle.set(row.article_id, []);
-    tagsByArticle.get(row.article_id).push(row.name);
-  }
-  return tagsByArticle;
-}
-
 function mapArticle(article) {
   if (!article) return null;
   return { ...article, tags: Array.isArray(article.tags) ? article.tags : parseTags(article.tags) };
@@ -497,10 +471,5 @@ function listAdminArticles(db) {
 
 module.exports = {
   createArticleService,
-  attachAdminTaxonomy,
-  listAdminArticles,
-  loadAdminTaxonomy,
-  loadChineseTagLabels,
-  mapArticle,
-  parseTags
+  listAdminArticles
 };

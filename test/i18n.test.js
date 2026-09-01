@@ -143,12 +143,9 @@ test('translator covers navigation, article, categories, comments, 404, paginati
     ['navigation.search', '搜索', 'Search'],
     ['navigation.about', '关于', 'About'],
     ['article.published', '发布于 {date}', 'Published {date}'],
-    ['article.updated', '更新于 {date}', 'Updated {date}'],
     ['article.tags', '标签：', 'Tags: '],
-    ['article.readingTime', '阅读时长约 {minutes} 分钟', 'About {minutes} min read'],
     ['article.backHome', '返回首页', 'Back to Home'],
     ['categories.title', '文章分类', 'Categories'],
-    ['categories.uncategorized', '未分类', 'Uncategorized'],
     ['comments.title', '评论', 'Comments'],
     ['comments.submit', '提交评论', 'Submit Comment'],
     ['comments.empty', '还没有审核通过的评论。', 'No approved comments yet.'],
@@ -157,7 +154,6 @@ test('translator covers navigation, article, categories, comments, 404, paginati
     ['notFound.backHome', '返回首页', 'Back to Home'],
     ['pagination.prev', '上一页', 'Previous'],
     ['pagination.next', '下一页', 'Next'],
-    ['pagination.page', '第 {page} 页', 'Page {page}'],
     ['search.title', '搜索', 'Search'],
     ['search.resultsCount', '“{query}”共有 {count} 条结果。', '{count} results for “{query}”.'],
     ['search.empty', '没有找到相关文章。', 'No articles found.'],
@@ -174,7 +170,7 @@ test('translator interpolates variables as strings', () => {
   const zh = createTranslator('zh');
   const en = createTranslator('en');
   assert.equal(zh('article.published', { date: '2026-08-01' }), '发布于 2026-08-01');
-  assert.equal(zh('pagination.page', { page: 2 }), '第 2 页');
+  assert.equal(zh('tags.tagTitle', { tag: 'Node' }), '标签: Node');
   assert.equal(zh('search.resultsCount', { query: 'node', count: 3 }), '“node”共有 3 条结果。');
   assert.equal(en('search.resultsCount', { query: 'node', count: 0 }), '0 results for “node”.');
 });

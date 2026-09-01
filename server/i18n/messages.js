@@ -27,10 +27,8 @@ const messages = {
     },
     article: {
       published: '发布于 {date}',
-      updated: '更新于 {date}',
       categories: '分类：',
       tags: '标签：',
-      readingTime: '阅读时长约 {minutes} 分钟',
       backHome: '返回首页',
       related: '相关文章',
       navigationAria: '相邻文章',
@@ -38,8 +36,6 @@ const messages = {
     },
     categories: {
       title: '文章分类',
-      all: '全部分类',
-      uncategorized: '未分类',
       empty: '该分类下暂无文章',
       backToOverview: '← 查看全部分类'
     },
@@ -71,7 +67,6 @@ const messages = {
     pagination: {
       prev: '上一页',
       next: '下一页',
-      page: '第 {page} 页',
       ariaLabel: '文章分页'
     },
     search: {
@@ -129,10 +124,8 @@ const messages = {
     },
     article: {
       published: 'Published {date}',
-      updated: 'Updated {date}',
       categories: 'Categories: ',
       tags: 'Tags: ',
-      readingTime: 'About {minutes} min read',
       backHome: 'Back to Home',
       related: 'Related Articles',
       navigationAria: 'Adjacent articles',
@@ -140,8 +133,6 @@ const messages = {
     },
     categories: {
       title: 'Categories',
-      all: 'All Categories',
-      uncategorized: 'Uncategorized',
       empty: 'No articles in this category',
       backToOverview: '← View all categories'
     },
@@ -173,7 +164,6 @@ const messages = {
     pagination: {
       prev: 'Previous',
       next: 'Next',
-      page: 'Page {page}',
       ariaLabel: 'Article pagination'
     },
     search: {

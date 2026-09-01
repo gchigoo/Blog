@@ -56,6 +56,5 @@ function createCommentIdentityStore(db) {
 }
 
 module.exports = {
-  createCommentIdentityStore,
-  normalizeDisplayName
+  createCommentIdentityStore
 };

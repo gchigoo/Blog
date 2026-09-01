@@ -119,4 +119,4 @@ function createLocalizedArticlesRouter({ articleService }) {
   return router;
 }
 
-module.exports = { createArticlesRouter, createLocalizedArticlesRouter, parsePositiveInteger };
+module.exports = { createArticlesRouter, createLocalizedArticlesRouter };
