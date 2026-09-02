@@ -17,7 +17,8 @@ const messages = {
       admin: '管理',
       siteName: '我的博客',
       ariaLabel: '主导航',
-      breadcrumb: '面包屑'
+      breadcrumb: '面包屑',
+      skipToContent: '跳到主内容'
     },
     home: {
       latestArticles: '最新文章',
@@ -114,7 +115,8 @@ const messages = {
       admin: 'Admin',
       siteName: 'My Blog',
       ariaLabel: 'Main navigation',
-      breadcrumb: 'Breadcrumb'
+      breadcrumb: 'Breadcrumb',
+      skipToContent: 'Skip to content'
     },
     home: {
       latestArticles: 'Latest Articles',

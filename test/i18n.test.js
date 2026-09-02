@@ -142,6 +142,7 @@ test('translator covers navigation, article, categories, comments, 404, paginati
     ['navigation.tags', '标签', 'Tags'],
     ['navigation.search', '搜索', 'Search'],
     ['navigation.about', '关于', 'About'],
+    ['navigation.skipToContent', '跳到主内容', 'Skip to content'],
     ['article.published', '发布于 {date}', 'Published {date}'],
     ['article.tags', '标签：', 'Tags: '],
     ['article.backHome', '返回首页', 'Back to Home'],

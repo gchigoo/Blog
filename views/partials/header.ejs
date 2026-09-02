@@ -18,7 +18,9 @@
   <title><%= pageTitle %><% if (pageTitle && siteTitle && pageTitle !== siteTitle) { %> - <%= siteTitle %><% } %></title>
   <% if (typeof seo !== 'undefined' && seo) { %>
     <meta name="description" content="<%= seo.description %>">
+    <% if (seo.canonical) { %>
     <link rel="canonical" href="<%= seo.canonical %>">
+    <% } %>
     <% if (Array.isArray(seo.alternates)) { %><% seo.alternates.forEach(alternate => { %>
     <link rel="alternate" hreflang="<%= alternate.hreflang %>" href="<%= alternate.href %>">
     <% }) %><% } %>
@@ -28,13 +30,29 @@
     <meta property="og:title" content="<%= seo.title %>">
     <meta property="og:description" content="<%= seo.description %>">
     <meta property="og:type" content="<%= seo.type %>">
+    <% if (seo.canonical) { %>
     <meta property="og:url" content="<%= seo.canonical %>">
+    <% } %>
+    <% if (seo.siteName) { %><meta property="og:site_name" content="<%= seo.siteName %>"><% } %>
     <% if (seo.ogLocale) { %><meta property="og:locale" content="<%= seo.ogLocale %>"><% } %>
     <% if (Array.isArray(seo.ogLocaleAlternates)) { %><% seo.ogLocaleAlternates.forEach(ogLocale => { %>
     <meta property="og:locale:alternate" content="<%= ogLocale %>">
     <% }) %><% } %>
+    <% if (seo.image) { %><meta property="og:image" content="<%= seo.image %>"><% } %>
+    <meta name="twitter:card" content="<%= seo.image ? 'summary_large_image' : 'summary' %>">
+    <meta name="twitter:title" content="<%= seo.title %>">
+    <meta name="twitter:description" content="<%= seo.description %>">
+    <% if (seo.image) { %><meta name="twitter:image" content="<%= seo.image %>"><% } %>
     <% if (seo.noindex) { %><meta name="robots" content="noindex,follow"><% } %>
+    <% if (seo.jsonLd) { %>
+    <script type="application/ld+json"><%- JSON.stringify(seo.jsonLd).replace(/</g, '\\u003c') %></script>
+    <% } %>
   <% } %>
+  <meta name="theme-color" content="#ffffff">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0f1115">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/site.webmanifest">
+  <link rel="preload" href="/vendor/fonts/Inter-Regular.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="alternate" type="application/rss+xml" title="<%= typeof i18n === 'function' ? i18n('navigation.rss') : 'RSS' %>" href="<%= typeof localizedPath === 'function' ? localizedPath('/feed.xml') : '/feed.xml' %>">
   <link rel="stylesheet" href="<%= typeof assetUrl === 'function' ? assetUrl('/vendor/inter.css') : '/vendor/inter.css' %>">
   <link rel="stylesheet" href="<%= typeof assetUrl === 'function' ? assetUrl('/vendor/new.css/new.min.css') : '/vendor/new.css/new.min.css' %>">
@@ -42,6 +60,7 @@
   <link rel="stylesheet" href="<%= typeof assetUrl === 'function' ? assetUrl('/css/custom.css') : '/css/custom.css' %>">
 </head>
 <body>
+  <a class="skip-link" href="#main-content"><%= typeof i18n === 'function' ? i18n('navigation.skipToContent') : '跳到主内容' %></a>
   <header>
     <div class="site-header-bar">
       <h1><a href="<%= typeof localizedPath === 'function' ? localizedPath('/') : '/' %>" style="text-decoration: none; color: inherit;"><%= siteTitle %></a></h1>
@@ -77,4 +96,4 @@
     </nav>
   </header>
   
-  <main>
+  <main id="main-content">

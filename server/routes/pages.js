@@ -103,7 +103,85 @@ function renderNotFound(req, res, config, status = 404) {
       path: `/${candidate}/`
     }))
   );
-  return res.status(status).render('404', { user: req.user || null, seo: null });
+  // Minimal noindex SEO without canonical/og:url so crawlers skip indexing.
+  const seo = {
+    title: res.locals.i18n('notFound.title'),
+    description: res.locals.i18n('notFound.message'),
+    type: 'website',
+    locale: res.locals.locale,
+    ogLocale: res.locals.localeMeta.ogLocale,
+    siteName: res.locals.site.title,
+    image: null,
+    jsonLd: null,
+    noindex: true
+  };
+  return res.status(status).render('404', { user: req.user || null, seo });
+}
+
+/**
+ * 从文章 HTML 中提取首张图片并解析为绝对 URL；无有效图片时返回 null。
+ */
+function resolveArticleImage(html, publicOrigin) {
+  if (typeof html !== 'string' || html.length === 0) return null;
+  const match = /<img\b[^>]*?\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(html);
+  if (!match) return null;
+  const src = (match[1] || match[2] || '').trim();
+  if (!src || /^data:/i.test(src)) return null;
+  try {
+    const base = publicOrigin.endsWith('/') ? publicOrigin : `${publicOrigin}/`;
+    return new URL(src, base).href;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 构建文章页 BlogPosting JSON-LD；有封面图时才写入 image。
+ */
+function buildArticleJsonLd({ article, canonicalUrl, siteTitle, htmlLang, image }) {
+  const jsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'BlogPosting',
+    headline: article.title,
+    description: article.description || '',
+    datePublished: new Date(article.created_at).toISOString(),
+    dateModified: new Date(article.updated_at || article.created_at).toISOString(),
+    inLanguage: htmlLang,
+    mainEntityOfPage: canonicalUrl,
+    url: canonicalUrl,
+    author: { '@type': 'Person', name: siteTitle },
+    publisher: { '@type': 'Organization', name: siteTitle }
+  };
+  if (image) jsonLd.image = image;
+  return jsonLd;
+}
+
+/**
+ * 构建分类/标签页 BreadcrumbList JSON-LD（Home > Tags/Categories > current）。
+ */
+function buildBreadcrumbJsonLd(items) {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: items.map((item, index) => ({
+      '@type': 'ListItem',
+      position: index + 1,
+      name: item.name,
+      item: item.url
+    }))
+  };
+}
+
+/**
+ * 在一组文章中取最新的 updated_at/created_at 时间戳。
+ */
+function latestArticleTimestamp(articles) {
+  let latest = null;
+  for (const article of articles) {
+    const ts = article.updated_at || article.created_at;
+    if (typeof ts === 'string' && ts && (!latest || ts > latest)) latest = ts;
+  }
+  return latest;
 }
 
 /**
@@ -261,29 +339,50 @@ function createRootMetadataRouter({ config, articleService }) {
     const groups = [];
     const seen = new Set();
     const rendered = [];
-
-    // Unpaginated static pages always exist in both locales.
-    for (const pathname of ['/', '/archive', '/tags', '/about']) {
-      groups.push(SUPPORTED_LOCALES.map(locale => ({
-        locale,
-        url: canonical(localizedPath(locale, pathname)),
-        lastmod: null
-      })));
-    }
+    const latestByLocale = Object.create(null);
+    const latestByTagId = new Map();
+    const latestByCategoryId = new Map();
 
     // Published articles grouped by logical post; only published siblings
-    // ever pair up as reciprocal alternates.
+    // ever pair up as reciprocal alternates. Also track per-locale / per-taxonomy
+    // latest timestamps for static and taxonomy lastmod values.
     const articlesByPost = new Map();
     for (const locale of SUPPORTED_LOCALES) {
-      for (const article of articleService.listArchive(locale)) {
+      const archive = articleService.listArchive(locale);
+      latestByLocale[locale] = latestArticleTimestamp(archive);
+      for (const article of archive) {
+        const ts = article.updated_at || article.created_at;
         if (!articlesByPost.has(article.post_id)) articlesByPost.set(article.post_id, []);
         articlesByPost.get(article.post_id).push({
           locale,
           url: canonical(`/${locale}/article/${encodePathSegment(article.slug)}`),
-          lastmod: article.updated_at || article.created_at
+          lastmod: ts
         });
+        if (article.taxonomy) {
+          for (const tag of article.taxonomy.tags || []) {
+            const key = `${locale}:${tag.id}`;
+            const prev = latestByTagId.get(key);
+            if (!prev || ts > prev) latestByTagId.set(key, ts);
+          }
+          for (const category of article.taxonomy.categories || []) {
+            const key = `${locale}:${category.id}`;
+            const prev = latestByCategoryId.get(key);
+            if (!prev || ts > prev) latestByCategoryId.set(key, ts);
+          }
+        }
       }
     }
+
+    // Unpaginated static pages always exist in both locales; lastmod follows
+    // the latest published article in that locale.
+    for (const pathname of ['/', '/archive', '/tags', '/about']) {
+      groups.push(SUPPORTED_LOCALES.map(locale => ({
+        locale,
+        url: canonical(localizedPath(locale, pathname)),
+        lastmod: latestByLocale[locale] || null
+      })));
+    }
+
     for (const locales of articlesByPost.values()) groups.push(locales);
 
     // Taxonomy pages with published counts, grouped by stable id so localized
@@ -291,6 +390,7 @@ function createRootMetadataRouter({ config, articleService }) {
     for (const kind of ['tags', 'categories']) {
       const byId = new Map();
       const pathName = kind === 'tags' ? 'tag' : 'category';
+      const latestMap = kind === 'tags' ? latestByTagId : latestByCategoryId;
       for (const locale of SUPPORTED_LOCALES) {
         for (const entry of articleService.listTaxonomy(locale)[kind]) {
           if (entry.count === 0) continue;
@@ -298,7 +398,7 @@ function createRootMetadataRouter({ config, articleService }) {
           byId.get(entry.id).push({
             locale,
             url: canonical(`/${locale}/${pathName}/${encodePathSegment(entry.slug)}`),
-            lastmod: null
+            lastmod: latestMap.get(`${locale}:${entry.id}`) || latestByLocale[locale] || null
           });
         }
       }
@@ -323,6 +423,7 @@ function createRootMetadataRouter({ config, articleService }) {
       }
     }
 
+    res.set('Cache-Control', 'public, max-age=3600');
     res.type('application/xml').send(
       '<?xml version="1.0" encoding="UTF-8"?>\n' +
       '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" ' +
@@ -332,6 +433,7 @@ function createRootMetadataRouter({ config, articleService }) {
   });
 
   router.get('/robots.txt', (req, res) => {
+    res.set('Cache-Control', 'public, max-age=3600');
     res.type('text/plain').send(`User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /api\nSitemap: ${canonical('/sitemap.xml')}\n`);
   });
 
@@ -355,6 +457,22 @@ function createLocalizedPagesRouter({ config, articleService, commentsModule }) 
   }
   const origin = config.site.publicOrigin || `http://localhost:${config.port}`;
   const canonical = pathname => `${origin}${pathname}`;
+  // About 页按 locale 缓存渲染结果，mtime 变化时再读盘重渲染。
+  const aboutHtmlCache = new Map();
+
+  /**
+   * 读取并渲染 About Markdown；仅在文件 mtime 变化时重新渲染。
+   */
+  function getCachedAboutHtml(locale) {
+    const filePath = path.resolve(__dirname, '..', '..', config.aboutPaths[locale]);
+    const { mtimeMs } = fs.statSync(filePath);
+    const cached = aboutHtmlCache.get(locale);
+    if (cached && cached.mtimeMs === mtimeMs) return cached.html;
+    const markdown = fs.readFileSync(filePath, 'utf8');
+    const html = renderMarkdown(markdown, { locale });
+    aboutHtmlCache.set(locale, { mtimeMs, html });
+    return html;
+  }
 
   router.use((req, res, next) => {
     // Express 5 does not populate req.params from a `/:locale` mount path,
@@ -382,7 +500,10 @@ function createLocalizedPagesRouter({ config, articleService, commentsModule }) 
       locale: res.locals.locale,
       ogLocale: res.locals.localeMeta.ogLocale,
       alternates: [],
-      xDefault: canonical('/')
+      xDefault: canonical('/'),
+      siteName: res.locals.site.title,
+      image: null,
+      jsonLd: null
     };
   }
 
@@ -445,6 +566,15 @@ function createLocalizedPagesRouter({ config, articleService, commentsModule }) 
       : { enabled: false };
     const articlePath = `/${locale}/article/${encodePathSegment(article.slug)}`;
     const seo = baseSeo(req, res, article.title, article.description, articlePath, 'article');
+    const image = resolveArticleImage(article.html, origin);
+    seo.image = image;
+    seo.jsonLd = buildArticleJsonLd({
+      article,
+      canonicalUrl: seo.canonical,
+      siteTitle: res.locals.site.title,
+      htmlLang: res.locals.localeMeta.htmlLang,
+      image
+    });
     addAlternate(seo, locale, canonical(articlePath));
     // Article alternates come only from published sibling translations.
     const alternate = articleService.alternateFor(article);
@@ -507,6 +637,11 @@ function createLocalizedPagesRouter({ config, articleService, commentsModule }) 
     if (articles.length === 0) return renderNotFound(req, res, config);
     const tagPath = `/${locale}/tag/${encodePathSegment(label.slug)}`;
     const seo = baseSeo(req, res, res.locals.i18n('tags.tagTitle', { tag: label.name }), null, tagPath);
+    seo.jsonLd = buildBreadcrumbJsonLd([
+      { name: res.locals.i18n('navigation.home'), url: canonical(`/${locale}/`) },
+      { name: res.locals.i18n('categories.title'), url: canonical(`/${locale}/tags`) },
+      { name: label.name, url: seo.canonical }
+    ]);
     addAlternate(seo, locale, canonical(tagPath));
     // The target-locale tag alternate exists only when that locale has
     // published articles under its own label slug (same stable tag id).
@@ -541,6 +676,11 @@ function createLocalizedPagesRouter({ config, articleService, commentsModule }) 
     if (!category || category.count === 0) return renderNotFound(req, res, config);
     const categoryPath = `/${locale}/category/${encodePathSegment(category.slug)}`;
     const seo = baseSeo(req, res, res.locals.i18n('categories.title'), null, categoryPath);
+    seo.jsonLd = buildBreadcrumbJsonLd([
+      { name: res.locals.i18n('navigation.home'), url: canonical(`/${locale}/`) },
+      { name: res.locals.i18n('categories.title'), url: canonical(`/${locale}/tags`) },
+      { name: category.name, url: seo.canonical }
+    ]);
     addAlternate(seo, locale, canonical(categoryPath));
     const other = otherLocaleOf(locale);
     const otherCategory = articleService.listTaxonomy(other).categories
@@ -563,29 +703,31 @@ function createLocalizedPagesRouter({ config, articleService, commentsModule }) 
       return res.status(400).type('text/plain')
         .send(res.locals.locale === 'en' ? 'Search query too long' : '搜索条件过长');
     }
-    const seo = finalizeOgLocaleAlternates(
-      baseSeo(req, res, res.locals.i18n('search.title'), null, `/${res.locals.locale}/search`),
-      localeMetadata
-    );
+    const locale = res.locals.locale;
+    const pathname = `/${locale}/search`;
+    const seo = baseSeo(req, res, res.locals.i18n('search.title'), null, pathname);
+    for (const candidate of SUPPORTED_LOCALES) {
+      addAlternate(seo, candidate, canonical(localizedPath(candidate, pathname)));
+    }
+    syncLanguageSwitch(res, seo);
     return res.render('search', {
       query,
-      articles: query ? articleService.search(res.locals.locale, query) : [],
+      articles: query ? articleService.search(locale, query) : [],
       user: req.user,
-      seo: { ...seo, noindex: true }
+      seo: { ...finalizeOgLocaleAlternates(seo, localeMetadata), noindex: true }
     });
   });
 
   router.get('/about', optionalAuth, (req, res, next) => {
     const locale = res.locals.locale;
     try {
-      const markdown = fs.readFileSync(path.resolve(__dirname, '..', '..', config.aboutPaths[locale]), 'utf8');
       const pathname = `/${locale}/about`;
       const seo = baseSeo(req, res, res.locals.i18n('about.title'), null, pathname);
       for (const candidate of SUPPORTED_LOCALES) {
         addAlternate(seo, candidate, canonical(localizedPath(candidate, pathname)));
       }
       return res.render('about', {
-        aboutHtml: renderMarkdown(markdown, { locale }),
+        aboutHtml: getCachedAboutHtml(locale),
         title: res.locals.i18n('about.title'),
         user: req.user,
         seo: finalizeOgLocaleAlternates(seo, localeMetadata)
@@ -599,6 +741,7 @@ function createLocalizedPagesRouter({ config, articleService, commentsModule }) 
     const locale = res.locals.locale;
     const site = res.locals.site;
     const articles = articleService.listPublished(locale, 1, 50).articles;
+    const feedUrl = canonical(`/${locale}/feed.xml`);
     const items = articles.map(article => `
       <item>
         <title>${escapeXml(article.title)}</title>
@@ -607,12 +750,19 @@ function createLocalizedPagesRouter({ config, articleService, commentsModule }) 
         <description>${escapeXml(article.description || '')}</description>
         <pubDate>${new Date(article.created_at).toUTCString()}</pubDate>
       </item>`).join('');
+    const lastBuildDate = articles.length > 0
+      ? new Date(articles[0].created_at).toUTCString()
+      : null;
+    res.set('Cache-Control', 'public, max-age=3600');
     res.type('application/rss+xml').send(`<?xml version="1.0" encoding="UTF-8"?>
-      <rss version="2.0"><channel>
+      <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel>
       <title>${escapeXml(site.title)}</title>
       <link>${escapeXml(canonical(`/${locale}/`))}</link>
       <description>${escapeXml(site.description)}</description>
-      <language>${escapeXml(res.locals.localeMeta.rssLanguage)}</language>${items}
+      <language>${escapeXml(res.locals.localeMeta.rssLanguage)}</language>
+      <atom:link href="${escapeXml(feedUrl)}" rel="self" type="application/rss+xml"/>${
+        lastBuildDate ? `\n      <lastBuildDate>${lastBuildDate}</lastBuildDate>` : ''
+      }${items}
       </channel></rss>`);
   });
 

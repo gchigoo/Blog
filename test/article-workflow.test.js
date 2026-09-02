@@ -2360,7 +2360,8 @@ test('static pages always carry zh/en alternates and search stays noindex with a
   const enSearch = await (await fetch(`${baseUrl}/en/search?q=node`)).text();
   assert.match(enSearch, /<meta name="robots" content="noindex,follow">/);
   assert.match(enSearch, /<link rel="canonical" href="https:\/\/blog\.example\.test\/en\/search">/);
-  assert.doesNotMatch(enSearch, /hreflang="zh"/);
+  assert.match(enSearch, /hreflang="zh" href="https:\/\/blog\.example\.test\/zh\/search"/);
+  assert.match(enSearch, /hreflang="en" href="https:\/\/blog\.example\.test\/en\/search"/);
 });
 
 test('tag and category pages alternate only to locale endpoints with published articles', async t => {

@@ -54,7 +54,10 @@
     
     <div class="article-meta">
       <span class="article-date">
-        <%= translate('article.published', { date: formatArticleDate(article.created_at) }) %>
+        <%- translate('article.published', {
+          date: '<time datetime="' + new Date(article.created_at).toISOString() + '">' +
+            formatArticleDate(article.created_at) + '</time>'
+        }) %>
       </span>
       <% if (article.taxonomy && article.taxonomy.categories && article.taxonomy.categories.length > 0) { %>
         <span class="article-categories">
