@@ -4,9 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>后台登录</title>
-  <link rel="stylesheet" href="/vendor/inter.css?v=8d2c79ff9827">
+  <link rel="stylesheet" href="/vendor/inter.css?v=394ebcda79af">
   <link rel="stylesheet" href="/vendor/new.css/new.min.css?v=3169a014d8fc">
-  <link rel="stylesheet" href="/css/custom.css?v=8648ecedccfd">
+  <link rel="stylesheet" href="/css/custom.css?v=c7a47646c1a2">
   <style>
     /* 覆盖全局 flexbox 布局 */
     body {
@@ -52,8 +52,12 @@
     }
     
     .login-container input:focus {
-      outline: none;
       border-color: #0066cc;
+    }
+
+    .login-container input:focus-visible {
+      outline: 2px solid #0066cc;
+      outline-offset: 1px;
     }
     
     .login-container button {
@@ -151,15 +155,24 @@
         const data = await response.json();
         
         if (response.ok) {
-          messageDiv.innerHTML = '<div class="message success">登录成功，正在跳转...</div>';
+          const success = document.createElement('div');
+          success.className = 'message success';
+          success.textContent = '登录成功，正在跳转...';
+          messageDiv.replaceChildren(success);
           setTimeout(() => {
             window.location.href = '/admin/upload';
           }, 1000);
         } else {
-          messageDiv.innerHTML = `<div class="message error">${data.error || '登录失败'}</div>`;
+          const errorMessage = document.createElement('div');
+          errorMessage.className = 'message error';
+          errorMessage.textContent = data.error || '登录失败';
+          messageDiv.replaceChildren(errorMessage);
         }
       } catch (error) {
-        messageDiv.innerHTML = '<div class="message error">网络错误，请稍后重试</div>';
+        const networkError = document.createElement('div');
+        networkError.className = 'message error';
+        networkError.textContent = '网络错误，请稍后重试';
+        messageDiv.replaceChildren(networkError);
       }
     });
   </script>

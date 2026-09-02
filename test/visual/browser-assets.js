@@ -48,7 +48,13 @@ async function openScenario(page, scenario) {
     ];
     if (!skipFontWait) {
       await Promise.all(faces.map(face => document.fonts.load(face)));
-      await document.fonts.ready;
+      // WebKit never settles `document.fonts.ready` on pages with pending
+      // <audio> elements; the per-face `check` below is the real guarantee,
+      // so the ready promise is only awaited for a bounded time.
+      await Promise.race([
+        document.fonts.ready,
+        new Promise(resolve => setTimeout(resolve, 5000))
+      ]);
       if (!faces.every(face => document.fonts.check(face))) {
         throw new Error('Pinned Inter fonts did not finish loading.');
       }
