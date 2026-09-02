@@ -176,6 +176,19 @@ md.renderer.rules.link_open = (tokens, index, options, env, renderer) => {
   return renderer.renderToken(tokens, index, options);
 };
 
+const defaultImageRender = md.renderer.rules.image
+  || ((tokens, index, options, env, renderer) => renderer.renderToken(tokens, index, options));
+
+/**
+ * 为 Markdown 图片补充浏览器延迟解码属性；保留默认 alt/title/src 行为。
+ */
+md.renderer.rules.image = (tokens, index, options, env, renderer) => {
+  const token = tokens[index];
+  token.attrSet('loading', 'lazy');
+  token.attrSet('decoding', 'async');
+  return defaultImageRender(tokens, index, options, env, renderer);
+};
+
 function parseMarkdownDocument(content) {
   // gray-matter caches parsed files by content string and returns a shallow
   // copy whose `data` object is still shared across identical parses.

@@ -1,5 +1,6 @@
 const express = require('express');
 const { groupArticlesByMonth } = require('../utils/presentation');
+const { DEFAULT_LOCALE } = require('../i18n/config');
 
 function parsePositiveInteger(value, defaultValue, maximum) {
   if (value === undefined) return defaultValue;
@@ -65,7 +66,8 @@ function createArticlesRouter({ articleService }) {
     res.json(groupArticlesByMonth(articleService.listArchive()));
   });
   router.get('/:slug', (req, res) => {
-    const article = articleService.getPublishedBySlug(req.params.slug);
+    // 旧版接口历史上返回原始 Markdown，保持契约不变
+    const article = articleService.getPublishedBySlug(DEFAULT_LOCALE, req.params.slug, { includeContent: true });
     return article ? res.json(article) : res.status(404).json({ error: '文章不存在' });
   });
 

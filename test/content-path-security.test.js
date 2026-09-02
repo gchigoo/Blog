@@ -75,7 +75,7 @@ test('raw Markdown HTML is escaped while normal Markdown images still render', (
 
   assert.doesNotMatch(parsed.html, /<script|<img src=x|<[^>]+\sonerror\s*=/i);
   assert.match(parsed.html, /&lt;img src=x onerror=alert\(1\)&gt;/);
-  assert.match(parsed.html, /<img src="\.\/safe\.png" alt="safe">/);
+  assert.match(parsed.html, /<img src="\.\/safe\.png" alt="safe" loading="lazy" decoding="async">/);
 });
 
 test('rejects malformed article metadata as author input', () => {

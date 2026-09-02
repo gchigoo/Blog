@@ -304,6 +304,10 @@ sudo systemctl reload nginx
 参考 `deploy/nginx/blog.conf`，主要配置项：
 
 ```nginx
+upstream blog_app {
+    server 127.0.0.1:3000;
+    keepalive 16;
+}
 map $upstream_status $blog_image_expires {
     ~^(200|206|304)$ 30d;
     default off;
@@ -312,59 +316,80 @@ map $upstream_status $blog_image_cache_control {
     ~^(200|206|304)$ "public, immutable";
     default "private, no-store";
 }
+map $upstream_status $blog_audio_expires {
+    ~^(200|206|304)$ 1y;
+    default off;
+}
+map $upstream_status $blog_audio_cache_control {
+    ~^(200|206|304)$ "public, max-age=31536000, immutable";
+    default "private, no-store";
+}
 
 server {
     listen 443 ssl;
     server_name blog.cokedaily.space;
     # ...
 
-    # 动态反向代理（taxonomy HTML 如 /zh/tag/Node.js 必须保持动态）。
+    gzip on;
+    gzip_vary on;
+    gzip_comp_level 5;
+    gzip_min_length 1024;
+    gzip_proxied any;
+    gzip_types text/plain text/css text/xml application/json application/javascript application/xml application/xml+rss application/rss+xml image/svg+xml application/manifest+json;
+
+    # 动态反向代理（taxonomy HTML 如 /zh/tag/Node.js 必须保持动态；无 WebSocket）。
     location / {
-        proxy_pass http://127.0.0.1:3000;
+        proxy_pass http://blog_app;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_cache_bypass $http_upgrade;
+        proxy_set_header Connection "";
     }
 
     # 静态资源只按已知路径前缀缓存，绝不使用扩展名正则。
+    # /css/ 与 /js/ 依赖 ?v=<hash>（assetUrl）；模板必须走 assetUrl()。
     location /css/ {
-        proxy_pass http://127.0.0.1:3000;
-        expires 5m;
-        add_header Cache-Control "public, max-age=300, must-revalidate";
+        proxy_pass http://blog_app;
+        expires 1y;
+        add_header Cache-Control "public, max-age=31536000, immutable";
     }
     location /js/ {
-        proxy_pass http://127.0.0.1:3000;
-        expires 5m;
-        add_header Cache-Control "public, max-age=300, must-revalidate";
+        proxy_pass http://blog_app;
+        expires 1y;
+        add_header Cache-Control "public, max-age=31536000, immutable";
     }
     location /vendor/ {
-        proxy_pass http://127.0.0.1:3000;
+        proxy_pass http://blog_app;
         expires 30d;
         add_header Cache-Control "public, max-age=2592000";
     }
     location /fonts/ {
-        proxy_pass http://127.0.0.1:3000;
+        proxy_pass http://blog_app;
         expires 30d;
         add_header Cache-Control "public, max-age=2592000";
     }
     location /images/ {
-        proxy_pass http://127.0.0.1:3000;
+        proxy_pass http://blog_app;
         proxy_hide_header Cache-Control;
         proxy_hide_header Expires;
         expires $blog_image_expires;
         add_header Cache-Control $blog_image_cache_control always;
     }
+    location /audio/ {
+        proxy_pass http://blog_app;
+        proxy_hide_header Cache-Control;
+        proxy_hide_header Expires;
+        expires $blog_audio_expires;
+        add_header Cache-Control $blog_audio_cache_control always;
+    }
     location = /favicon.ico {
-        proxy_pass http://127.0.0.1:3000;
+        proxy_pass http://blog_app;
         expires 1d;
         add_header Cache-Control "public, max-age=86400";
     }
 }
 ```
 
-**静态缓存契约**：只对 `/css/`、`/js/`、`/vendor/`、`/fonts/`、`/images/` 这些已知前缀与精确的 `/favicon.ico` 应用缓存头。禁止扩展名正则缓存（如 `location ~* \.(css|js)$`），否则带点的 taxonomy HTML 路由（如 `/zh/tag/Node.js`）会被错误缓存或误判为静态资源，必须保持动态代理。`/images/` 使用不带 URI 尾斜杠的 `proxy_pass`，因此原始 `/images/*` URI 会原样交给 Express。Nginx 隐藏上游的 `Cache-Control` 与 `Expires` 后按 `$upstream_status` 选择策略：200/206/304 获得 30 天 public immutable；其他状态不生成 `Expires`，并通过 `add_header ... always` 明确返回 `private, no-store`。这样错误响应不会继承成功缓存策略，也不会因隐藏上游头而失去 no-store。
+**静态缓存契约**：只对 `/css/`、`/js/`、`/vendor/`、`/fonts/`、`/images/`、`/audio/` 这些已知前缀与精确的 `/favicon.ico` 应用缓存头。禁止扩展名正则缓存（如 `location ~* \.(css|js)$`），否则带点的 taxonomy HTML 路由（如 `/zh/tag/Node.js`）会被错误缓存或误判为静态资源，必须保持动态代理。`/css/` 与 `/js/` 使用 `?v=<hash>` 指纹（`assetUrl`），故可设 1 年 `immutable`；模板必须走 `assetUrl()`，否则无指纹 URL 会缓存一年。`/images/` 与 `/audio/` 使用不带 URI 尾斜杠的 `proxy_pass`，原始 URI 原样交给 Express。Nginx 隐藏上游的 `Cache-Control` 与 `Expires` 后按 `$upstream_status` 选择策略：图片 200/206/304 为 30 天 public immutable，音频为 1 年 public immutable；其他状态不生成 `Expires`，并通过 `add_header ... always` 明确返回 `private, no-store`。这样错误响应不会继承成功缓存策略，也不会因隐藏上游头而失去 no-store。
 
 #### 公共维护门（cutover 期间 503）
 
@@ -1041,12 +1066,12 @@ unset INITIAL_ADMIN_PASSWORD
 ### 1. Nginx 配置
 
 ```nginx
-# 启用 Gzip 压缩
-gzip on;
-gzip_types text/css application/javascript application/json;
-gzip_min_length 1000;
-
-# 静态缓存：只按已知路径前缀缓存（/css/、/js/、/vendor/、/fonts/、/images/、
+# Gzip 与静态缓存以 deploy/nginx/blog.conf 为准（HTTPS server 块内）：
+# gzip on; gzip_vary on; gzip_comp_level 5; gzip_min_length 1024; gzip_proxied any;
+# gzip_types 含 text/css、application/javascript、application/json、image/svg+xml 等。
+# /css/ 与 /js/：expires 1y + immutable（依赖 assetUrl 的 ?v=<hash>）。
+# /images/：成功响应 30d immutable；/audio/：成功响应 1y immutable；错误均 private, no-store。
+# 静态缓存：只按已知路径前缀（/css/、/js/、/vendor/、/fonts/、/images/、/audio/、
 # 精确的 /favicon.ico）。禁止扩展名正则缓存，以免带点的 taxonomy HTML
 # 路由（如 /zh/tag/Node.js）被误判为静态资源。
 ```

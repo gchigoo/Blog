@@ -87,8 +87,20 @@ function createArticleService(db) {
   const countPublishedStatement = db.prepare(`
     SELECT COUNT(*) AS total FROM articles WHERE status = 'published' AND locale = ?
   `);
+  // Public detail needs rendered html + metadata only; raw Markdown stays off
+  // the hot path unless callers opt in via includeContent.
+  const DETAIL_COLUMNS = `
+    a.id, a.title, a.slug, a.description, a.html, a.status,
+    a.created_at, a.updated_at, a.locale, a.post_id,
+    p.translation_key AS translationKey`;
   const getBySlugStatement = db.prepare(`
-    SELECT a.*, p.translation_key AS translationKey
+    SELECT ${DETAIL_COLUMNS}
+    FROM articles a
+    JOIN posts p ON p.id = a.post_id
+    WHERE a.slug = ? AND a.status = 'published' AND a.locale = ?
+  `);
+  const getBySlugWithContentStatement = db.prepare(`
+    SELECT ${DETAIL_COLUMNS}, a.content
     FROM articles a
     JOIN posts p ON p.id = a.post_id
     WHERE a.slug = ? AND a.status = 'published' AND a.locale = ?
@@ -132,14 +144,17 @@ function createArticleService(db) {
 
   /**
    * Published article by slug within one locale. The legacy Chinese call shape
-   * `getPublishedBySlug(slug)` is still accepted.
+   * `getPublishedBySlug(slug)` is still accepted. Pass `{ includeContent: true }`
+   * when the raw Markdown body is required (admin/replace style consumers).
    */
-  function getPublishedBySlug(locale, slug) {
+  function getPublishedBySlug(locale, slug, options = {}) {
     if (slug === undefined) {
       slug = locale;
       locale = ZH_LOCALE;
     }
-    const article = getBySlugStatement.get(slug, locale);
+    const includeContent = options && options.includeContent === true;
+    const article = (includeContent ? getBySlugWithContentStatement : getBySlugStatement)
+      .get(slug, locale);
     if (!article) return null;
     return mapArticle(attachTaxonomy(db, [article])[0]);
   }

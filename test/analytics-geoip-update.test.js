@@ -1052,8 +1052,11 @@ test('Nginx caches static assets only by explicit prefixes and gates public traf
   // Images must preserve the public URI when proxying to Express. Nginx owns
   // the 30-day success cache headers and must suppress Express's max-age=0.
   const imagesBlock = extractLocationBlock(nginx, '/images/');
-  assert.match(imagesBlock, /proxy_pass\s+http:\/\/127\.0\.0\.1:3000;/, 'images must proxy to Express without a URI suffix');
-  assert.doesNotMatch(imagesBlock, /proxy_pass\s+http:\/\/127\.0\.0\.1:3000\//, 'images proxy_pass must not rewrite the URI');
+  // Express is reached through the keepalive `upstream blog_app` block.
+  assert.match(nginx, /upstream\s+blog_app\s*\{[\s\S]*server\s+127\.0\.0\.1:3000;[\s\S]*keepalive\s+\d+;[\s\S]*\}/,
+    'upstream blog_app must point at Express with keepalive');
+  assert.match(imagesBlock, /proxy_pass\s+http:\/\/blog_app;/, 'images must proxy to Express without a URI suffix');
+  assert.doesNotMatch(imagesBlock, /proxy_pass\s+http:\/\/blog_app\//, 'images proxy_pass must not rewrite the URI');
   assert.doesNotMatch(imagesBlock, /\balias\b/, 'images must not use a filesystem alias');
   assert.doesNotMatch(imagesBlock, /\/root\/Blog/, 'images must not depend on traversing /root');
   assert.match(imagesBlock, /proxy_hide_header\s+Cache-Control;/, 'upstream Cache-Control must be hidden');
@@ -1084,7 +1087,8 @@ test('Nginx caches static assets only by explicit prefixes and gates public traf
   // The catch-all dynamic proxy is the only location able to serve
   // /zh/tag/Node.js (no static prefix shadows it and no regex captures it).
   assert.match(nginx, /location\s+(\/\s*\{|\{\s*$)/, 'dynamic proxy catch-all missing');
-  assert.match(nginx, /proxy_pass\s+http:\/\/127\.0\.0\.1:3000;/);
+  assert.match(nginx, /proxy_pass\s+http:\/\/blog_app;/);
+  assert.doesNotMatch(nginx, /proxy_set_header\s+Upgrade/, 'no WebSocket upgrade: upstream keepalive must stay intact');
   assert.match(nginx, /Node\.js/, 'the /zh/tag/Node.js dynamic contract must be documented');
 
   // Public maintenance gate: 503 for public traffic with loopback and a
