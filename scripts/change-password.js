@@ -8,7 +8,7 @@ const Database = require('better-sqlite3');
 const bcrypt = require('bcrypt');
 const path = require('path');
 const readline = require('readline');
-const { validatePassword } = require('../server/utils/password');
+const { BCRYPT_COST, validatePassword } = require('../server/utils/password');
 
 const dbPath = path.join(__dirname, '../blog.db');
 
@@ -69,7 +69,7 @@ async function changePassword(password, username = 'admin') {
     console.log('\n🔄 正在生成密码哈希...');
 
     // 生成密码哈希
-    const hash = await bcrypt.hash(password, 10);
+    const hash = await bcrypt.hash(password, BCRYPT_COST);
 
     console.log('🔄 正在更新数据库...');
 

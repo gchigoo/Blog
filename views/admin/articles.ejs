@@ -26,7 +26,7 @@
       <% articles.forEach(article => { %>
         <tr>
           <td style="padding: 0.5em;">
-            <% if (article.status === 'published') { %><a class="article-title" href="/article/<%= article.slug %>" target="_blank" rel="noopener"><%= article.title %></a><% } else { %><span class="article-title"><%= article.title %></span><% } %>
+            <% if (article.status === 'published') { %><a class="article-title" href="/<%= article.locale === 'en' ? 'en' : 'zh' %>/article/<%= encodeURIComponent(article.slug) %>" target="_blank" rel="noopener"><%= article.title %></a><% } else { %><span class="article-title"><%= article.title %></span><% } %>
           </td>
           <td style="padding: 0.5em;"><%= article.locale === 'en' ? 'English' : '中文' %></td>
           <td style="padding: 0.5em;"><%= article.translationKey || '-' %></td>

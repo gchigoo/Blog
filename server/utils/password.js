@@ -1,4 +1,6 @@
 const MIN_PASSWORD_LENGTH = 12;
+/** bcrypt 哈希成本；既有 cost-10 哈希仍可由 bcrypt.compare 校验 */
+const BCRYPT_COST = 12;
 
 /**
  * Validate administrator passwords with one shared rule.
@@ -26,5 +28,6 @@ function validatePassword(password) {
 
 module.exports = {
   MIN_PASSWORD_LENGTH,
+  BCRYPT_COST,
   validatePassword
 };

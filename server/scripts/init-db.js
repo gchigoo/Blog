@@ -2,7 +2,7 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const bcrypt = require('bcrypt');
 const { migrateDatabase } = require('../migrations');
-const { validatePassword } = require('../utils/password');
+const { BCRYPT_COST, validatePassword } = require('../utils/password');
 
 const DB_PATH = path.join(__dirname, '..', '..', 'blog.db');
 const ADMIN_USERNAME = 'admin';
@@ -38,7 +38,7 @@ try {
       throw new Error(`INITIAL_ADMIN_PASSWORD 无效：${validationError}`);
     }
 
-    const hash = bcrypt.hashSync(initialPassword, 10);
+    const hash = bcrypt.hashSync(initialPassword, BCRYPT_COST);
     db.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)').run(ADMIN_USERNAME, hash);
     console.log('✓ 初始管理员账号创建成功');
     console.log(`  用户名: ${ADMIN_USERNAME}`);

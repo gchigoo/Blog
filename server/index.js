@@ -44,6 +44,16 @@ const articleAudioStatic = express.static(path.resolve(__dirname, '..', config.a
   setHeaders(res, filePath) {
     const format = AUDIO_FORMATS[path.extname(filePath)];
     if (format) res.setHeader('Content-Type', format.mimeType);
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  }
+});
+const publicDir = path.join(__dirname, '..', 'public');
+const publicStatic = express.static(publicDir, {
+  maxAge: '30d',
+  setHeaders(res) {
+    if (res.locals.staticVersioned) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    }
   }
 });
 
@@ -72,9 +82,21 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+// 轻量健康检查：不计 analytics、不走 HTML/API 404
+app.get('/health', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    db.prepare('SELECT 1').get();
+    return res.status(200).json({ status: 'ok' });
+  } catch {
+    return res.status(503).json({ status: 'error' });
+  }
+});
+
 app.use(analyticsModule.publicContextRouter);
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '64kb' }));
+app.use(express.urlencoded({ extended: true, limit: '64kb' }));
 app.use(cookieParser());
 app.use('/api', (req, res, next) => {
   res.set('Cache-Control', 'no-store');
@@ -137,7 +159,10 @@ app.use('/audio', (req, res, next) => {
     return sendNotFound();
   });
 });
-app.use(express.static(path.join(__dirname, '..', 'public')));
+app.use((req, res, next) => {
+  res.locals.staticVersioned = Object.prototype.hasOwnProperty.call(req.query, 'v');
+  return publicStatic(req, res, next);
+});
 app.use(analyticsModule.adminPageRouter);
 app.use(createRootMetadataRouter({ config, articleService }));
 app.use('/admin', createAdminPagesRouter({ articleService }));
@@ -192,6 +217,7 @@ async function start() {
     const address = config.host === '::1' ? `[${config.host}]` : config.host;
     console.log(`博客服务器运行在 http://${address}:${config.port}`);
     console.log(`后台管理: http://${address}:${config.port}/admin`);
+    if (typeof process.send === 'function') process.send('ready');
   });
 }
 

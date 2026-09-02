@@ -47,6 +47,7 @@ test('strong initial password creates admin without logging the secret', async t
   assert.equal(result.status, 0, result.stderr);
   const admin = readAdmin(root);
   assert.ok(admin);
+  assert.match(admin.password_hash, /^\$2[aby]\$12\$/);
   assert.equal(bcrypt.compareSync(STRONG_PASSWORD, admin.password_hash), true);
   assert.doesNotMatch(`${result.stdout}${result.stderr}`, new RegExp(STRONG_PASSWORD));
 });

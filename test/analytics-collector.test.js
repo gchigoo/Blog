@@ -107,9 +107,9 @@ test('analytics module exposes mountable surfaces and owns lifecycle resources',
 test('server mounts context parsing before global JSON and collection before public surfaces', () => {
   const source = fs.readFileSync(path.resolve(__dirname, '..', 'server/index.js'), 'utf8');
   const contextIndex = source.indexOf('app.use(analyticsModule.publicContextRouter)');
-  const jsonIndex = source.indexOf('app.use(express.json())');
+  const jsonIndex = source.indexOf("app.use(express.json({ limit: '64kb' }))");
   const collectorIndex = source.indexOf('app.use(analyticsModule.collectorMiddleware)');
-  const staticIndex = source.indexOf("app.use(express.static(path.join(__dirname, '..', 'public')))" );
+  const staticIndex = source.indexOf('return publicStatic(req, res, next)');
 
   assert.ok(contextIndex >= 0 && contextIndex < jsonIndex);
   assert.ok(jsonIndex < collectorIndex);

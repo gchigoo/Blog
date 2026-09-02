@@ -22,6 +22,7 @@ const {
   resolveZipEntryPath
 } = require('../utils/path-security');
 const {
+  MAX_ARCHIVE_EXPANDED_BYTES,
   buildArchiveEntryIndex,
   normalizeArchiveEntryName,
   prepareArticleAudioAssets
@@ -40,6 +41,37 @@ const {
 } = require('../articles/search-index');
 const { listAdminArticles } = require('../services/articles');
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+
+/**
+ * 按实际解压字节写入 ZIP，超过上限则中止（不信任 header 声明大小）
+ * @param {import('adm-zip').IZipEntry[]} entries
+ * @param {string} extractDir
+ * @param {number} [maxBytes]
+ */
+async function extractZipEntriesWithActualSizeLimit(entries, extractDir, maxBytes = MAX_ARCHIVE_EXPANDED_BYTES) {
+  let expandedBytes = 0;
+  for (const entry of entries) {
+    const dest = resolveZipEntryPath(extractDir, entry.entryName);
+    if (entry.isDirectory) {
+      await fs.mkdir(dest, { recursive: true });
+      continue;
+    }
+
+    let data;
+    try {
+      data = entry.getData();
+    } catch {
+      throw articleAudioError(400, 'audio_content_invalid', 'ZIP 条目内容无效');
+    }
+    const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
+    expandedBytes += buffer.length;
+    if (expandedBytes > maxBytes) {
+      throw articleAudioError(413, 'archive_expanded_too_large', 'ZIP 解压后总大小超过限制');
+    }
+    await fs.mkdir(path.dirname(dest), { recursive: true });
+    await fs.writeFile(dest, buffer);
+  }
+}
 
 // 配置文件上传
 const storage = multer.diskStorage({
@@ -333,10 +365,10 @@ router.post('/upload', authenticateToken, receiveArticleUpload, async (req, res)
       );
       await fs.mkdir(extractDir, { recursive: true });
       temporaryPaths.push(extractDir);
-      
-      // 解压文件
-      zip.extractAllTo(extractDir, true);
-      
+
+      // 按实际解压字节提取，防止 ZIP bomb（header 谎报小体积）
+      await extractZipEntriesWithActualSizeLimit(archiveEntries, extractDir);
+
       // 查找 Markdown 文件
       for (const entry of archiveEntries) {
         if (!entry.isDirectory && entry.entryName.endsWith('.md')) {
