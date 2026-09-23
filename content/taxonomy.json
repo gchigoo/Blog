@@ -189,6 +189,15 @@
             "en": { "name": "HomeKit", "slug": "homekit" }
           },
           "legacyNames": ["HomeKit"]
+        },
+        {
+          "id": "vps",
+          "sortOrder": 180,
+          "labels": {
+            "zh": { "name": "VPS", "slug": "VPS" },
+            "en": { "name": "VPS", "slug": "vps" }
+          },
+          "legacyNames": ["VPS"]
         }
       ]
     },

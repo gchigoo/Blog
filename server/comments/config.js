@@ -9,6 +9,20 @@ function trimSetting(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function parseNotificationConfig(env) {
+  const apiKey = trimSetting(env.RESEND_API_KEY);
+  if (!apiKey) return Object.freeze({ enabled: false });
+
+  const to = trimSetting(env.COMMENT_NOTIFY_EMAIL || 'stanz.guo@gmail.com');
+  const from = trimSetting(env.COMMENT_NOTIFY_FROM || 'Blog Notifications <blog@fangmo.dev>');
+  return Object.freeze({
+    enabled: true,
+    apiKey,
+    to,
+    from
+  });
+}
+
 function parseCommentsConfig(env = process.env) {
   const values = Object.fromEntries(
     COMMENT_CONFIG_KEYS.map(key => [key, trimSetting(env[key])])
@@ -72,7 +86,9 @@ function parseCommentsConfig(env = process.env) {
     googleClientSecret: values.GOOGLE_CLIENT_SECRET,
     googleRedirectUri: values.GOOGLE_REDIRECT_URI,
     sessionSecret: values.COMMENT_SESSION_SECRET,
-    secureCookies: trimSetting(env.NODE_ENV) === 'production'
+    secureCookies: trimSetting(env.NODE_ENV) === 'production',
+    publicOrigin: trimSetting(env.BLOG_PUBLIC_ORIGIN) || null,
+    notification: parseNotificationConfig(env)
   });
 }
 

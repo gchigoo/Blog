@@ -2,6 +2,7 @@ const express = require('express');
 const { authenticatePage, authenticateToken } = require('../middleware/auth');
 const { GoogleIdentityError } = require('./google-identity');
 const { CommentStoreError, createCommentStore } = require('./store');
+const { sendCommentNotification } = require('./notification');
 const {
   createPkcePair,
   createTokenService,
@@ -228,6 +229,34 @@ function createCommentsModule({ db, config, identityClient, clock = { now: () =>
         createdAt: clock.now().toISOString()
       });
       console.info(`[comments] submitted comment ${comment.id} as pending`);
+
+      // Asynchronously trigger admin notification without blocking response.
+      if (config.notification?.enabled) {
+        try {
+          const article = db.prepare('SELECT title, slug, locale FROM articles WHERE id = ?').get(articleId);
+          const articleTitle = article?.title || '新文章';
+          const articleLocale = article?.locale === 'en' ? 'en' : 'zh';
+          const articleSlug = article?.slug || '';
+          const publicOrigin = (config.publicOrigin || '').replace(/\/$/, '') || 'https://blog.cokedaily.space';
+          const articleUrl = `${publicOrigin}/${articleLocale}/article/${encodeURIComponent(articleSlug)}`;
+          const moderationUrl = `${publicOrigin}/admin/comments?status=pending`;
+
+          sendCommentNotification({
+            apiKey: config.notification.apiKey,
+            from: config.notification.from,
+            to: config.notification.to,
+            articleTitle,
+            articleUrl,
+            commenterName: req.commenter.displayName,
+            content,
+            createdAt: comment.createdAt,
+            moderationUrl
+          }).catch(err => console.warn(`[comments] notify async error: ${err.message}`));
+        } catch (notifyErr) {
+          console.warn(`[comments] notify dispatch error: ${notifyErr.message}`);
+        }
+      }
+
       // Stable machine code; the page supplies the localized success text.
       return res.status(201).json({
         code: 'comment_submitted',
