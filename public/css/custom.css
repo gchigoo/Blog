@@ -330,9 +330,33 @@ main {
   max-width: 100%;
   height: auto;
   display: block;
-  margin: 1.5em auto;
-  border-radius: 4px;
+  margin: 1.8em auto;
+  border-radius: 12px;
   box-shadow: var(--blog-shadow);
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+
+.article-content a:has(> img) {
+  display: block;
+  text-align: center;
+  text-decoration: none;
+}
+
+.article-content a > img {
+  cursor: zoom-in;
+}
+
+.article-content a:hover > img {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+}
+
+@media (min-width: 768px) {
+  .article-content img {
+    max-height: 520px;
+    width: auto;
+    max-width: 100%;
+  }
 }
 
 .article-content pre {
