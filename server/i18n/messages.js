@@ -96,7 +96,7 @@ const messages = {
       fallback: '欢迎来到这个极简博客。'
     },
     footer: {
-      poweredBy: '由 Gchigoo 极简博客驱动'
+      poweredBy: '由 Gchigoo <a href="https://github.com/gchigoo/Blog" rel="noopener noreferrer">极简博客</a>驱动'
     }
   },
   en: {
@@ -194,7 +194,7 @@ const messages = {
       fallback: 'Welcome to this minimalist blog.'
     },
     footer: {
-      poweredBy: 'Powered by Gchigoo Minimalist Blog'
+      poweredBy: 'Powered by Gchigoo <a href="https://github.com/gchigoo/Blog" rel="noopener noreferrer">Minimalist Blog</a>'
     }
   }
 };

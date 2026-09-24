@@ -1663,6 +1663,17 @@ footer p {
   margin: 0;
 }
 
+footer a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  transition: color 0.2s ease;
+}
+
+footer a:hover {
+  color: var(--blog-accent);
+}
+
 /* 大屏幕页脚优化 */
 @media (min-width: 1920px) {
   footer {
