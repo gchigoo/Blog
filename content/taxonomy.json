@@ -198,6 +198,51 @@
             "en": { "name": "VPS", "slug": "vps" }
           },
           "legacyNames": ["VPS"]
+        },
+        {
+          "id": "networking",
+          "sortOrder": 190,
+          "labels": {
+            "zh": { "name": "网络", "slug": "网络" },
+            "en": { "name": "Networking", "slug": "networking" }
+          },
+          "legacyNames": []
+        },
+        {
+          "id": "openwrt",
+          "sortOrder": 200,
+          "labels": {
+            "zh": { "name": "OpenWrt", "slug": "OpenWrt" },
+            "en": { "name": "OpenWrt", "slug": "openwrt" }
+          },
+          "legacyNames": []
+        },
+        {
+          "id": "ai",
+          "sortOrder": 210,
+          "labels": {
+            "zh": { "name": "AI", "slug": "AI" },
+            "en": { "name": "AI", "slug": "ai" }
+          },
+          "legacyNames": []
+        },
+        {
+          "id": "macos",
+          "sortOrder": 220,
+          "labels": {
+            "zh": { "name": "macOS", "slug": "macOS" },
+            "en": { "name": "macOS", "slug": "macos" }
+          },
+          "legacyNames": []
+        },
+        {
+          "id": "hands-on",
+          "sortOrder": 230,
+          "labels": {
+            "zh": { "name": "体验", "slug": "体验" },
+            "en": { "name": "Hands-On", "slug": "hands-on" }
+          },
+          "legacyNames": []
         }
       ]
     },
