@@ -10,14 +10,14 @@ function trimSetting(value) {
 }
 
 function parseNotificationConfig(env) {
-  const apiKey = trimSetting(env.RESEND_API_KEY);
-  if (!apiKey) return Object.freeze({ enabled: false });
+  const sendmailPath = trimSetting(env.COMMENT_NOTIFY_SENDMAIL);
+  if (!sendmailPath) return Object.freeze({ enabled: false });
 
   const to = trimSetting(env.COMMENT_NOTIFY_EMAIL || 'stanz.guo@gmail.com');
   const from = trimSetting(env.COMMENT_NOTIFY_FROM || 'Blog Notifications <blog@fangmo.dev>');
   return Object.freeze({
     enabled: true,
-    apiKey,
+    sendmailPath,
     to,
     from
   });

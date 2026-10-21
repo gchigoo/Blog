@@ -1,5 +1,10 @@
 'use strict';
 
+const { randomUUID } = require('node:crypto');
+const { spawn } = require('node:child_process');
+
+const SENDMAIL_TIMEOUT_MS = 30_000;
+
 /**
  * Escape plain text to safe HTML entities.
  */
@@ -14,12 +19,92 @@ function escapeHtml(str) {
 }
 
 /**
- * Asynchronously send a moderation notification via Resend API.
- * Any network or API failures are caught and logged so commenter requests
+ * Header value as-is when it is printable ASCII, otherwise as RFC 2047
+ * UTF-8 encoded-words of at most 45 bytes each, folded onto separate lines.
+ * Encoding also neutralises CR/LF, so article titles cannot inject headers.
+ */
+function encodeHeaderText(text) {
+  const value = String(text);
+  if (/^[\x20-\x7e]*$/.test(value)) return value;
+  const words = [];
+  let chunk = '';
+  for (const char of value) {
+    if (Buffer.byteLength(chunk + char) > 45) {
+      words.push(chunk);
+      chunk = '';
+    }
+    chunk += char;
+  }
+  if (chunk) words.push(chunk);
+  return words.map(word => `=?UTF-8?B?${Buffer.from(word).toString('base64')}?=`).join('\n ');
+}
+
+/**
+ * The bare address of a "Name <addr>" mailbox, used as the envelope sender.
+ */
+function mailboxAddress(mailbox) {
+  const match = /<([^<>]+)>\s*$/.exec(mailbox);
+  return (match ? match[1] : mailbox).trim();
+}
+
+/**
+ * Render a complete RFC 5322 message (LF line endings, as sendmail expects).
+ */
+function buildNotificationMessage({ from, to, subject, html, date = new Date() }) {
+  if (/[\r\n]/.test(from) || /[\r\n]/.test(to)) {
+    throw new Error('notification From/To must be a single line');
+  }
+  const domain = mailboxAddress(from).split('@')[1] || 'localhost';
+  const body = Buffer.from(html).toString('base64').replace(/.{76}/g, '$&\n');
+  return [
+    `From: ${from}`,
+    `To: ${to}`,
+    `Subject: ${encodeHeaderText(subject)}`,
+    `Date: ${date.toUTCString()}`,
+    `Message-ID: <${randomUUID()}@${domain}>`,
+    'MIME-Version: 1.0',
+    'Content-Type: text/html; charset=UTF-8',
+    'Content-Transfer-Encoding: base64',
+    '',
+    body,
+    ''
+  ].join('\n');
+}
+
+/**
+ * Pipe the message into a sendmail-compatible binary and wait for it to exit.
+ */
+function runSendmail(sendmailPath, args, message) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(sendmailPath, args, { stdio: ['pipe', 'ignore', 'pipe'] });
+    let stderr = '';
+    const timer = setTimeout(() => child.kill('SIGKILL'), SENDMAIL_TIMEOUT_MS);
+    child.stderr.on('data', chunk => {
+      if (stderr.length < 2000) stderr += chunk;
+    });
+    child.on('error', error => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on('close', (code, signal) => {
+      clearTimeout(timer);
+      if (code === 0) resolve();
+      else reject(new Error(`sendmail exited with ${signal || code}: ${stderr.trim().slice(0, 300)}`));
+    });
+    // A sendmail that exits early surfaces through 'close'; ignore the EPIPE on stdin.
+    child.stdin.on('error', () => {});
+    child.stdin.end(message);
+  });
+}
+
+/**
+ * Asynchronously send a moderation notification through the host's sendmail
+ * (msmtp on production, which submits to the mail server).
+ * Any delivery failures are caught and logged so commenter requests
  * are never affected or blocked.
  *
  * @param {object} options
- * @param {string} options.apiKey
+ * @param {string} options.sendmailPath
  * @param {string} options.from
  * @param {string} options.to
  * @param {string} options.articleTitle
@@ -30,7 +115,7 @@ function escapeHtml(str) {
  * @param {string} options.moderationUrl
  */
 async function sendCommentNotification({
-  apiKey,
+  sendmailPath,
   from,
   to,
   articleTitle,
@@ -40,7 +125,7 @@ async function sendCommentNotification({
   createdAt,
   moderationUrl
 }) {
-  if (!apiKey || !to || !from) return;
+  if (!sendmailPath || !to || !from) return;
 
   const subject = `【待审核评论】${articleTitle || '新评论'}`;
   const html = `
@@ -81,30 +166,15 @@ async function sendCommentNotification({
   `.trim();
 
   try {
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        from,
-        to: [to],
-        subject,
-        html
-      })
-    });
-    if (!res.ok) {
-      const errBody = await res.text().catch(() => '');
-      console.warn(`[comments-notify] Resend API responded with ${res.status}: ${errBody}`);
-    } else {
-      console.info('[comments-notify] notification email sent successfully');
-    }
+    const message = buildNotificationMessage({ from, to, subject, html });
+    await runSendmail(sendmailPath, ['-t', '-oi', '-f', mailboxAddress(from)], message);
+    console.info('[comments-notify] notification email handed to sendmail');
   } catch (error) {
     console.warn(`[comments-notify] failed to send notification: ${error.message}`);
   }
 }
 
 module.exports = {
+  buildNotificationMessage,
   sendCommentNotification
 };

@@ -198,6 +198,18 @@ pm2 restart blog --update-env
 
 不要把真实值写入 `ecosystem.config.js`、`.env`、shell 脚本、日志、Issue 或 Git 历史。示例命令只说明变量名；生产环境应优先使用主机或部署平台的 secret manager。
 
+### 评论审核通知
+
+评论进入待审核时，应用把通知邮件交给本机 sendmail 兼容程序，发送失败只写日志，不影响评论提交。应用不持有邮件凭据。
+
+| 环境变量 | 说明 |
+|---|---|
+| `COMMENT_NOTIFY_SENDMAIL` | sendmail 兼容程序路径，例如 `/usr/sbin/sendmail`；不设置则不发通知 |
+| `COMMENT_NOTIFY_EMAIL` | 收件人，默认 `stanz.guo@gmail.com` |
+| `COMMENT_NOTIFY_FROM` | 发件人，默认 `Blog Notifications <blog@fangmo.dev>`；其中的地址同时作为信封发件人（`-f`） |
+
+生产主机由 msmtp（`msmtp-mta`）提供 `/usr/sbin/sendmail`，SMTP 服务器与登录凭据在 `/etc/msmtprc`。发件地址必须是邮局允许该账号使用的地址，否则提交被拒绝。
+
 ### Google Cloud 设置
 
 1. 在 Google Cloud Console 配置 OAuth consent screen；第一版只需要 `openid` 与 `profile`。

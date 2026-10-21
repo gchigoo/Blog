@@ -242,7 +242,7 @@ function createCommentsModule({ db, config, identityClient, clock = { now: () =>
           const moderationUrl = `${publicOrigin}/admin/comments?status=pending`;
 
           sendCommentNotification({
-            apiKey: config.notification.apiKey,
+            sendmailPath: config.notification.sendmailPath,
             from: config.notification.from,
             to: config.notification.to,
             articleTitle,
