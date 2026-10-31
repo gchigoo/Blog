@@ -303,8 +303,10 @@ sudo install -o root -g root -m 0644 deploy/nginx/blog-maintenance.conf /etc/ngi
 # 2. 安装生产反代配置
 sudo install -o root -g root -m 0644 deploy/nginx/blog.conf /etc/nginx/sites-available/blog.conf
 
-# 3. 启用站点
+# 3. 启用站点，并装上拒绝未知主机的默认 server
 sudo ln -sf /etc/nginx/sites-available/blog.conf /etc/nginx/sites-enabled/
+sudo install -o root -g root -m 0644 deploy/nginx/00-default.conf /etc/nginx/sites-available/00-default.conf
+sudo ln -sf /etc/nginx/sites-available/00-default.conf /etc/nginx/sites-enabled/
 
 # 4. 测试配置（每次 reload 前都必须执行）
 sudo nginx -t
@@ -312,6 +314,8 @@ sudo nginx -t
 # 5. 重载 Nginx
 sudo systemctl reload nginx
 ```
+
+`deploy/nginx/00-default.conf` 是 80/443 的 `default_server`：没有匹配任何 `server_name` 的请求（直接用 IP 访问、扫描器乱填的 Host/SNI）在 80 端口直接断开（444），在 443 端口拒绝 TLS 握手（`ssl_reject_handshake`）。没有它时，nginx 会把这些请求交给按字母序第一个监听 443 的站点，2026-10-31 之前 `https://23.254.158.109/` 就直接打开了博客，扫描器不经 Cloudflare 也能访问源站。同一端口只能有一个 `default_server`，同机其他站点不要再声明；本机 REALITY 回落用的是 `127.0.0.1:18443`，有自己的默认 server，不受影响。2026-10-31 已在 RackNerd 上启用：13 个站点域名直连源站的响应与启用前逐一相同，只有按 IP 和未知 Host 的请求变成被拒。
 
 ### 配置说明
 
