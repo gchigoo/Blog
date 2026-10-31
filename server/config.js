@@ -52,6 +52,13 @@ function parsePublicOrigin(value) {
   return url.origin;
 }
 
+function parseBoolean(value, name, defaultValue) {
+  if (value === undefined || value === '') return defaultValue;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  throw new Error(`${name} must be true or false`);
+}
+
 function siteValue(envValue, fallback) {
   return typeof envValue === 'string' && envValue.trim() !== '' ? envValue.trim() : fallback;
 }
@@ -97,7 +104,8 @@ function createBaseConfig(env) {
     }),
     taxonomyPath: 'content/taxonomy.json',
     operationsDir: 'var/operations',
-    comments: parseCommentsConfig(env)
+    comments: parseCommentsConfig(env),
+    ipBans: Object.freeze({ enabled: parseBoolean(env.IP_BAN_ENABLED, 'IP_BAN_ENABLED', false) })
   };
 }
 

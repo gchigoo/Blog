@@ -15,6 +15,9 @@ const {
   renderNotFound
 } = require('./routes/pages');
 const { createAdminPagesRouter } = require('./routes/admin-pages');
+const { verifyRequestToken } = require('./middleware/auth');
+const { createIpBanGuard } = require('./security/ip-bans');
+const { createIpBanAdminRouter } = require('./security/admin-api');
 const { createArticleService } = require('./services/articles');
 const { assetUrl, formatDate, formatYear } = require('./utils/presentation');
 const { DEFAULT_LOCALE, SUPPORTED_LOCALES, isSupportedLocale } = require('./i18n/config');
@@ -35,6 +38,16 @@ app.locals.formatYear = formatYear;
 
 const articleService = createArticleService(db);
 const analyticsModule = createAnalyticsModule({ db, config: config.analytics });
+const ipBans = createIpBanGuard({
+  db,
+  enabled: config.ipBans.enabled,
+  internalIps: config.analytics.internalIps,
+  // A signed-in admin is never banned.
+  isOwner: req => Boolean(verifyRequestToken(req).user)
+});
+// Ahead of static files and health checks: a banned client gets nothing at all.
+app.use(ipBans.middleware);
+
 const articleAudioPath = new RegExp(
   `^/(${SUPPORTED_LOCALES.join('|')})/[a-z0-9]+(?:-[a-z0-9]+)*/[a-f0-9]{64}(${Object.keys(AUDIO_FORMATS)
     .map(extension => extension.replace('.', '\\.'))
@@ -123,6 +136,7 @@ if (config.comments.enabled && 'googleClientId' in config.comments) {
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/articles', require('./routes/articles').createArticlesRouter({ articleService }));
 app.use('/api/admin/analytics', analyticsModule.adminApiRouter);
+app.use('/api/admin/ip-bans', createIpBanAdminRouter({ guard: ipBans }));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/:locale/articles', (req, res, next) => {
   if (!SUPPORTED_LOCALES.includes(req.params.locale)) {
@@ -208,11 +222,13 @@ async function stop() {
   stopping = true;
   if (server) await new Promise(resolve => server.close(resolve));
   analyticsModule.lifecycle.stop();
+  await ipBans.stop();
   db.close();
 }
 
 async function start() {
   await analyticsModule.lifecycle.start();
+  ipBans.start();
   server = app.listen(config.port, config.host, () => {
     const address = config.host === '::1' ? `[${config.host}]` : config.host;
     console.log(`博客服务器运行在 http://${address}:${config.port}`);

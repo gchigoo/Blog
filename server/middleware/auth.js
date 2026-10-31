@@ -102,5 +102,6 @@ module.exports = {
   authenticatePage,
   authenticateToken,
   optionalAuth,
-  generateToken
+  generateToken,
+  verifyRequestToken
 };

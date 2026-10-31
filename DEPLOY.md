@@ -10,6 +10,7 @@
 4. [PM2 进程管理](#pm2-进程管理)
 5. [Nginx 反向代理](#nginx-反向代理)
 6. [访问明细与 GeoLite2 City](#访问明细与-geolite2-city)
+   - [探测封禁](#探测封禁)
 7. [HTTPS 配置](#https-配置)
 8. [日常维护](#日常维护)
 9. [故障排除](#故障排除)
@@ -878,6 +879,22 @@ Blog 的 HTML 404 必须为 `private, no-store`；所有目标连续两次请求
 
 ---
 
+## 探测封禁
+
+`IP_BAN_ENABLED=true` 时，请求本站没有的敏感路径并得到 4xx 的客户端被永久封禁，之后任何请求（页面、静态文件、`/health`）都返回 403。默认关闭；在 `ecosystem.config.js` 的 `env` 中设置后 `pm2 restart blog --update-env`。
+
+Cloudflare 默认不拦这类请求：2026-10-31 统计 Nginx 日志，近 7 天 8,426 个请求中有 2,975 个是 `/.env`、`/.git/config`、`*.php` 之类的探测，来自 66 个 IP，全部到达了应用。
+
+- **算探测的路径**：任一路径段是 `.env`（含 `.env.local`、`.env.bak` 等）、`.git`、`.git-credentials`、`.svn`、`.hg`、`.aws`、`.ssh`、`.docker`、`.kube`、`.htaccess`、`.htpasswd`、`.DS_Store`、`.npmrc`、`.bash_history`，以 `.php`、`.phtml`、`.asp`、`.aspx`、`.jsp`、`.cgi` 结尾，或是 `wp-admin`、`wp-content`、`wp-includes`、`wp-json`、`phpmyadmin`、`cgi-bin`、`actuator`、`boaform`、`hnap1`。路径先做 URL 解码，查询字符串不看。`/zh/tag/Node.js` 这类带点的标签页不受影响。
+- **只在 4xx 时封**：真实存在的页面返回 200，不会封人。
+- **封什么**：IPv4 封单个地址，IPv6 封整个 /64。客户端 IP 是 Nginx 按 Cloudflare 地址段还原的 `req.ip`（见 `cloudflare-real-ip.conf`）。
+- **不封**：loopback 与内网地址；`ANALYTICS_INTERNAL_IPS` 中的地址；Cloudflare 自己的地址段（Workers 发出的请求都带 Cloudflare 的 IP）；已登录后台的浏览器；反向 DNS 与正向解析都核对通过的 Googlebot、Bingbot、Applebot、YandexBot、Baiduspider。
+- **执行**：封禁列表常驻内存，请求进来先查列表；每 60 秒从表 `ip_bans` 重新读取。被拦的请求不进访问统计，只累加到封禁记录上，每 10 秒批量写入。日志只记被封的路径，不记 IP。
+- **查看与解除**：服务器上 `npm run ip-bans`（列出最近 50 条，`npm run ip-bans -- list 200` 列更多），`npm run ip-bans -- unban <IP>` 解除，运行中的服务最多 1 分钟后生效。登录后台后也可以用 `GET /api/admin/ip-bans` 查看、`POST /api/admin/ip-bans/unban`（JSON `{"network": "<IP>"}`）解除并立即生效。IPv6 填该 /64 内的任意地址即可。
+- **代价**：多人共用一个出口 IP 时（公司、学校、运营商 CGNAT、VPN 出口），其中一人探测会让所有人被封，需要手动解除。
+
+---
+
 ## HTTPS 配置
 
 ### 使用 Let's Encrypt 免费证书
@@ -1130,6 +1147,7 @@ htop
   ```
 - [x] 限制文件上传大小（应用文件上限 100 MiB，Nginx 请求上限 101 MiB）
 - [x] 监控日志异常访问
+- [x] 探测敏感路径的 IP 永久封禁（`IP_BAN_ENABLED`，见 [探测封禁](#探测封禁)）
 
 ---
 
