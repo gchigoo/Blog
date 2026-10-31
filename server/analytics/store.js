@@ -3,6 +3,7 @@ const { cleanupAnalytics, initializeEventDetails } = require('./repository');
 const { formatPresentationPath } = require('./path-display');
 const { getOverviewDimensions, parseAnalyticsDays } = require('./query/analytics-query');
 const { getCachedOverview, markOverviewDirty, setCachedOverview } = require('./overview-cache');
+const { migrateAnalyticsSignalSchema } = require('./signal-schema');
 const { migrateAnalyticsTrafficSchema } = require('./traffic-schema');
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -43,6 +44,7 @@ function initializeAnalytics(db) {
   migrateAnalyticsTrafficSchema(db);
   initializeEventDetails(db);
   migrateAnalyticsTrafficSchema(db);
+  migrateAnalyticsSignalSchema(db);
 }
 
 function recordMetric(db, metric) {
@@ -95,7 +97,9 @@ function getOverview(db, now = Date.now(), days = 7, retentionDays = RETENTION_D
   if (cached) return { ...cached, geoData };
   const total = db.prepare(`
     SELECT COUNT(*) AS humanPageViews,
-      COUNT(DISTINCT visitor_day_hmac) AS anonymousVisitors
+      COUNT(DISTINCT visitor_day_hmac) AS anonymousVisitors,
+      COUNT(confirmed_at) AS confirmedPageViews,
+      COUNT(DISTINCT CASE WHEN confirmed_at IS NOT NULL THEN visitor_day_hmac END) AS confirmedVisitors
     FROM access_metrics
     WHERE traffic_kind = 'human' AND bucket_utc >= ?
   `).get(since);
@@ -105,7 +109,8 @@ function getOverview(db, now = Date.now(), days = 7, retentionDays = RETENTION_D
     WHERE traffic_kind = 'bot' AND bucket_utc >= ?
   `).get(since);
   const today = db.prepare(`
-    SELECT COUNT(DISTINCT visitor_day_hmac) AS anonymousVisitors
+    SELECT COUNT(DISTINCT visitor_day_hmac) AS anonymousVisitors,
+      COUNT(DISTINCT CASE WHEN confirmed_at IS NOT NULL THEN visitor_day_hmac END) AS confirmedVisitors
     FROM access_metrics
     WHERE traffic_kind = 'human' AND bucket_utc >= ?
   `).get(beijingTodayStart(now));
@@ -120,14 +125,24 @@ function getOverview(db, now = Date.now(), days = 7, retentionDays = RETENTION_D
   if (detailsEnabled) {
     const ipQuery = buildOverviewHumanIpsQuery(since);
     detail.uniqueHumanIps = db.prepare(ipQuery.sql).get(...ipQuery.params).uniqueHumanIps;
+    Object.assign(detail, db.prepare(`
+      SELECT COUNT(DISTINCT CASE WHEN d.interacted_at IS NOT NULL THEN d.ip_address END) AS confirmedHumanIps,
+        COUNT(CASE WHEN d.interacted_at IS NULL AND d.network_kind IS NOT NULL THEN 1 END) AS unconfirmedKnownNetwork,
+        COUNT(CASE WHEN d.interacted_at IS NULL AND d.network_kind = 'hosting' THEN 1 END) AS unconfirmedHosting
+      FROM access_event_details d
+      JOIN access_metrics m ON m.id = d.metric_id
+      WHERE d.traffic_kind = 'human' AND m.bucket_utc >= ?
+    `).get(since));
   }
 
   const byPage = db.prepare(`
     SELECT path, COUNT(*) AS pageViews,
-      COUNT(DISTINCT visitor_day_hmac) AS anonymousVisitors
+      COUNT(DISTINCT visitor_day_hmac) AS anonymousVisitors,
+      COUNT(confirmed_at) AS confirmedPageViews,
+      COUNT(DISTINCT CASE WHEN confirmed_at IS NOT NULL THEN visitor_day_hmac END) AS confirmedVisitors
     FROM access_metrics
     WHERE traffic_kind = 'human' AND bucket_utc >= ?
-    GROUP BY path ORDER BY pageViews DESC, path ASC
+    GROUP BY path ORDER BY confirmedPageViews DESC, pageViews DESC, path ASC
   `).all(since).map(row => ({ ...row, ...formatPresentationPath(row.path) }));
   const detailsComplete = Boolean(detailsEnabled)
     && detail.humanDetailPageViews === total.humanPageViews;
@@ -137,6 +152,15 @@ function getOverview(db, now = Date.now(), days = 7, retentionDays = RETENTION_D
     uniqueHumanIps: detailsEnabled ? detail.uniqueHumanIps : null,
     humanPageViews: total.humanPageViews,
     botPageViews: bots.botPageViews,
+    // Confirmed: the page script saw a real interaction, which needs a detail row to attach to.
+    todayConfirmedVisitors: today.confirmedVisitors,
+    confirmedPageViews: total.confirmedPageViews,
+    confirmedVisitors: total.confirmedVisitors,
+    confirmedHumanIps: detailsEnabled ? detail.confirmedHumanIps : null,
+    unconfirmedPageViews: total.humanPageViews - total.confirmedPageViews,
+    unconfirmedNetwork: detailsEnabled
+      ? { known: detail.unconfirmedKnownNetwork, hosting: detail.unconfirmedHosting }
+      : null,
     detailsAvailable: Boolean(detailsEnabled),
     detailsComplete,
     pageViews: total.humanPageViews,

@@ -105,9 +105,16 @@ function sortRecursively(value) {
   return value;
 }
 
+// Sent again with the same context on the reader's first real interaction; not part of the hash.
+function parseInteraction(value) {
+  const input = plainObject(value, new Set(['webdriver']));
+  return { webdriver: booleanValue(input.webdriver) };
+}
+
 function validateClientContext(body) {
-  const root = plainObject(body, new Set(['context']));
-  if (Object.keys(root).length !== 1) invalid();
+  const root = plainObject(body, new Set(['context', 'interaction']));
+  if (!('context' in root)) invalid();
+  const interaction = 'interaction' in root ? parseInteraction(root.interaction) : null;
   const input = plainObject(root.context, CONTEXT_KEYS);
   if (!Object.keys(input).length) invalid();
   const value = {};
@@ -129,7 +136,8 @@ function validateClientContext(body) {
   return {
     value,
     canonical,
-    hash: crypto.createHash('sha256').update(canonical).digest('hex')
+    hash: crypto.createHash('sha256').update(canonical).digest('hex'),
+    interaction
   };
 }
 

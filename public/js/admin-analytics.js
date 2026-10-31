@@ -24,7 +24,8 @@
     browser: document.getElementById('analytics-detail-browser'),
     userAgent: document.getElementById('analytics-detail-user-agent'),
     clientStatus: document.getElementById('analytics-detail-client-status'),
-    contextStatus: document.getElementById('analytics-detail-context-status')
+    contextStatus: document.getElementById('analytics-detail-context-status'),
+    network: document.getElementById('analytics-detail-network')
   };
   const advancedSummary = document.getElementById('analytics-advanced-filter-summary');
   const emptyState = root.querySelector('.analytics-empty') || createEmptyState();
@@ -115,12 +116,22 @@
     ].map(value => safeValue(value)).join(' / ');
   }
 
+  function trafficLabel(item) {
+    if (item.trafficKind === 'bot') return { className: 'is-bot', text: '爬虫' };
+    return item.confirmed
+      ? { className: 'is-human', text: '真人' }
+      : { className: 'is-unconfirmed', text: '未确认' };
+  }
+
+  function providerText(item) {
+    if (!item.provider) return null;
+    const organization = item.provider.organization ? ` ${item.provider.organization}` : '';
+    return `AS${item.provider.asn}${organization}${item.provider.kind === 'hosting' ? ' · 机房网络' : ''}`;
+  }
+
   function trafficNodes(item) {
-    const label = element(
-      'span',
-      `analytics-traffic-label ${item.trafficKind === 'bot' ? 'is-bot' : 'is-human'}`,
-      item.trafficKind === 'bot' ? '爬虫' : '真人'
-    );
+    const traffic = trafficLabel(item);
+    const label = element('span', `analytics-traffic-label ${traffic.className}`, traffic.text);
     if (item.trafficKind !== 'bot') return [label];
     return [label, element('span', 'analytics-bot-name', safeValue(item.botName))];
   }
@@ -159,6 +170,7 @@
       element('code', 'analytics-break', item.ipAddress),
       element('span', 'analytics-secondary-line', locationText(item))
     );
+    if (providerText(item)) locationCell.append(element('span', 'analytics-secondary-line', providerText(item)));
 
     const clientCell = element('td');
     clientCell.append(
@@ -197,6 +209,7 @@
       element('code', 'analytics-break', item.ipAddress),
       element('span', '', locationText(item))
     );
+    if (providerText(item)) location.append(element('span', '', providerText(item)));
     const client = element('dd');
     client.append(
       element('span', '', safeValue(item.client.deviceType)),
@@ -250,6 +263,13 @@
     referrerHost: '来源域'
   };
 
+  const trafficFilterLabels = {
+    confirmed: '仅真人',
+    unconfirmed: '仅未确认',
+    human: '仅浏览器类',
+    bot: '仅爬虫'
+  };
+
   function appliedFilterItems(params) {
     const items = [];
     const search = params.get('search');
@@ -259,7 +279,7 @@
       items.push({
         name: 'traffic',
         label: filterLabels.traffic,
-        value: traffic === 'human' ? '仅真人' : '仅爬虫'
+        value: trafficFilterLabels[traffic] || traffic
       });
     }
     for (const name of advancedFilterNames) {
@@ -476,6 +496,13 @@
     if (!['human', 'bot'].includes(item.trafficKind)) throw new Error('invalid_traffic_kind');
     if (item.trafficKind === 'bot' && !validString(item.botName)) throw new Error('invalid_bot_name');
     if (item.trafficKind === 'human' && item.botName !== null) throw new Error('invalid_bot_name');
+    if (typeof item.confirmed !== 'boolean' || (item.confirmed && item.trafficKind !== 'human')) {
+      throw new Error('invalid_confirmation');
+    }
+    if (item.provider !== null && (!isPlainObject(item.provider)
+      || !Number.isInteger(item.provider.asn)
+      || !validOptionalString(item.provider.organization)
+      || ![null, 'isp', 'hosting'].includes(item.provider.kind))) throw new Error('invalid_provider');
     if (!isPlainObject(item.page) || !validString(item.page.title) || !validString(item.page.displayPath)) {
       throw new Error('invalid_page');
     }
@@ -739,7 +766,13 @@
     if (detail.client.contextAvailable) return '已提供浏览器上下文';
     return detail.trafficKind === 'bot'
       ? '爬虫未提供浏览器上下文'
-      : '真人访问未提供浏览器上下文';
+      : '页面脚本未回传浏览器上下文';
+  }
+
+  function detailTrafficText(detail) {
+    if (detail.trafficKind === 'bot') return '爬虫';
+    if (detail.confirmed) return `真人（${formatBeijingTime(detail.interactedAt)} 有页面操作）`;
+    return '未确认（像浏览器，但页面上没有操作）';
   }
 
   function detailClientStatus(detail) {
@@ -771,10 +804,11 @@
       setDetailText(detailFields.pageTitle, detail.page.title);
       setDetailText(detailFields.pagePath, detail.page.displayPath);
       setDetailText(detailFields.rawPath, detail.requestPath);
-      setDetailText(detailFields.traffic, detail.trafficKind === 'bot' ? '爬虫' : '真人');
+      setDetailText(detailFields.traffic, detailTrafficText(detail));
       setDetailText(detailFields.botName, detail.botName, '不适用');
       setDetailText(detailFields.referrer, detail.referrer, '无来源');
       setDetailText(detailFields.ip, detail.ipAddress);
+      setDetailText(detailFields.network, providerText(detail), '未知');
       setDetailText(detailFields.browser, joinedName(detail.client.browser));
       setDetailText(detailFields.userAgent, detail.raw.userAgent, '未提供');
       setDetailText(detailFields.clientStatus, detailClientStatus(detail));

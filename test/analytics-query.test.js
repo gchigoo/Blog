@@ -4,7 +4,11 @@ const test = require('node:test');
 const Database = require('better-sqlite3');
 const { formatAnalyticsPath } = require('../server/analytics/path-display');
 const { pagePresentationForPath } = require('../server/analytics/page-presentation');
-const { rebuildDetailDimensionMetrics, recordAccessEvent } = require('../server/analytics/repository');
+const {
+  confirmEventInteraction,
+  rebuildDetailDimensionMetrics,
+  recordAccessEvent
+} = require('../server/analytics/repository');
 const {
   explainEventList,
   getEventDetail,
@@ -394,6 +398,65 @@ test('overview reports human metrics, bots, Beijing today, and partial detail co
   assert.equal(disabled.detailsAvailable, false);
   assert.equal(disabled.detailsComplete, false);
   assert.equal(disabled.detailCoverage.complete, false);
+  db.close();
+});
+
+test('overview and event list split browser-like visits into confirmed and unconfirmed', () => {
+  const db = createDb();
+  const hosting = { asn: 14061, organization: 'DigitalOcean, LLC', kind: 'hosting' };
+  const isp = { asn: 4134, organization: 'Chinanet', kind: 'isp' };
+  // 1 and 2: the same visitor, confirmed today on two pages; 3: unconfirmed from a home ISP;
+  // 4 and 5: unconfirmed from a cloud; 6: unconfirmed with no network known; 7: a bot.
+  for (const [id, overrides] of [
+    [1, { visitorDayHmac: 'reader', ipAddress: '203.0.113.1', provider: isp }],
+    [2, { visitorDayHmac: 'reader', ipAddress: '203.0.113.1', provider: isp, path: '/about', requestPath: '/about' }],
+    [3, { provider: isp }],
+    [4, { provider: hosting }],
+    [5, { provider: hosting }],
+    [6, {}],
+    [7, { trafficKind: 'bot', botName: 'Googlebot', deviceKind: 'other', provider: hosting }]
+  ]) recordAccessEvent(db, event(id, overrides));
+  const eventId = id => id.toString(16).padStart(32, '0');
+  assert.equal(confirmEventInteraction(db, eventId(1), '2026-07-17T11:59:00.000Z'), true);
+  assert.equal(confirmEventInteraction(db, eventId(2), '2026-07-17T11:59:30.000Z'), true);
+  // Once only, and never a bot.
+  assert.equal(confirmEventInteraction(db, eventId(1), '2026-07-17T11:59:59.000Z'), false);
+  assert.equal(confirmEventInteraction(db, eventId(7), '2026-07-17T11:59:59.000Z'), false);
+  assert.equal(confirmEventInteraction(db, 'f'.repeat(32), '2026-07-17T11:59:59.000Z'), false);
+
+  const overview = getOverview(db, NOW, 7, 30, null, true);
+  assert.equal(overview.humanPageViews, 6);
+  assert.equal(overview.confirmedPageViews, 2);
+  assert.equal(overview.confirmedVisitors, 1);
+  assert.equal(overview.todayConfirmedVisitors, 1);
+  assert.equal(overview.confirmedHumanIps, 1);
+  assert.equal(overview.unconfirmedPageViews, 4);
+  assert.deepEqual(overview.unconfirmedNetwork, { known: 3, hosting: 2 });
+  assert.equal(overview.botPageViews, 1);
+  const about = overview.byPage.find(row => row.path === '/about');
+  assert.deepEqual([about.pageViews, about.confirmedPageViews, about.confirmedVisitors], [1, 1, 1]);
+  assert.equal(overview.byPage[0].path, '/tag/%E5%B7%A5%E5%85%B7');
+  assert.equal(overview.byPage[0].confirmedPageViews, 1);
+
+  const disabled = getOverview(db, NOW, 7, 30, null, false);
+  assert.equal(disabled.confirmedPageViews, 2);
+  assert.equal(disabled.confirmedHumanIps, null);
+  assert.equal(disabled.unconfirmedNetwork, null);
+
+  const list = traffic => listEvents(db, NOW, parseEventListQuery({ traffic }, 30)).items;
+  assert.deepEqual(list('confirmed').map(item => item.id), [eventId(1), eventId(2)]);
+  assert.deepEqual(list('unconfirmed').map(item => item.id), [3, 4, 5, 6].map(eventId));
+  assert.equal(list('human').length, 6);
+  assert.deepEqual(list('bot').map(item => item.id), [eventId(7)]);
+  const [first] = list('confirmed');
+  assert.equal(first.confirmed, true);
+  assert.equal(first.interactedAt, '2026-07-17T11:59:00.000Z');
+  assert.deepEqual(first.provider, { asn: 4134, organization: 'Chinanet', kind: 'isp' });
+  const unknown = list('unconfirmed').at(-1);
+  assert.equal(unknown.confirmed, false);
+  assert.equal(unknown.provider, null);
+  assert.equal(getEventDetail(db, eventId(4)).provider.kind, 'hosting');
+  assert.throws(() => parseEventListQuery({ traffic: 'robots' }, 30), /invalid_filter/);
   db.close();
 });
 

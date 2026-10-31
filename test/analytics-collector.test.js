@@ -28,6 +28,7 @@ test('analytics config is fail-fast and details-only settings are conditional', 
     internalIps: [],
     geoIpCityDbPath: null,
     geoIpUpdateStatusPath: null,
+    asnDbDir: null,
     publicOrigin: null
   });
 
@@ -51,7 +52,13 @@ test('analytics config is fail-fast and details-only settings are conditional', 
       ANALYTICS_GEOIP_CITY_DB_PATH: '/tmp/city.mmdb',
       ANALYTICS_PUBLIC_ORIGIN: 'http://example.com',
       NODE_ENV: 'production'
-    }, /ANALYTICS_PUBLIC_ORIGIN.*HTTPS/]
+    }, /ANALYTICS_PUBLIC_ORIGIN.*HTTPS/],
+    [{
+      ANALYTICS_DETAILS_ENABLED: 'true',
+      ANALYTICS_GEOIP_CITY_DB_PATH: '/tmp/city.mmdb',
+      ANALYTICS_PUBLIC_ORIGIN: 'https://example.com',
+      ANALYTICS_ASN_DB_DIR: 'var/asn'
+    }, /ANALYTICS_ASN_DB_DIR.*absolute/]
   ]) {
     assert.throws(() => parseAnalyticsConfig(analyticsEnv(overrides)), expected);
   }
@@ -65,6 +72,13 @@ test('analytics config is fail-fast and details-only settings are conditional', 
   assert.equal(enabled.publicOrigin, 'https://blog.example.com');
   assert.equal(enabled.geoIpUpdateStatusPath, '/tmp/update-status.json');
   assert.deepEqual(enabled.internalIps, ['23.254.158.109', '203.0.113.10']);
+  assert.equal(enabled.asnDbDir, null);
+  assert.equal(parseAnalyticsConfig(analyticsEnv({
+    ANALYTICS_DETAILS_ENABLED: 'true',
+    ANALYTICS_GEOIP_CITY_DB_PATH: '/tmp/GeoLite2-City.mmdb',
+    ANALYTICS_PUBLIC_ORIGIN: 'https://blog.example.com',
+    ANALYTICS_ASN_DB_DIR: ' /var/lib/blog/asn '
+  })).asnDbDir, '/var/lib/blog/asn');
 });
 
 test('analytics module exposes mountable surfaces and owns lifecycle resources', async () => {

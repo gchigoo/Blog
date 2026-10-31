@@ -25,9 +25,12 @@ function createAnalyticsModule({
   clock = { now: () => Date.now() },
   logger = console,
   geoResolver = null,
+  asnResolver = null,
   clientParser = null,
   tokenSigner = null,
-  rateLimiter = null
+  rateLimiter = null,
+  // The probe-ban guard, shown and managed from the analytics page.
+  ipBans = null
 }) {
   if (!db || !config) throw new Error('analytics module requires db and config');
   initializeAnalytics(db);
@@ -40,6 +43,11 @@ function createAnalyticsModule({
       logger
     })
     : disabledGeoResolver());
+  const asn = asnResolver || require('./adapters/asn-resolver').createAsnResolver({
+    directory: config.detailsEnabled ? config.asnDbDir : null,
+    clock,
+    logger
+  });
   const parser = clientParser || require('./adapters/client-parser').createClientParser();
   const signer = tokenSigner || require('./event-token').createEventTokenSigner({ secret: config.hmacSecret });
   const rateLimiters = rateLimiter || require('./rate-limiter').createAnalyticsRateLimiters({
@@ -66,6 +74,8 @@ function createAnalyticsModule({
     config,
     clock,
     geoResolver: resolver,
+    asnResolver: asn,
+    ipBans,
     logger
   });
   let cleanupTimer = null;
@@ -75,6 +85,7 @@ function createAnalyticsModule({
     async start() {
       if (started) return;
       if (config.detailsEnabled) await resolver.start();
+      if (config.detailsEnabled) await asn.start();
       if (config.detailsEnabled) rateLimiters.start();
       try {
         cleanupMetrics(db, clock.now(), config.retentionDays);
@@ -95,6 +106,7 @@ function createAnalyticsModule({
       if (cleanupTimer) clearInterval(cleanupTimer);
       cleanupTimer = null;
       if (started && config.detailsEnabled) resolver.stop();
+      asn.stop();
       if (config.detailsEnabled) rateLimiters.stop();
       started = false;
     }
@@ -108,6 +120,7 @@ function createAnalyticsModule({
       detailsEnabled: config.detailsEnabled,
       publicOrigin: config.publicOrigin,
       geoResolver: resolver,
+      asnResolver: asn,
       clientParser: parser,
       tokenSigner: signer,
       internalIps: config.internalIps,

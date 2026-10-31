@@ -42,7 +42,7 @@ test('analytics records only successful public requests without raw request fiel
   const row = db.prepare('SELECT * FROM access_metrics').get();
   assert.deepEqual(
     Object.keys(row).sort(),
-    ['bucket_utc', 'device_kind', 'id', 'path', 'traffic_kind', 'visitor_day_hmac']
+    ['bucket_utc', 'confirmed_at', 'device_kind', 'id', 'path', 'traffic_kind', 'visitor_day_hmac']
   );
   assert.equal(row.traffic_kind, 'human');
   assert.equal(row.path, '/article/privacy');

@@ -13,7 +13,8 @@ const DETAIL_COLUMNS = [
   'request_client_hints_json', 'device_type', 'device_vendor', 'device_model', 'device_model_normalized',
   'device_type_normalized', 'os_name', 'os_version', 'os_name_normalized',
   'browser_name', 'browser_version', 'browser_name_normalized', 'engine_name', 'engine_version',
-  'cpu_architecture', 'client_parse_status', 'traffic_kind', 'bot_name', 'context_source'
+  'cpu_architecture', 'client_parse_status', 'traffic_kind', 'bot_name', 'context_source',
+  'asn', 'as_org', 'network_kind'
 ];
 
 function normalize(value) {
@@ -246,7 +247,8 @@ function detailValues(metricId, event) {
     client.browserName || null, client.browserVersion || null,
     client.browserNameNormalized || normalize(client.browserName), client.engineName || null,
     client.engineVersion || null, client.cpuArchitecture || null, event.client?.status || 'error',
-    event.trafficKind, event.botName, 'server'
+    event.trafficKind, event.botName, 'server',
+    event.provider?.asn ?? null, event.provider?.organization ?? null, event.provider?.kind ?? null
   ];
 }
 
@@ -307,6 +309,27 @@ function contextColumns(validated, collectedAt) {
     connectionRttMs: value.network?.rtt ?? null,
     connectionSaveData: value.network?.saveData === undefined ? null : Number(value.network.saveData)
   };
+}
+
+/**
+ * Marks a browser-like visit as a confirmed person once its page script reports a real
+ * interaction. Bots stay bots; a visit is confirmed once.
+ */
+function confirmEventInteraction(db, eventId, confirmedAt) {
+  const transaction = db.transaction(() => {
+    const row = db.prepare(`
+      SELECT metric_id AS metricId FROM access_event_details
+      WHERE event_id = ? AND traffic_kind = 'human' AND interacted_at IS NULL
+    `).get(eventId);
+    if (!row) return false;
+    db.prepare('UPDATE access_event_details SET interacted_at = ? WHERE event_id = ?').run(confirmedAt, eventId);
+    db.prepare('UPDATE access_metrics SET confirmed_at = ? WHERE id = ? AND confirmed_at IS NULL')
+      .run(confirmedAt, row.metricId);
+    return true;
+  });
+  const confirmed = transaction.immediate();
+  if (confirmed) markOverviewDirty(db);
+  return confirmed;
 }
 
 function updateEventContext(db, eventId, validated, collectedAt) {
@@ -372,6 +395,7 @@ function cleanupAnalytics(db, now = Date.now(), retentionDays = 30) {
 
 module.exports = {
   cleanupAnalytics,
+  confirmEventInteraction,
   initializeEventDetails,
   rebuildDetailDimensionMetrics,
   recordAccessEvent,

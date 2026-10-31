@@ -13,6 +13,7 @@ const { recordAccessEvent } = require('../server/analytics/repository');
 const { validateClientContext } = require('../server/analytics/context-validator');
 const { createEventTokenSigner } = require('../server/analytics/event-token');
 const { generateToken } = require('../server/middleware/auth');
+const { createIpBanGuard } = require('../server/security/ip-bans');
 
 const SECRET = Buffer.alloc(32, 7);
 
@@ -39,7 +40,8 @@ async function createHarness(t, overrides = {}) {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address();
   config.publicOrigin = `http://127.0.0.1:${port}`;
-  analytics = createAnalyticsModule({ db, config, geoResolver, logger: { error() {}, info() {} } });
+  const ipBans = overrides.ipBans?.(db) ?? null;
+  analytics = createAnalyticsModule({ db, config, geoResolver, ipBans, logger: { error() {}, info() {} } });
   await analytics.lifecycle.start();
 
   app.set('trust proxy', 'loopback');
@@ -111,6 +113,8 @@ function assertAnalyticsTopLevelOrder(html) {
   assert.ok(eventsIndex < moreIndex);
   assert.ok(moreIndex < systemIndex);
   assert.ok(systemIndex < detailIndex);
+  const bansIndex = html.indexOf('id="ip-bans"');
+  if (bansIndex >= 0) assert.ok(moreIndex < bansIndex && bansIndex < systemIndex);
 }
 
 test('tracked public HTML is no-store and client context is idempotently attached to the same event', async t => {
@@ -157,6 +161,48 @@ test('tracked public HTML is no-store and client context is idempotently attache
   const stored = db.prepare('SELECT context_hash, viewport_width FROM access_event_details').get();
   assert.equal(stored.context_hash.length, 64);
   assert.equal(stored.viewport_width, 1280);
+});
+
+test('a reported interaction confirms a browser visit once; automation and bad shapes do not', async t => {
+  const { baseUrl, db } = await createHarness(t);
+  const visit = async ip => {
+    const page = await fetch(`${baseUrl}/about`, {
+      headers: { 'user-agent': 'Mozilla/5.0', accept: 'text/html', 'x-forwarded-for': ip }
+    });
+    return tokenFrom(await page.text());
+  };
+  const send = (token, payload) => fetch(`${baseUrl}/api/analytics/client-context`, {
+    method: 'POST',
+    headers: { origin: baseUrl, 'content-type': 'application/json', 'x-analytics-event-token': token },
+    body: JSON.stringify(payload)
+  });
+  const context = { viewport: { width: 1280, height: 720 }, language: 'zh-CN' };
+  const confirmed = () => db.prepare(`
+    SELECT d.interacted_at AS interactedAt, m.confirmed_at AS confirmedAt
+    FROM access_event_details d JOIN access_metrics m ON m.id = d.metric_id ORDER BY d.metric_id
+  `).all();
+
+  const reader = await visit('203.0.113.10');
+  assert.equal((await send(reader, { context })).status, 204);
+  assert.deepEqual(confirmed(), [{ interactedAt: null, confirmedAt: null }]);
+  assert.equal((await send(reader, { context, interaction: { webdriver: false } })).status, 204);
+  const [first] = confirmed();
+  assert.match(first.interactedAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(first.confirmedAt, first.interactedAt);
+  // Sent again, the first confirmation stands.
+  assert.equal((await send(reader, { context, interaction: { webdriver: false } })).status, 204);
+  assert.deepEqual(confirmed()[0], first);
+
+  const driven = await visit('203.0.113.11');
+  assert.equal((await send(driven, { context, interaction: { webdriver: true } })).status, 204);
+  const headless = await visit('203.0.113.12');
+  const headlessContext = { ...context, userAgentData: { brands: [{ brand: 'HeadlessChrome', version: '130' }] } };
+  assert.equal((await send(headless, { context: headlessContext, interaction: { webdriver: false } })).status, 204);
+  const malformed = await visit('203.0.113.13');
+  assert.equal((await send(malformed, { context, interaction: { webdriver: 'no' } })).status, 400);
+  assert.equal((await send(malformed, { interaction: { webdriver: false } })).status, 400);
+  assert.equal((await send(malformed, { context, interaction: {} })).status, 400);
+  assert.deepEqual(confirmed().slice(1).map(row => row.confirmedAt), [null, null, null]);
 });
 
 test('collector never records redirects even when mounted before the redirect route', async t => {
@@ -355,9 +401,9 @@ test('admin retained-detail API and SSR are unavailable when details collection 
   const page = await fetch(`${baseUrl}/admin/analytics`, { headers: { cookie: adminCookie } });
   const html = await page.text();
   assert.equal(page.status, 200);
-  assert.match(html, /今日活跃访客/);
-  assert.match(html, /独立 IP/);
+  assert.match(html, /今日真人访客/);
   assert.match(html, /真人访问量/);
+  assert.match(html, /未确认访问量/);
   assert.match(html, /爬虫访问量/);
   assert.match(html, /未启用访问明细/);
   assert.doesNotMatch(html, /203\.0\.113|127\.0\.0\.1|::1/);
@@ -523,6 +569,65 @@ test('admin analytics structurally invalid cursors are SSR errors with enhanceme
   assert.match(html, /筛选条件无效，请检查输入后重试。/);
 });
 
+test('the analytics page lists probe bans and lifts one from a same-origin form only', async t => {
+  let guard;
+  const { baseUrl, adminCookie } = await createHarness(t, {
+    ipBans: database => {
+      guard = createIpBanGuard({ db: database, logger: { log() {}, error() {} } });
+      database.prepare(`
+        INSERT INTO ip_bans (network, ip, method, path, status, user_agent, country, hits, created_at)
+        VALUES ('2001:db8:1:2::/64', '2001:db8:1:2::10', 'GET', '/.env', 404, 'scanner', 'NL', 4, ?)
+      `).run(new Date().toISOString());
+      guard.reload();
+      return guard;
+    }
+  });
+  const page = await fetch(`${baseUrl}/admin/analytics`, { headers: { cookie: adminCookie } });
+  const html = await page.text();
+  assert.equal(page.status, 200);
+  assert.match(html, /id="ip-bans"/);
+  assert.match(html, /共封禁 <strong>1<\/strong> 个地址，近 7 天新增 <strong>1<\/strong> 个；封禁后已拒绝 <strong>4<\/strong> 次请求/);
+  assert.match(html, /<code class="analytics-break">GET \/\.env<\/code>/);
+  assertAnalyticsTopLevelOrder(html);
+
+  const unban = (network, headers = {}) => fetch(`${baseUrl}/admin/analytics/ip-bans/unban`, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: adminCookie, ...headers },
+    body: new URLSearchParams({ network, days: '7' })
+  });
+  const signedOut = await fetch(`${baseUrl}/admin/analytics/ip-bans/unban`, {
+    method: 'POST', redirect: 'manual', body: new URLSearchParams({ network: '2001:db8:1:2::/64' })
+  });
+  assert.equal(signedOut.status, 401);
+  assert.equal((await unban('2001:db8:1:2::/64', { 'sec-fetch-site': 'cross-site' })).status, 403);
+  assert.equal((await unban('2001:db8:1:2::/64', { origin: 'https://evil.example' })).status, 403);
+  assert.equal(guard.list().total, 1);
+
+  const lifted = await unban('2001:db8:1:2::/64', { 'sec-fetch-site': 'same-origin' });
+  assert.equal(lifted.status, 303);
+  assert.equal(lifted.headers.get('location'), '/admin/analytics?days=7&ipBan=unbanned#ip-bans');
+  assert.equal(guard.list().total, 0);
+  assert.equal((await unban('2001:db8:1:2::/64', { origin: baseUrl })).headers.get('location'), '/admin/analytics?days=7&ipBan=missing#ip-bans');
+  assert.equal((await unban('not-an-ip')).headers.get('location'), '/admin/analytics?days=7&ipBan=invalid#ip-bans');
+
+  const after = await (await fetch(`${baseUrl}/admin/analytics?days=7&ipBan=unbanned`, { headers: { cookie: adminCookie } })).text();
+  assert.equal(occurrenceCount(after, '已解除封禁。'), 1);
+  assert.match(after, /暂无封禁。/);
+});
+
+test('without the probe-ban guard the analytics page has no ban section or unban route', async t => {
+  const { baseUrl, adminCookie } = await createHarness(t);
+  const html = await (await fetch(`${baseUrl}/admin/analytics`, { headers: { cookie: adminCookie } })).text();
+  assert.doesNotMatch(html, /id="ip-bans"/);
+  const response = await fetch(`${baseUrl}/admin/analytics/ip-bans/unban`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: adminCookie },
+    body: new URLSearchParams({ network: '203.0.113.7' })
+  });
+  assert.equal(response.status, 404);
+});
+
 test('admin page hides ranges beyond retention and includes the configured retention range', async t => {
   const { baseUrl, adminCookie } = await createHarness(t, { config: { retentionDays: 10 } });
   const page = await fetch(`${baseUrl}/admin/analytics`, { headers: { cookie: adminCookie } });
@@ -534,11 +639,10 @@ test('admin page hides ranges beyond retention and includes the configured reten
   assert.doesNotMatch(html, /days=30/);
 });
 
-test('browser collector retries only 425 on immediate/1/2/4/8 second attempts', async () => {
-  const source = fs.readFileSync(path.resolve(__dirname, '..', 'public/js/analytics-context.js'), 'utf8');
+function collectorSandbox({ responses, navigator = {} }) {
   const delays = [];
   const calls = [];
-  const responses = [425, 425, 425, 425, 204];
+  const listeners = new Map();
   const context = {
     document: { querySelector: () => ({ content: 'v1.fixture.signature' }) },
     navigator: {
@@ -562,19 +666,33 @@ test('browser collector retries only 425 on immediate/1/2/4/8 second attempts', 
     fetch: async (...args) => {
       calls.push(args);
       const status = responses.shift();
-      return { status, headers: { get: () => status === 425 ? '1' : null } };
+      return { status, ok: status >= 200 && status < 300, headers: { get: () => status === 425 ? '1' : null } };
     },
+    // Retry waits run at once; the interaction deadline never comes.
     setTimeout: (callback, delay) => {
+      if (delay > 60_000) return 1;
       delays.push(delay);
       callback();
-    }
+      return 0;
+    },
+    clearTimeout() {},
+    addEventListener: (kind, listener) => listeners.set(kind, listener),
+    removeEventListener: kind => listeners.delete(kind)
   };
+  Object.assign(context.navigator, navigator);
   context.window.navigator = context.navigator;
   context.window.screen = context.screen;
   context.window.fetch = context.fetch;
   context.window.setTimeout = context.setTimeout;
+  return { context, calls, delays, listeners };
+}
 
-  await vm.runInNewContext(source, context);
+const collectorSource = () => fs.readFileSync(path.resolve(__dirname, '..', 'public/js/analytics-context.js'), 'utf8');
+
+test('browser collector retries only 425 on immediate/1/2/4/8 second attempts', async () => {
+  const { context, calls, delays, listeners } = collectorSandbox({ responses: [425, 425, 425, 425, 204] });
+  const finished = vm.runInNewContext(collectorSource(), context);
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(calls.length, 5);
   assert.deepEqual(delays, [1000, 2000, 4000, 8000]);
   assert.equal(calls[0][1].keepalive, true);
@@ -585,6 +703,36 @@ test('browser collector retries only 425 on immediate/1/2/4/8 second attempts', 
     'architecture', 'bitness', 'fullVersionList', 'model', 'platformVersion', 'wow64'
   ]);
   assert.doesNotThrow(() => validateClientContext(submitted));
+  // Still waiting for the reader; nothing more is sent until then.
+  assert.deepEqual([...listeners.keys()].sort(), ['keydown', 'pointerdown', 'pointermove', 'touchstart', 'wheel']);
+  listeners.get('keydown')({ isTrusted: true, type: 'keydown' });
+  await finished;
+});
+
+test('browser collector reports the first trusted interaction once, with the same context', async () => {
+  const { context, calls, listeners } = collectorSandbox({ responses: [204, 204], navigator: { webdriver: false } });
+  const finished = vm.runInNewContext(collectorSource(), context);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls.length, 1);
+  listeners.get('pointerdown')({ isTrusted: false, type: 'pointerdown' });
+  listeners.get('pointermove')({ isTrusted: true, type: 'pointermove', movementX: 0, movementY: 0 });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls.length, 1);
+  listeners.get('pointermove')({ isTrusted: true, type: 'pointermove', movementX: 3, movementY: 0 });
+  await finished;
+  assert.equal(calls.length, 2);
+  assert.equal(listeners.size, 0);
+  const first = JSON.parse(calls[0][1].body);
+  const second = JSON.parse(calls[1][1].body);
+  assert.deepEqual(second.context, first.context);
+  assert.deepEqual(second.interaction, { webdriver: false });
+  assert.equal(validateClientContext(second).hash, validateClientContext(first).hash);
+});
+
+test('browser collector stops when its context was not accepted', async () => {
+  const { context, calls } = collectorSandbox({ responses: [403] });
+  await vm.runInNewContext(collectorSource(), context);
+  assert.equal(calls.length, 1);
 });
 
 test('admin analytics API and page present localized labels for article, taxonomy, static, and search paths', async t => {
@@ -886,7 +1034,7 @@ test('admin analytics overview ranking and item API use query/fragment-free disp
   assert.doesNotMatch(rankingHtml, /部署|utm_source|%23extra/);
 });
 
-test('admin analytics view pins all unique-IP output states and stable-hook uniqueness', async () => {
+test('admin analytics view pins overview card states and stable-hook uniqueness', async () => {
   const emptyDimension = { items: [], distinctCount: 0, truncated: false, otherPageViews: 0 };
   const baseOverview = {
     days: 7,
@@ -894,6 +1042,12 @@ test('admin analytics view pins all unique-IP output states and stable-hook uniq
     uniqueHumanIps: 0,
     humanPageViews: 0,
     botPageViews: 0,
+    todayConfirmedVisitors: 0,
+    confirmedPageViews: 0,
+    confirmedVisitors: 0,
+    confirmedHumanIps: 0,
+    unconfirmedPageViews: 0,
+    unconfirmedNetwork: { known: 0, hosting: 0 },
     detailsAvailable: true,
     detailsComplete: true,
     pageViews: 0,
@@ -904,7 +1058,7 @@ test('admin analytics view pins all unique-IP output states and stable-hook uniq
     byBrowser: emptyDimension, byOs: emptyDimension, byDeviceModel: emptyDimension,
     byReferrerHost: emptyDimension, geoData: null
   };
-  const render = overview => ejs.renderFile(path.resolve(__dirname, '..', 'views/admin/analytics.ejs'), {
+  const render = (overview, extra = {}) => ejs.renderFile(path.resolve(__dirname, '..', 'views/admin/analytics.ejs'), {
     overview,
     events: { available: true, days: 7, nextCursor: null, items: [] },
     filters: { days: '7', search: '', traffic: 'all', ip: '', country: '', subdivision: '', city: '', browser: '', os: '', device: '', pathPrefix: '', referrerHost: '' },
@@ -915,26 +1069,53 @@ test('admin analytics view pins all unique-IP output states and stable-hook uniq
     rangeOptions: [1, 7, 30],
     systemStatus: { detailsEnabled: true, geoData: null, warning: null },
     formatBeijingTime: value => value,
-    user: { id: 1 }
+    user: { id: 1 },
+    ...extra
   });
 
-  const unavailable = await render({ ...baseOverview, uniqueHumanIps: null, detailsAvailable: false, detailsComplete: false });
-  assert.equal(occurrenceCount(unavailable, '未启用访问明细'), 1);
-
-  const incomplete = await render({
+  const unavailable = await render({
     ...baseOverview,
-    uniqueHumanIps: 12,
-    detailsComplete: false,
-    detailCoverage: { pageViews: 0, humanPageViews: 0, complete: false }
+    uniqueHumanIps: null,
+    confirmedHumanIps: null,
+    unconfirmedNetwork: null,
+    unconfirmedPageViews: 9,
+    detailsAvailable: false,
+    detailsComplete: false
   });
-  assert.match(incomplete, /至少 12 个/);
-  assert.equal(occurrenceCount(incomplete, '至少 12 个'), 1);
+  assert.equal(occurrenceCount(unavailable, '未启用访问明细'), 2);
+  assert.match(unavailable, /确认真人需要访问明细/);
+  assert.match(unavailable, />\s*9 次\s*</);
+  assert.doesNotMatch(unavailable, /来自机房网络/);
+  assert.doesNotMatch(unavailable, /id="ip-bans"/);
 
-  const complete = await render({ ...baseOverview, uniqueHumanIps: 12 });
-  assert.match(complete, />\s*12 个\s*</);
-  assert.doesNotMatch(complete, /至少 12 个/);
+  const counted = await render({
+    ...baseOverview,
+    todayConfirmedVisitors: 2,
+    confirmedPageViews: 5,
+    confirmedVisitors: 3,
+    confirmedHumanIps: 4,
+    unconfirmedPageViews: 40,
+    unconfirmedNetwork: { known: 32, hosting: 24 }
+  });
+  assert.match(counted, />\s*2 人\s*</);
+  assert.match(counted, />\s*5 次\s*</);
+  assert.match(counted, /3 位访客 · 4 个 IP/);
+  assert.match(counted, />\s*40 次\s*</);
+  assert.match(counted, /75% 来自机房网络/);
 
-  for (const html of [incomplete, complete]) assertEnabledWorkspaceHooksOnce(html);
+  // Without an ASN database nothing is known about the networks, so no share is shown.
+  const unknownNetworks = await render({ ...baseOverview, unconfirmedPageViews: 40 });
+  assert.doesNotMatch(unknownNetworks, /来自机房网络/);
+
+  const withBans = await render(baseOverview, {
+    ipBans: { total: 0, recent: 0, blockedRequests: 0, message: { severity: 'info', text: '已解除封禁。' }, items: [] }
+  });
+  assert.match(withBans, /共封禁 <strong>0<\/strong> 个地址/);
+  assert.match(withBans, /暂无封禁。/);
+  assert.equal(occurrenceCount(withBans, '已解除封禁。'), 1);
+  assertAnalyticsTopLevelOrder(withBans);
+
+  for (const html of [counted, unknownNetworks, withBans]) assertEnabledWorkspaceHooksOnce(html);
 });
 
 test('admin analytics view renders readable paths and hostile detail values as text-only UI', async () => {
@@ -945,6 +1126,12 @@ test('admin analytics view renders readable paths and hostile detail values as t
     uniqueHumanIps: 1,
     humanPageViews: 1,
     botPageViews: 1,
+    todayConfirmedVisitors: 1,
+    confirmedPageViews: 1,
+    confirmedVisitors: 1,
+    confirmedHumanIps: 1,
+    unconfirmedPageViews: 0,
+    unconfirmedNetwork: { known: 0, hosting: 0 },
     detailsAvailable: true,
     detailsComplete: true,
     pageViews: 1,
@@ -953,7 +1140,7 @@ test('admin analytics view renders readable paths and hostile detail values as t
     byHour: [], byDevice: [{ deviceKind: 'desktop', pageViews: 1 }],
     byPage: [{
       path: '/tag/%E5%B7%A5%E5%85%B7', displayPath: '/tag/工具', displayPathStatus: 'decoded',
-      pageViews: 1, anonymousVisitors: 1
+      pageViews: 1, anonymousVisitors: 1, confirmedPageViews: 1, confirmedVisitors: 1
     }],
     byCountry: { ...emptyDimension, items: [{ key: 'CN', label: 'China', pageViews: 1 }], distinctCount: 1 },
     bySubdivision: { ...emptyDimension, items: [{ key: 'CN:unknown', label: 'China / Unknown', pageViews: 1 }], distinctCount: 1 },
@@ -969,7 +1156,8 @@ test('admin analytics view renders readable paths and hostile detail values as t
     items: [{
       id: '1'.repeat(32), observedAtUtc: '2026-07-17T00:00:00.000Z',
       requestPath: '/x/%3Cscript%3E', displayPath: '/x/<script>', displayPathStatus: 'decoded',
-      trafficKind: 'human', botName: null,
+      trafficKind: 'human', botName: null, confirmed: true, interactedAt: '2026-07-17T00:00:05.000Z',
+      provider: { asn: 64500, organization: '"><img data-asn-injected src=x>', kind: 'hosting' },
       page: { kind: 'article', title: '<svg onload=alert(2)>', displayPath: '/x/<script>' },
       fullUrl: 'https://blog.example.com/x', referrer: '"><img src=x onerror=alert(1)>',
       statusCode: 200, durationMs: 10, responseBytes: null, ipAddress: '203.0.113.10',
@@ -978,7 +1166,8 @@ test('admin analytics view renders readable paths and hostile detail values as t
     }, {
       id: '2'.repeat(32), observedAtUtc: '2026-07-16T23:00:00.000Z',
       requestPath: '/article/deleted', displayPath: '/article/deleted', displayPathStatus: 'unchanged',
-      trafficKind: 'bot', botName: '"><img data-bot-injected src=x onerror=alert(3)>',
+      trafficKind: 'bot', botName: '"><img data-bot-injected src=x onerror=alert(3)>', confirmed: false,
+      interactedAt: null, provider: null,
       page: { kind: 'article', title: '文章（已删除或未知）', displayPath: '/article/deleted' },
       fullUrl: 'https://blog.example.com/article/deleted', referrer: null,
       statusCode: 200, durationMs: 8, responseBytes: null, ipAddress: '2001:db8::2',
@@ -1004,6 +1193,16 @@ test('admin analytics view renders readable paths and hostile detail values as t
       geoData: overview.geoData,
       warning: { severity: 'error', message: 'Geo warning fixture' }
     },
+    asnStatus: { enabled: true, datasetDate: '2026-10-01T01:41:36.000Z', lastRefresh: null },
+    asnCredit: { href: 'https://db-ip.com', label: 'IP Geolocation by DB-IP' },
+    ipBans: {
+      total: 1, recent: 1, blockedRequests: 3, message: null,
+      items: [{
+        network: '198.51.100.7', ip: '198.51.100.7', method: 'GET', path: '/"><img data-ban-injected src=x>.php',
+        status: 404, userAgent: '<script data-ua-injected>x</script>', country: 'NL', hits: 3,
+        lastHitAt: null, createdAt: '2026-07-16T00:00:00.000Z'
+      }]
+    },
     formatBeijingTime: value => value,
     user: { id: 1 }
   });
@@ -1011,10 +1210,16 @@ test('admin analytics view renders readable paths and hostile detail values as t
   const moreIndex = html.indexOf('id="analytics-more"');
   assertAnalyticsTopLevelOrder(html);
   assertEnabledWorkspaceHooksOnce(html);
-  assert.match(html, /今日活跃访客/);
-  assert.match(html, /独立 IP/);
+  assert.match(html, /今日真人访客/);
   assert.match(html, /真人访问量/);
+  assert.match(html, /未确认访问量/);
   assert.match(html, /爬虫访问量/);
+  assert.match(html, /class="analytics-traffic-label is-human">真人</);
+  assert.match(html, /AS64500 &#34;&gt;&lt;img data-asn-injected src=x&gt; · 机房网络/);
+  assert.match(html, /IP Geolocation by DB-IP/);
+  assert.match(html, /id="ip-bans"/);
+  assert.match(html, /name="network" value="198\.51\.100\.7"/);
+  assert.doesNotMatch(html, /<img data-asn-injected|<img data-ban-injected|<script data-ua-injected/);
   assert.match(html, /name="search"/);
   assert.match(html, /name="traffic"/);
   assert.match(html, /<summary[^>]*>高级筛选（<span[^>]*>2<\/span>）<\/summary>/);

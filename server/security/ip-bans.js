@@ -151,6 +151,16 @@ function listIpBans(db, limit = 200) {
   return { total, bans };
 }
 
+/** Counts for the analytics page: all bans, bans made since `since`, and requests they refused. */
+function summarizeIpBans(db, since) {
+  return db.prepare(`
+    SELECT COUNT(*) AS total,
+           COUNT(CASE WHEN created_at >= ? THEN 1 END) AS recent,
+           COALESCE(SUM(hits), 0) AS blockedRequests
+      FROM ip_bans
+  `).get(since);
+}
+
 function removeIpBan(db, network) {
   return db.prepare('DELETE FROM ip_bans WHERE network = ?').run(network).changes > 0;
 }
@@ -290,8 +300,10 @@ function createIpBanGuard({
   }
 
   return Object.freeze({
+    enabled,
     middleware: enabled ? middleware : (req, res, next) => next(),
     list: limit => listIpBans(db, limit),
+    summary: since => summarizeIpBans(db, since),
     unban(network) {
       const removed = removeIpBan(db, network);
       banned.delete(network);
@@ -326,5 +338,6 @@ module.exports = {
   isProbePath,
   isVerifiedCrawler,
   listIpBans,
-  removeIpBan
+  removeIpBan,
+  summarizeIpBans
 };

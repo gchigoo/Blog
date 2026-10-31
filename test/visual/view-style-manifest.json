@@ -1,8 +1,8 @@
 {
-  "public/css/custom.css": "1db03fd2d3c58ed86142268296742bc158217f9e29307e0cb0b2706542b4c4f7",
+  "public/css/custom.css": "ec56dc227c23839d4d0a2202e56ebc15153a329cc552c0c95debdfb00d378ec0",
   "views/404.ejs": "447bad97ce04be67c043432decfe73ba3356a94a5d420198eb0ae4053e52be9f",
   "views/about.ejs": "acd54c2e611df00ce85c9f86a44935ce94c91eb711383f27602661c50d84d17b",
-  "views/admin/analytics.ejs": "5385fff8266933181869b7650a5b18bb526eb46a28dc796c3fbd769a0f32c48b",
+  "views/admin/analytics.ejs": "f4fd41e263bc5f2471a99b701f289d44154e6e1d05bd6cb6be3e5760fa82dd85",
   "views/admin/articles.ejs": "a035f9c6d966c834e0d7e0e1df4e94fdd27897d788f0e134173632f48532a5f5",
   "views/admin/comments.ejs": "7de49618bc2a9471904fde800904b14eac67a1a84e2c5198a223a8af59f1b94c",
   "views/admin/login.ejs": "757bc696244d2298b57bac137c00370c04652adf7f9c7fe1384d322e0de8b870",

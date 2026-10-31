@@ -14,8 +14,11 @@ const LIST_FIELDS = `
   d.device_type, d.device_vendor, d.device_model, d.os_name, d.os_version,
   d.browser_name, d.browser_version, d.engine_name, d.engine_version,
   d.cpu_architecture, d.traffic_kind, d.bot_name, d.context_source, d.context_collected_at,
-  d.geo_dataset_date, d.geo_status, d.client_parse_status
+  d.geo_dataset_date, d.geo_status, d.client_parse_status,
+  d.interacted_at, d.asn, d.as_org, d.network_kind
 `;
+// 'human' is every browser-like visit; 'confirmed' and 'unconfirmed' split it by page interaction.
+const TRAFFIC_FILTERS = ['all', 'confirmed', 'unconfirmed', 'human', 'bot'];
 
 function invalidFilter(field, reason = 'invalid_value') {
   throw Object.assign(new Error('invalid_filter'), { code: 'invalid_filter', field, reason });
@@ -95,7 +98,7 @@ function parseEventListQuery(query = {}, retentionDays = 30) {
   }
   const limit = integer(query.limit, 50, 1, 100, 'limit');
   const traffic = normalized(query.traffic, 'traffic', 16) || 'all';
-  if (!['all', 'human', 'bot'].includes(traffic)) invalidFilter('traffic', 'unsupported_value');
+  if (!TRAFFIC_FILTERS.includes(traffic)) invalidFilter('traffic', 'unsupported_value');
   let search = null;
   if (query.search !== undefined) {
     if (typeof query.search !== 'string') invalidFilter('search', 'invalid_type');
@@ -205,7 +208,11 @@ function buildEventListQuery(now, options, articlePaths = [], explain = false) {
       params.push(filters[name]);
     }
   }
-  if (filters.traffic !== 'all') {
+  if (filters.traffic === 'confirmed') {
+    where.push("d.traffic_kind = 'human' AND d.interacted_at IS NOT NULL");
+  } else if (filters.traffic === 'unconfirmed') {
+    where.push("d.traffic_kind = 'human' AND d.interacted_at IS NULL");
+  } else if (filters.traffic !== 'all') {
     where.push('d.traffic_kind = ?');
     params.push(filters.traffic);
   }
@@ -256,6 +263,10 @@ function mapListRow(row, page) {
     ...display,
     trafficKind: row.traffic_kind,
     botName: row.bot_name,
+    confirmed: row.interacted_at !== null,
+    interactedAt: row.interacted_at,
+    provider: row.asn === null
+      ? null : { asn: row.asn, organization: row.as_org, kind: row.network_kind },
     page,
     fullUrl: row.full_url,
     referrer: row.referrer,

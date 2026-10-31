@@ -484,8 +484,11 @@ function fixtureRowForEvent(event) {
 
 function analyticsFixtureEvent(position, traffic, search) {
   const fixtureRow = ANALYTICS_FIXTURE_ROWS.find(row => row.position === position);
-  const forcedTraffic = traffic === 'human' || traffic === 'bot' ? traffic : null;
+  const forcedTraffic = traffic === 'bot' ? 'bot'
+    : ['human', 'confirmed', 'unconfirmed'].includes(traffic) ? 'human' : null;
   const trafficKind = forcedTraffic || (position % 2 === 1 ? 'human' : 'bot');
+  const confirmed = trafficKind === 'human'
+    && (traffic === 'confirmed' || (traffic !== 'unconfirmed' && position % 4 === 1));
   const marker = search || `Fixture event ${position}`;
   const longValue = '长'.repeat(5000);
   const displayPath = search === 'long-valid' ? `/fixture/${longValue}` : `/fixture/event-${position}`;
@@ -497,6 +500,12 @@ function analyticsFixtureEvent(position, traffic, search) {
     displayPathStatus: 'unchanged',
     trafficKind,
     botName: trafficKind === 'bot' ? 'Googlebot' : null,
+    confirmed,
+    interactedAt: confirmed ? fixtureRow.observedAtUtc : null,
+    provider: search === 'long-valid' ? null
+      : trafficKind === 'bot' ? { asn: 15169, organization: 'Google LLC', kind: 'hosting' }
+        : confirmed ? { asn: 4134, organization: 'Chinanet', kind: 'isp' }
+          : { asn: 14061, organization: 'DigitalOcean, LLC', kind: 'hosting' },
     page: {
       kind: 'other',
       title: search === 'long-valid' ? longValue : `${marker}`,
@@ -609,7 +618,7 @@ function analyticsAppliedFilters(filters, limit) {
   if (filters.traffic && filters.traffic !== 'all') {
     items.push({
       name: 'traffic', label: '访问类型',
-      value: filters.traffic === 'human' ? '仅真人' : '仅爬虫'
+      value: ({ confirmed: '仅真人', unconfirmed: '仅未确认', human: '仅浏览器类', bot: '仅爬虫' })[filters.traffic] || filters.traffic
     });
   }
   for (const [name, label] of ANALYTICS_ADVANCED_FILTERS) {
@@ -643,6 +652,12 @@ function analyticsViewModel(query = {}) {
     uniqueHumanIps: 41,
     humanPageViews: 128,
     botPageViews: 37,
+    todayConfirmedVisitors: 6,
+    confirmedPageViews: 23,
+    confirmedVisitors: 9,
+    confirmedHumanIps: 8,
+    unconfirmedPageViews: 105,
+    unconfirmedNetwork: { known: 98, hosting: 71 },
     detailsAvailable: true,
     detailsComplete: false,
     pageViews: 128,
@@ -651,9 +666,9 @@ function analyticsViewModel(query = {}) {
     byHour: [],
     byDevice: [{ deviceKind: 'desktop', pageViews: 82 }, { deviceKind: 'mobile', pageViews: 46 }],
     byPage: [
-      { displayPath: '/', pageViews: 52, anonymousVisitors: 31 },
-      { displayPath: '/article/comments-browser-smoke', pageViews: 44, anonymousVisitors: 25 },
-      { displayPath: '/tag/upgrade', pageViews: 32, anonymousVisitors: 18 }
+      { displayPath: '/', pageViews: 52, anonymousVisitors: 31, confirmedPageViews: 11, confirmedVisitors: 5 },
+      { displayPath: '/article/comments-browser-smoke', pageViews: 44, anonymousVisitors: 25, confirmedPageViews: 9, confirmedVisitors: 4 },
+      { displayPath: '/tag/upgrade', pageViews: 32, anonymousVisitors: 18, confirmedPageViews: 3, confirmedVisitors: 2 }
     ],
     byCountry: dimension([{ key: 'CN', label: '中国', pageViews: 91 }, { key: 'US', label: '美国', pageViews: 25 }]),
     bySubdivision: dimension([{ key: 'CN:beijing', label: '中国 / 北京', pageViews: 57 }]),
@@ -693,6 +708,29 @@ function analyticsViewModel(query = {}) {
       detailsEnabled: true,
       geoData: overview.geoData,
       warning: null
+    },
+    asnStatus: {
+      enabled: true,
+      datasetDate: '2026-07-01T01:41:36.000Z',
+      lastRefresh: { at: '2026-07-17T00:00:00.000Z', result: 'fresh' }
+    },
+    asnCredit: { href: 'https://db-ip.com', label: 'IP Geolocation by DB-IP' },
+    ipBans: {
+      total: 66,
+      recent: 12,
+      blockedRequests: 1840,
+      message: null,
+      items: [
+        {
+          network: '198.51.100.23', method: 'GET', path: '/.env', status: 404,
+          userAgent: 'Mozilla/5.0 (compatible; scanner)', country: 'NL', hits: 312,
+          createdAt: '2026-07-17T06:12:00.000Z'
+        },
+        {
+          network: '2001:db8:4:2::/64', method: 'POST', path: '/wp-login.php', status: 404,
+          userAgent: null, country: 'US', hits: 7, createdAt: '2026-07-16T22:40:00.000Z'
+        }
+      ]
     },
     formatBeijingTime: value => new Intl.DateTimeFormat('zh-CN', {
       timeZone: 'Asia/Shanghai',

@@ -10,6 +10,7 @@
 4. [PM2 进程管理](#pm2-进程管理)
 5. [Nginx 反向代理](#nginx-反向代理)
 6. [访问明细与 GeoLite2 City](#访问明细与-geolite2-city)
+   - [真人确认与网络归属](#真人确认与网络归属)
    - [探测封禁](#探测封禁)
 7. [HTTPS 配置](#https-配置)
 8. [日常维护](#日常维护)
@@ -438,9 +439,20 @@ sudo nginx -t                   # 测试配置
 
 访问明细默认关闭。启用后，成功的公开 HTML 页面访问会在 `blog.db` 中保存原始 IP、请求时间、公开 URL/查询、Referrer、原始 User-Agent、允许的 Client Hints、GeoLite2 City 近似地区、浏览器/系统/设备解析结果和浏览器实际提供的设备上下文。Cookie、Authorization、OAuth code/state 和凭据参数值不会进入 analytics 数据。默认保留 30 天，每 6 小时清理一次；数据库备份也会包含这些明细。
 
-已知爬虫不会再在入口被丢弃：系统保留其聚合和逐次记录，显示可读爬虫名称，但所有真人指标和真人维度都显式排除 `traffic_kind='bot'`。所选近 N 天聚合查询沿用 `access_metrics.bucket_utc` 的小时 bucket 精度，因此范围边界不是小时以内的精确计数。独立 IP 只由保留期内的真人明细去重；当范围内还包含只有聚合指标、没有明细的历史时，后台显示“至少 N 个”，不能把它解释为完整总数。
+已知爬虫不会再在入口被丢弃：系统保留其聚合和逐次记录，显示可读爬虫名称，但所有真人指标和真人维度都显式排除 `traffic_kind='bot'`。所选近 N 天聚合查询沿用 `access_metrics.bucket_utc` 的小时 bucket 精度，因此范围边界不是小时以内的精确计数。真人访问的 IP 数只由保留期内已确认的明细去重（确认依赖明细，因此没有“只有聚合”的缺口）。
 
-当 `ANALYTICS_DETAILS_ENABLED=false` 时，逐次访问列表、单条详情 UI、`/api/admin/analytics/events` 和事件详情 API 均不可用，即使数据库中仍保留旧明细；四项聚合概览仍可使用，其中独立 IP 明确显示未启用。
+当 `ANALYTICS_DETAILS_ENABLED=false` 时，逐次访问列表、单条详情 UI、`/api/admin/analytics/events` 和事件详情 API 均不可用，即使数据库中仍保留旧明细；概览只剩未确认访问量与爬虫访问量，真人两项明确显示未启用（确认真人需要访问明细）。
+
+### 真人确认与网络归属
+
+只看 User-Agent 分不出脚本：2026-10-31 统计，近 7 天被记为“真人”的 475 次页面访问里，只有 3 次让页面脚本回传过浏览器上下文，其余几乎都是不执行 JavaScript 的脚本。所以“真人”改为以页面上的真实操作确认：
+
+- 页面脚本 `public/js/analytics-context.js` 先照常回传浏览器上下文；之后在第一次真实的点击、触摸、按键、滚轮或指针移动（`isTrusted`，指针必须真的移动过）时，用同一个事件 token 再提交一次同样的上下文，附带 `interaction: { webdriver }`。token 10 分钟内有效，之后不再等。
+- 服务端只对 `traffic_kind='human'` 的访问确认一次：写入 `access_event_details.interacted_at` 与 `access_metrics.confirmed_at`。`navigator.webdriver=true` 或品牌含 `HeadlessChrome` 的不确认。
+- 概览四项是：今日真人访客、真人访问量（已确认，附访客数与 IP 数）、未确认访问量（像浏览器但没有操作，附来自机房网络的比例）、爬虫访问量。页面排行按已确认访问排序；访问明细可按“真人 / 未确认 / 爬虫”筛选（`traffic=confirmed|unconfirmed|bot`，旧的 `traffic=human` 仍表示全部浏览器类访问）。
+- 这项信号上线前的历史访问都计为未确认。会执行脚本并伪造事件的自动化仍可能被确认；它挡住的是绝大多数只抓 HTML 的脚本。
+
+网络归属来自 DB-IP 的免费 “IP to ASN Lite” 库（CC BY 4.0，后台页面署名 “IP Geolocation by DB-IP”）。设置 `ANALYTICS_ASN_DB_DIR` 后，应用启动时读取该目录下的 `dbip-asn-lite.mmdb`，缺失或超过 32 天就在后台下载当月文件（当月未发布时取上月），校验 `8.8.8.8 → AS15169` 后原子替换，此后每天检查一次。每次带明细的访问记录 `asn`、`as_org` 和 `network_kind`（`isp` 或云/机房/VPS 的 `hosting`）。目录未设置或下载失败时，这三列为空，概览不显示机房比例，其余功能不受影响。这个库与 GeoLite2 City 的 updater 无关，不需要 MaxMind 账号。
 
 | 环境变量 | 生产值/约束 |
 |---|---|
@@ -451,6 +463,7 @@ sudo nginx -t                   # 测试配置
 | `ANALYTICS_GEOIP_CITY_DB_PATH` | `/var/lib/blog/geoip/GeoLite2-City.mmdb` |
 | `ANALYTICS_GEOIP_UPDATE_STATUS_PATH` | `/var/lib/blog/geoip/update-status.json` |
 | `ANALYTICS_PUBLIC_ORIGIN` | `https://blog.cokedaily.space`，只能是 HTTPS origin，不能带 path/query/credentials |
+| `ANALYTICS_ASN_DB_DIR` | 可选，`/var/lib/blog/asn`；应用进程可写的绝对路径，存放每月下载的 DB-IP ASN 库 |
 
 生产配置示例只展示固定路径，不包含密钥值：
 
@@ -461,6 +474,7 @@ export ANALYTICS_INTERNAL_IPS=23.254.158.109
 export ANALYTICS_GEOIP_CITY_DB_PATH=/var/lib/blog/geoip/GeoLite2-City.mmdb
 export ANALYTICS_GEOIP_UPDATE_STATUS_PATH=/var/lib/blog/geoip/update-status.json
 export ANALYTICS_PUBLIC_ORIGIN=https://blog.cokedaily.space
+export ANALYTICS_ASN_DB_DIR=/var/lib/blog/asn
 pm2 restart blog --update-env
 ```
 
@@ -890,7 +904,7 @@ Cloudflare 默认不拦这类请求：2026-10-31 统计 Nginx 日志，近 7 天
 - **封什么**：IPv4 封单个地址，IPv6 封整个 /64。客户端 IP 是 Nginx 按 Cloudflare 地址段还原的 `req.ip`（见 `cloudflare-real-ip.conf`）。
 - **不封**：loopback 与内网地址；`ANALYTICS_INTERNAL_IPS` 中的地址；Cloudflare 自己的地址段（Workers 发出的请求都带 Cloudflare 的 IP）；已登录后台的浏览器；反向 DNS 与正向解析都核对通过的 Googlebot、Bingbot、Applebot、YandexBot、Baiduspider。
 - **执行**：封禁列表常驻内存，请求进来先查列表；每 60 秒从表 `ip_bans` 重新读取。被拦的请求不进访问统计，只累加到封禁记录上，每 10 秒批量写入。日志只记被封的路径，不记 IP。
-- **查看与解除**：服务器上 `npm run ip-bans`（列出最近 50 条，`npm run ip-bans -- list 200` 列更多），`npm run ip-bans -- unban <IP>` 解除，运行中的服务最多 1 分钟后生效。登录后台后也可以用 `GET /api/admin/ip-bans` 查看、`POST /api/admin/ip-bans/unban`（JSON `{"network": "<IP>"}`）解除并立即生效。IPv6 填该 /64 内的任意地址即可。
+- **查看与解除**：后台“访问统计”页底部的“探测封禁”一节显示封禁总数、所选范围内新增数、封禁后拒绝的请求数和最近 20 条，每条都可以直接解除并立即生效。服务器上 `npm run ip-bans`（列出最近 50 条，`npm run ip-bans -- list 200` 列更多），`npm run ip-bans -- unban <IP>` 解除，运行中的服务最多 1 分钟后生效。登录后台后也可以用 `GET /api/admin/ip-bans` 查看、`POST /api/admin/ip-bans/unban`（JSON `{"network": "<IP>"}`）解除并立即生效。IPv6 填该 /64 内的任意地址即可。
 - **代价**：多人共用一个出口 IP 时（公司、学校、运营商 CGNAT、VPN 出口），其中一人探测会让所有人被封，需要手动解除。
 
 ---

@@ -603,12 +603,13 @@ test('human detail uses dedicated text-only fields for hostile production values
   await expect(page.locator('#analytics-detail-id')).toHaveText(eventId);
   await expect(page.locator('#analytics-detail-page-title')).toHaveText('<img data-hostile-title src=x onerror=alert(1)>');
   await expect(page.locator('#analytics-detail-page-path')).toHaveText('/fixture/<script>alert(2)</script>');
-  await expect(page.locator('#analytics-detail-traffic')).toHaveText('真人');
+  await expect(page.locator('#analytics-detail-traffic')).toHaveText('未确认（像浏览器，但页面上没有操作）');
+  await expect(page.locator('#analytics-detail-network')).toHaveText('AS14061 DigitalOcean, LLC · 机房网络');
   await expect(page.locator('#analytics-detail-bot-name')).toHaveText('不适用');
   await expect(page.locator('#analytics-detail-referrer')).toHaveText('"><svg data-hostile-referrer onload=alert(3)>');
   await expect(page.locator('#analytics-detail-user-agent')).toHaveText('<iframe data-hostile-ua src=javascript:alert(4)>');
   await expect(page.locator('#analytics-detail-client-status')).toHaveText('客户端解析失败');
-  await expect(page.locator('#analytics-detail-context-status')).toHaveText('真人访问未提供浏览器上下文');
+  await expect(page.locator('#analytics-detail-context-status')).toHaveText('页面脚本未回传浏览器上下文');
   await expect(page.locator('#analytics-detail-json')).toContainText(eventId);
   await expect(page.locator('[data-hostile-title], [data-hostile-referrer], [data-hostile-ua]')).toHaveCount(0);
   expect(await page.evaluate(() => window.__analyticsInjectionExecuted || false)).toBe(false);

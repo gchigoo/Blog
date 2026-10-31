@@ -187,7 +187,7 @@ Google Cloud 中的 OAuth client 类型必须是 **Web application**，Authorize
 
 `ANALYTICS_HMAC_SECRET` 始终必填；访问明细默认关闭。生产环境需要先由每周 systemd updater 成功安装 GeoLite2 City，再设置 `ANALYTICS_DETAILS_ENABLED=true`。启用后会记录每次成功公开 HTML 访问的原始 IP、公开 URL/来源、近似地区、原始 User-Agent、浏览器/系统/设备解析结果，以及浏览器实际提供的屏幕、时区、语言和高熵 Client Hints。后台会把 `/tag/%E5%B7%A5%E5%85%B7` 等所有合法编码路径显示为可读 Unicode，事件详情/API 仍保留原始编码值。loopback 地址始终不采集；生产主机自身的公网地址可通过 `ANALYTICS_INTERNAL_IPS` 排除。
 
-已知爬虫也会被保留并标注，但不会计入今日活跃访客、独立 IP、真人访问量、真人热门页面或真人设备维度。所选近 N 天聚合继续按小时 bucket 统计，不表示小时以内的精确范围；如果范围内包含只有聚合指标、没有逐次明细的历史，独立 IP 会显示“至少 N 个”。当 `ANALYTICS_DETAILS_ENABLED=false` 时，逐次访问列表、单条详情 UI 和对应管理员 API 均不可用，但真人/爬虫聚合访问量仍可查看。
+已知爬虫也会被保留并标注，但不会计入真人指标或真人维度。“真人”以页面上的真实操作（点击、触摸、按键、滚轮或移动指针）确认，像浏览器但没有操作的访问单独计为“未确认”，多为不执行脚本的抓取；设置 `ANALYTICS_ASN_DB_DIR` 后还会标出来自机房网络的访问（见 DEPLOY.md“真人确认与网络归属”）。所选近 N 天聚合继续按小时 bucket 统计，不表示小时以内的精确范围。当 `ANALYTICS_DETAILS_ENABLED=false` 时，逐次访问列表、单条详情 UI 和对应管理员 API 均不可用，真人确认也随之不可用，但未确认/爬虫聚合访问量仍可查看。
 
 升级已有实例时必须先备份并运行 `npm run migrate-db`，再重启应用。开始采集爬虫后，如需回滚到不认识 `traffic_kind` 的旧应用代码，必须恢复发布前数据库备份，或先部署显式过滤 `traffic_kind` 的兼容补丁。匿名访客 HMAC 在发布时从 UTC 日期切换为北京时间日期；切换影响最多一个北京时间自然日，不会回填或重算历史 HMAC。
 

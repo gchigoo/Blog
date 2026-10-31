@@ -1,7 +1,7 @@
 const express = require('express');
 const { validateClientContext } = require('./context-validator');
 const { normalizeTrustedIp } = require('./request-security');
-const { updateEventContext } = require('./repository');
+const { confirmEventInteraction, updateEventContext } = require('./repository');
 
 const CONTEXT_PATH = '/api/analytics/client-context';
 const BODY_LIMIT_BYTES = 16 * 1024;
@@ -10,6 +10,13 @@ function errorResponse(res, status, error, retryAfter = null) {
   res.set('Cache-Control', 'no-store');
   if (retryAfter !== null) res.set('Retry-After', String(retryAfter));
   return res.status(status).json({ error });
+}
+
+// Automated browsers announce themselves here even when their user agent string is edited.
+function automated(validated) {
+  if (validated.interaction.webdriver) return true;
+  const brands = validated.value.userAgentData?.brands || [];
+  return brands.some(brand => /headless/i.test(brand.brand));
 }
 
 function createPublicContextRouter({ db, config, clock, tokenSigner, rateLimiters }) {
@@ -49,14 +56,12 @@ function createPublicContextRouter({ db, config, clock, tokenSigner, rateLimiter
     } catch {
       return errorResponse(res, 400, 'invalid_context');
     }
-    const result = updateEventContext(
-      db,
-      req.analyticsEventClaims.eventId,
-      validated,
-      new Date(clock.now()).toISOString()
-    );
+    const { eventId } = req.analyticsEventClaims;
+    const at = new Date(clock.now()).toISOString();
+    const result = updateEventContext(db, eventId, validated, at);
     if (result === 'not_found') return errorResponse(res, 425, 'event_not_ready', 1);
     if (result === 'conflict') return errorResponse(res, 409, 'context_conflict');
+    if (validated.interaction && !automated(validated)) confirmEventInteraction(db, eventId, at);
     res.set('Cache-Control', 'no-store');
     return res.status(204).end();
   });

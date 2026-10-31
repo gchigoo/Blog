@@ -104,6 +104,7 @@ function parseAnalyticsConfig(env = process.env) {
       internalIps,
       geoIpCityDbPath: null,
       geoIpUpdateStatusPath: null,
+      asnDbDir: null,
       publicOrigin: null
     });
   }
@@ -116,6 +117,12 @@ function parseAnalyticsConfig(env = process.env) {
   const geoIpUpdateStatusPath = env.ANALYTICS_GEOIP_UPDATE_STATUS_PATH?.trim()
     || siblingStatusPath(geoIpCityDbPath);
 
+  // Optional: a writable directory for the monthly DB-IP ASN file.
+  const asnDbDir = env.ANALYTICS_ASN_DB_DIR?.trim() || null;
+  if (asnDbDir && !path.isAbsolute(asnDbDir)) {
+    throw new Error('ANALYTICS_ASN_DB_DIR must be an absolute path');
+  }
+
   return Object.freeze({
     detailsEnabled,
     hmacSecret,
@@ -123,6 +130,7 @@ function parseAnalyticsConfig(env = process.env) {
     internalIps,
     geoIpCityDbPath,
     geoIpUpdateStatusPath,
+    asnDbDir,
     publicOrigin
   });
 }

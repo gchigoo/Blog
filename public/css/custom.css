@@ -1094,6 +1094,11 @@ body.lightbox-open {
   background: var(--blog-bot-badge-bg);
 }
 
+.analytics-traffic-label.is-unconfirmed {
+  color: var(--blog-text-label);
+  background: var(--blog-surface-muted);
+}
+
 .analytics-bot-name {
   display: inline;
   margin-left: 0.4rem;
@@ -1275,6 +1280,16 @@ body.lightbox-open {
   text-decoration: underline;
 }
 
+.analytics-ip-bans {
+  margin-bottom: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--blog-border-analytics);
+}
+
+.analytics-ip-bans form {
+  margin: 0;
+}
+
 .analytics-system-status {
   margin-bottom: 1.5rem;
   padding-top: 1rem;
@@ -1381,6 +1396,32 @@ body.lightbox-open {
   .analytics-filter-grid,
   .analytics-system-grid {
     grid-template-columns: 1fr;
+  }
+
+  .analytics-ban-table thead {
+    display: none;
+  }
+
+  .analytics-ban-table,
+  .analytics-ban-table tbody,
+  .analytics-ban-table tr,
+  .analytics-ban-table td {
+    display: block;
+  }
+
+  .analytics-ban-table tr {
+    padding: 0.6rem 0;
+    border-bottom: 1px solid var(--blog-border-analytics);
+  }
+
+  .analytics-ban-table td {
+    padding: 0.15rem 0.5rem;
+    border: 0;
+  }
+
+  .analytics-ban-table td[data-label]::before {
+    content: attr(data-label) "：";
+    color: var(--blog-text-label);
   }
 
   .analytics-event-workspace {

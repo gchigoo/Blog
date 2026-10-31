@@ -18,30 +18,51 @@
   </div>
 </header>
 
+<%
+  const trafficLabel = event => event.trafficKind === 'bot'
+    ? { className: 'is-bot', text: '爬虫' }
+    : event.confirmed ? { className: 'is-human', text: '真人' } : { className: 'is-unconfirmed', text: '未确认' };
+  const providerLine = event => event.provider
+    ? `AS${event.provider.asn}${event.provider.organization ? ` ${event.provider.organization}` : ''}${event.provider.kind === 'hosting' ? ' · 机房网络' : ''}`
+    : null;
+  const unconfirmedNetwork = overview.unconfirmedNetwork;
+%>
 <section id="analytics-overview" class="analytics-overview-grid" aria-labelledby="analytics-overview-title">
   <h3 id="analytics-overview-title" class="analytics-section-title">流量概览</h3>
   <article class="analytics-overview-card">
-    <span class="analytics-card-label">今日活跃访客</span>
-    <strong class="analytics-card-value"><%= overview.todayActiveVisitors %> 人</strong>
-    <span class="analytics-card-note">北京时间今日真人访客</span>
-  </article>
-  <article class="analytics-overview-card">
-    <span class="analytics-card-label">独立 IP</span>
+    <span class="analytics-card-label">今日真人访客</span>
     <strong class="analytics-card-value">
       <% if (!overview.detailsAvailable) { %>
         未启用访问明细
-      <% } else if (!overview.detailsComplete) { %>
-        至少 <%= overview.uniqueHumanIps %> 个
       <% } else { %>
-        <%= overview.uniqueHumanIps %> 个
+        <%= overview.todayConfirmedVisitors %> 人
       <% } %>
     </strong>
-    <span class="analytics-card-note">所选范围内真人访问</span>
+    <span class="analytics-card-note">北京时间今日，页面上有真实操作</span>
   </article>
   <article class="analytics-overview-card">
     <span class="analytics-card-label">真人访问量</span>
-    <strong class="analytics-card-value"><%= overview.humanPageViews %> 次</strong>
-    <span class="analytics-card-note">不含已识别爬虫</span>
+    <strong class="analytics-card-value">
+      <% if (!overview.detailsAvailable) { %>
+        未启用访问明细
+      <% } else { %>
+        <%= overview.confirmedPageViews %> 次
+      <% } %>
+    </strong>
+    <span class="analytics-card-note">
+      <% if (overview.detailsAvailable) { %>
+        <%= overview.confirmedVisitors %> 位访客 · <%= overview.confirmedHumanIps %> 个 IP
+      <% } else { %>
+        确认真人需要访问明细
+      <% } %>
+    </span>
+  </article>
+  <article class="analytics-overview-card">
+    <span class="analytics-card-label">未确认访问量</span>
+    <strong class="analytics-card-value"><%= overview.unconfirmedPageViews %> 次</strong>
+    <span class="analytics-card-note">
+      像浏览器但没有任何操作，多为脚本<% if (unconfirmedNetwork && unconfirmedNetwork.known > 0) { %>；<%= Math.round(unconfirmedNetwork.hosting * 100 / unconfirmedNetwork.known) %>% 来自机房网络<% } %>
+    </span>
   </article>
   <article class="analytics-overview-card analytics-overview-card-bot">
     <span class="analytics-card-label">爬虫访问量</span>
@@ -69,7 +90,7 @@
         <p class="analytics-eyebrow">访问台账</p>
         <h3 id="analytics-event-summary" tabindex="-1">逐次访问明细 · 本页 <%= events.items.length %> 条</h3>
       </div>
-      <p>按时间倒序，真人与爬虫均明确标注。</p>
+      <p>按时间倒序。真人：页面上有真实操作；未确认：像浏览器但没有操作；爬虫：已识别的自动访问。</p>
     </div>
 
     <form id="analytics-filter-form" class="analytics-filter-form" method="get" action="/admin/analytics#event-list">
@@ -84,7 +105,7 @@
 
       <fieldset class="analytics-traffic-filter">
         <legend>访问类型</legend>
-        <% [['all', '全部'], ['human', '真人'], ['bot', '爬虫']].forEach(([value, label]) => { %>
+        <% [['all', '全部'], ['confirmed', '真人'], ['unconfirmed', '未确认'], ['bot', '爬虫']].forEach(([value, label]) => { %>
           <label>
             <input type="radio" name="traffic" value="<%= value %>" <% if (filters.traffic === value) { %>checked<% } %>>
             <span><%= label %></span>
@@ -128,7 +149,7 @@
         }; %>
         <% const analyticsFilterItems = typeof appliedFilters !== 'undefined' ? appliedFilters : [
           ...(filters.search ? [{ name: 'search', label: '搜索', value: filters.search, removeUrl: analyticsFallbackRemoveUrl('search') }] : []),
-          ...(filters.traffic && filters.traffic !== 'all' ? [{ name: 'traffic', label: '访问类型', value: filters.traffic === 'human' ? '仅真人' : '仅爬虫', removeUrl: analyticsFallbackRemoveUrl('traffic') }] : []),
+          ...(filters.traffic && filters.traffic !== 'all' ? [{ name: 'traffic', label: '访问类型', value: ({ confirmed: '仅真人', unconfirmed: '仅未确认', human: '仅浏览器类', bot: '仅爬虫' })[filters.traffic] || filters.traffic, removeUrl: analyticsFallbackRemoveUrl('traffic') }] : []),
           ...analyticsAdvancedNames.filter(name => filters[name]).map(name => ({ name, label: analyticsFallbackLabels[name], value: filters[name], removeUrl: analyticsFallbackRemoveUrl(name) }))
         ]; %>
         <div class="analytics-applied-filters" aria-label="已应用筛选">
@@ -182,7 +203,8 @@
                 <td><time datetime="<%= event.observedAtUtc %>"><%= formatBeijingTime(event.observedAtUtc) %></time></td>
                 <td>
                   <div class="analytics-page-cell">
-                    <span class="analytics-traffic-label <%= event.trafficKind === 'bot' ? 'is-bot' : 'is-human' %>"><%= event.trafficKind === 'bot' ? '爬虫' : '真人' %></span>
+                    <% const label = trafficLabel(event); %>
+                    <span class="analytics-traffic-label <%= label.className %>"><%= label.text %></span>
                     <% if (event.trafficKind === 'bot') { %><span class="analytics-bot-name"><%= event.botName %></span><% } %>
                     <strong><%= eventPage.title %></strong>
                     <code class="analytics-break"><%= eventPage.displayPath %></code>
@@ -191,6 +213,7 @@
                 <td>
                   <code class="analytics-break"><%= event.ipAddress %></code>
                   <span class="analytics-secondary-line"><%= countryName %> / <%= subdivisionName %> / <%= cityName %></span>
+                  <% if (providerLine(event)) { %><span class="analytics-secondary-line"><%= providerLine(event) %></span><% } %>
                 </td>
                 <td>
                   <span><%= event.client?.deviceType || '未知' %></span>
@@ -216,7 +239,8 @@
           <article class="analytics-event-card" data-traffic-kind="<%= event.trafficKind === 'bot' ? 'bot' : 'human' %>">
             <header class="analytics-event-card-header">
               <div>
-                <span class="analytics-traffic-label <%= event.trafficKind === 'bot' ? 'is-bot' : 'is-human' %>"><%= event.trafficKind === 'bot' ? '爬虫' : '真人' %></span>
+                <% const label = trafficLabel(event); %>
+                <span class="analytics-traffic-label <%= label.className %>"><%= label.text %></span>
                 <% if (event.trafficKind === 'bot') { %><span class="analytics-bot-name"><%= event.botName %></span><% } %>
               </div>
               <time datetime="<%= event.observedAtUtc %>"><%= formatBeijingTime(event.observedAtUtc) %></time>
@@ -227,7 +251,7 @@
             </div>
             <dl class="analytics-event-card-details">
               <dt>IP / 地区</dt>
-              <dd><code class="analytics-break"><%= event.ipAddress %></code><span><%= countryName %> / <%= subdivisionName %> / <%= cityName %></span></dd>
+              <dd><code class="analytics-break"><%= event.ipAddress %></code><span><%= countryName %> / <%= subdivisionName %> / <%= cityName %></span><% if (providerLine(event)) { %><span><%= providerLine(event) %></span><% } %></dd>
               <dt>客户端</dt>
               <dd><span><%= event.client?.deviceType || '未知' %></span><span><%= browserName %> <%= browserVersion %> · <%= osName %> <%= osVersion %></span></dd>
             </dl>
@@ -261,13 +285,14 @@
       <% } else { %>
         <div class="analytics-table-wrap">
           <table class="analytics-ranking-table">
-            <thead><tr><th>页面</th><th>真人访问量</th><th>按天去重访客</th></tr></thead>
+            <thead><tr><th>页面</th><th>真人访问量</th><th>真人访客</th><th>未确认</th></tr></thead>
             <tbody>
               <% overview.byPage.forEach(row => { %>
                 <tr>
                   <td><code class="analytics-break"><%= row.displayPath %></code></td>
-                  <td><%= row.pageViews %></td>
-                  <td><%= row.anonymousVisitors %></td>
+                  <td><%= row.confirmedPageViews %></td>
+                  <td><%= row.confirmedVisitors %></td>
+                  <td><%= row.pageViews - row.confirmedPageViews %></td>
                 </tr>
               <% }) %>
             </tbody>
@@ -315,6 +340,44 @@
   </div>
 </details>
 
+<% if (typeof ipBans !== 'undefined' && ipBans) { %>
+<section id="ip-bans" class="analytics-ip-bans" aria-labelledby="analytics-ip-bans-title">
+  <h3 id="analytics-ip-bans-title">探测封禁</h3>
+  <p>请求本站没有的敏感文件或后台路径（如 <code>/.env</code>、<code>/wp-admin</code>、<code>*.php</code>）并得到 4xx 的 IP 会被永久封禁，此后所有请求都返回 403。IPv6 按 /64 封禁。</p>
+  <p>共封禁 <strong><%= ipBans.total %></strong> 个地址，近 <%= overview.days %> 天新增 <strong><%= ipBans.recent %></strong> 个；封禁后已拒绝 <strong><%= ipBans.blockedRequests %></strong> 次请求。</p>
+  <% if (ipBans.message) { %>
+    <p class="message <%= ipBans.message.severity %>" role="<%= ipBans.message.severity === 'error' ? 'alert' : 'status' %>"><%= ipBans.message.text %></p>
+  <% } %>
+  <% if (ipBans.items.length === 0) { %>
+    <p>暂无封禁。</p>
+  <% } else { %>
+    <div class="analytics-table-wrap">
+      <table class="analytics-ranking-table analytics-ban-table">
+        <thead><tr><th>地址</th><th>触发请求</th><th>封禁时间</th><th>被拒次数</th><th>操作</th></tr></thead>
+        <tbody>
+          <% ipBans.items.forEach(ban => { %>
+            <tr>
+              <td><code class="analytics-break"><%= ban.network %></code><% if (ban.country) { %><span class="analytics-secondary-line"><%= ban.country %></span><% } %></td>
+              <td><code class="analytics-break"><%= ban.method %> <%= ban.path %></code><span class="analytics-secondary-line"><%= ban.status %> · <%= ban.userAgent || '无 User-Agent' %></span></td>
+              <td data-label="封禁时间"><time datetime="<%= ban.createdAt %>"><%= formatBeijingTime(ban.createdAt) %></time></td>
+              <td data-label="被拒次数"><%= ban.hits %></td>
+              <td>
+                <form method="post" action="/admin/analytics/ip-bans/unban">
+                  <input type="hidden" name="network" value="<%= ban.network %>">
+                  <input type="hidden" name="days" value="<%= overview.days %>">
+                  <button type="submit" class="secondary-button">解除</button>
+                </form>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+    <% if (ipBans.total > ipBans.items.length) { %><p>只显示最近 <%= ipBans.items.length %> 个；完整列表用 <code>npm run ip-bans</code> 查看。</p><% } %>
+  <% } %>
+</section>
+<% } %>
+
 <section id="analytics-system-status" class="analytics-system-status" aria-labelledby="analytics-system-status-title">
   <h3 id="analytics-system-status-title">系统状态</h3>
   <div class="analytics-system-grid">
@@ -322,11 +385,26 @@
       <h4>访问明细采集</h4>
       <p><strong><%= systemStatus.detailsEnabled ? '已启用' : '未启用' %></strong></p>
       <% if (systemStatus.detailsEnabled) { %>
-        <p>本范围已有 <%= overview.detailCoverage.humanPageViews %> 次真人访问包含明细；<%= overview.detailsComplete ? '覆盖完整。' : '覆盖不完整，独立 IP 显示下限。' %></p>
+        <p>本范围已有 <%= overview.detailCoverage.humanPageViews %> 次浏览器类访问包含明细；<%= overview.detailsComplete ? '覆盖完整。' : '覆盖不完整，较早的访问没有明细。' %></p>
+        <p>真人以页面上的真实操作确认（点击、触摸、按键、滚轮或移动指针）；这项信号上线前的访问都计为未确认。</p>
       <% } else { %>
         <p>仅展示真人与爬虫聚合数据，不读取或展示任何逐次访问记录。</p>
       <% } %>
     </section>
+    <% if (typeof asnStatus !== 'undefined' && asnStatus) { %>
+    <section>
+      <h4>网络归属（ASN）</h4>
+      <% if (asnStatus.enabled) { %>
+        <dl>
+          <dt>数据集日期</dt><dd><%= asnStatus.datasetDate || '尚未下载' %></dd>
+          <dt>最近检查</dt><dd><%= asnStatus.lastRefresh ? `${asnStatus.lastRefresh.at} / ${asnStatus.lastRefresh.result}` : '暂无' %></dd>
+        </dl>
+        <p><a href="<%= asnCredit.href %>" rel="noopener noreferrer" target="_blank"><%= asnCredit.label %></a></p>
+      <% } else { %>
+        <p>未配置 <code>ANALYTICS_ASN_DB_DIR</code>，不识别机房网络。</p>
+      <% } %>
+    </section>
+    <% } %>
     <section>
       <h4>GeoLite2 City</h4>
       <% if (systemStatus.geoData) { %>
@@ -360,6 +438,7 @@
     <dt>爬虫名称</dt><dd id="analytics-detail-bot-name"></dd>
     <dt>来源</dt><dd id="analytics-detail-referrer"></dd>
     <dt>完整 IP</dt><dd id="analytics-detail-ip"></dd>
+    <dt>网络归属</dt><dd id="analytics-detail-network"></dd>
     <dt>浏览器</dt><dd id="analytics-detail-browser"></dd>
     <dt>原始 User-Agent</dt><dd id="analytics-detail-user-agent"></dd>
     <dt>客户端解析状态</dt><dd id="analytics-detail-client-status"></dd>

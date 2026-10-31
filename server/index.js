@@ -37,7 +37,6 @@ app.locals.formatDate = formatDate;
 app.locals.formatYear = formatYear;
 
 const articleService = createArticleService(db);
-const analyticsModule = createAnalyticsModule({ db, config: config.analytics });
 const ipBans = createIpBanGuard({
   db,
   enabled: config.ipBans.enabled,
@@ -45,6 +44,7 @@ const ipBans = createIpBanGuard({
   // A signed-in admin is never banned.
   isOwner: req => Boolean(verifyRequestToken(req).user)
 });
+const analyticsModule = createAnalyticsModule({ db, config: config.analytics, ipBans });
 // Ahead of static files and health checks: a banned client gets nothing at all.
 app.use(ipBans.middleware);
 

@@ -2,6 +2,21 @@ const express = require('express');
 const { authenticatePage } = require('../middleware/auth');
 const { getOverview } = require('./store');
 const { listEvents, parseEventListQuery } = require('./query/analytics-query');
+const { ASN_CREDIT } = require('./adapters/asn-resolver');
+const { requestedNetwork } = require('../security/admin-api');
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const BAN_MESSAGES = {
+  unbanned: { severity: 'info', text: '已解除封禁。' },
+  missing: { severity: 'info', text: '该地址没有封禁记录。' },
+  invalid: { severity: 'error', text: '地址格式无效。' }
+};
+const TRAFFIC_FILTER_LABELS = {
+  confirmed: '仅真人',
+  unconfirmed: '仅未确认',
+  human: '仅浏览器类',
+  bot: '仅爬虫'
+};
 
 const FILTER_NAMES = [
   'search', 'traffic', 'ip', 'country', 'subdivision', 'city', 'browser', 'os',
@@ -62,7 +77,7 @@ function appliedFilters(filters, limit, sourceQuery = null) {
     items.push({
       name: 'traffic',
       label: '访问类型',
-      value: filters.traffic === 'human' ? '仅真人' : '仅爬虫'
+      value: TRAFFIC_FILTER_LABELS[filters.traffic] || filters.traffic
     });
   }
   for (const [name, label] of ADVANCED_FILTERS) {
@@ -101,12 +116,50 @@ function systemStatus(detailsEnabled, geoData) {
   return { detailsEnabled: Boolean(detailsEnabled), geoData, warning };
 }
 
-function createAdminPageRouter({ db, config, clock, geoResolver, logger = console }) {
+function banSection(ipBans, now, days, message) {
+  if (!ipBans?.enabled) return null;
+  return {
+    ...ipBans.summary(new Date(now - days * DAY_MS).toISOString()),
+    items: ipBans.list(20).bans,
+    message: BAN_MESSAGES[message] || null
+  };
+}
+
+// The admin cookie is SameSite=Strict; the browser's own fetch metadata is checked as well.
+function sameOrigin(req, publicOrigin) {
+  const site = req.get('sec-fetch-site');
+  if (site) return site === 'same-origin';
+  const origin = req.get('origin');
+  return !origin || origin === publicOrigin || origin === `${req.protocol}://${req.get('host')}`;
+}
+
+function createAdminPageRouter({
+  db,
+  config,
+  clock,
+  geoResolver,
+  asnResolver = null,
+  ipBans = null,
+  logger = console
+}) {
   const router = express.Router();
   router.use('/admin/analytics', (req, res, next) => {
     res.set('Cache-Control', 'no-store');
     next();
   });
+  router.post(
+    '/admin/analytics/ip-bans/unban',
+    authenticatePage,
+    express.urlencoded({ extended: false, limit: '2kb' }),
+    (req, res) => {
+      if (!ipBans?.enabled) return res.status(404).send('未启用探测封禁');
+      if (!sameOrigin(req, config.publicOrigin)) return res.status(403).send('Forbidden');
+      const network = requestedNetwork(req.body?.network);
+      const result = !network ? 'invalid' : ipBans.unban(network) ? 'unbanned' : 'missing';
+      const days = /^\d{1,3}$/.test(String(req.body?.days ?? '')) ? `days=${req.body.days}&` : '';
+      return res.redirect(303, `/admin/analytics?${days}ipBan=${result}#ip-bans`);
+    }
+  );
   router.get('/admin/analytics', authenticatePage, (req, res) => {
     let options;
     let pageError = null;
@@ -148,6 +201,9 @@ function createAdminPageRouter({ db, config, clock, geoResolver, logger = consol
         analyticsEnhancementEnabled: !pageError && config.detailsEnabled,
         rangeOptions: rangeOptions(config.retentionDays),
         systemStatus: systemStatus(config.detailsEnabled, geoData),
+        asnStatus: config.detailsEnabled && asnResolver ? asnResolver.getStatus() : null,
+        asnCredit: ASN_CREDIT,
+        ipBans: banSection(ipBans, clock.now(), options.days, req.query.ipBan),
         user: req.user
       });
     } catch {

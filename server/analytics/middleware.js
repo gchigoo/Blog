@@ -36,6 +36,7 @@ function createAnalyticsMiddleware({
   detailsEnabled = false,
   publicOrigin = null,
   geoResolver = null,
+  asnResolver = null,
   clientParser = null,
   tokenSigner = null,
   internalIps = [],
@@ -130,6 +131,7 @@ function createAnalyticsMiddleware({
           ipAddress: capturedIp,
           ipFamily: net.isIP(capturedIp),
           geo,
+          provider: asnResolver?.lookup(capturedIp) || null,
           requestClient: capturedClient,
           client: clientParser.parse(capturedClient.userAgent)
         });
